@@ -92,11 +92,15 @@ try{
     };
   }
 
-  const expectedBundle=join(releaseDir,`${rootPackage.productName}-${targetSettings.platform}-${targetSettings.arch}`);
+  // Build and verify macOS bundles outside synced Desktop folders. File providers
+  // can add Finder metadata while signing, invalidating an otherwise clean bundle.
+  const outputRoot=target==='mac-arm64'?join(stageRoot,'native'):releaseDir;
+  const publishedBundle=join(releaseDir,`${rootPackage.productName}-${targetSettings.platform}-${targetSettings.arch}`);
+  const expectedBundle=join(outputRoot,`${rootPackage.productName}-${targetSettings.platform}-${targetSettings.arch}`);
   await rm(expectedBundle,{recursive:true,force:true});
   const outputs=await packager({
     dir:stageDir,
-    out:releaseDir,
+    out:outputRoot,
     name:rootPackage.productName,
     appVersion:rootPackage.version,
     platform:targetSettings.platform,
@@ -115,18 +119,16 @@ try{
 
   if(target==='mac-arm64'){
     const appPath=join(expectedBundle,`${rootPackage.productName}.app`);
-    // Finder may attach signing-disallowed cosmetic metadata on desktop volumes.
-    const attrs=execFileSync('/usr/bin/xattr',[appPath],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
-    for(const attr of ['com.apple.FinderInfo','com.apple.ResourceFork']){
-      if(attrs.includes(attr))execFileSync('/usr/bin/xattr',['-d',attr,appPath]);
-    }
     execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',appPath],{stdio:'inherit'});
-    const zipPath=join(releaseDir,`${rootPackage.productName}-${rootPackage.version}-mac-arm64.zip`);
+    const zipPath=join(releaseDir,`Linkflow-${rootPackage.version}-mac-arm64.zip`);
     await rm(zipPath,{force:true});
     execFileSync('/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',appPath,zipPath],{stdio:'inherit'});
     const checksumPath=join(releaseDir,'SHA256SUMS-mac-arm64.txt');
     await writeFile(checksumPath,await sha256File(zipPath),'utf8');
-    console.log([appPath,zipPath,checksumPath].join('\n'));
+    // Only copy the local app after the strictly verified archive is complete.
+    await rm(publishedBundle,{recursive:true,force:true});
+    await cp(expectedBundle,publishedBundle,{recursive:true,verbatimSymlinks:true});
+    console.log([join(publishedBundle,`${rootPackage.productName}.app`),zipPath,checksumPath].join('\n'));
   }else{
     const builderCli=join(projectRoot,'node_modules','electron-builder','out','cli','cli.js');
     execFileSync(process.execPath,[builderCli,'--config',join(projectRoot,'electron-builder.yml'),'--win','nsis','--x64','--prepackaged',expectedBundle],{
@@ -134,7 +136,7 @@ try{
       env:{...process.env,CSC_IDENTITY_AUTO_DISCOVERY:'false'},
       stdio:'inherit'
     });
-    const installerPath=join(releaseDir,`${rootPackage.productName}-${rootPackage.version}-windows-x64-setup.exe`);
+    const installerPath=join(releaseDir,`Linkflow-${rootPackage.version}-windows-x64-setup.exe`);
     const checksumPath=join(releaseDir,'SHA256SUMS-windows-x64.txt');
     await writeFile(checksumPath,await sha256File(installerPath),'utf8');
     console.log([join(expectedBundle,`${rootPackage.productName}.exe`),installerPath,checksumPath].join('\n'));

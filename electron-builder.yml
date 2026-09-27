@@ -12,7 +12,7 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: ${productName}-${version}-windows-${arch}-setup.${ext}
+  artifactName: Linkflow-${version}-windows-${arch}-setup.${ext}
 nsis:
   oneClick: false
   perMachine: false

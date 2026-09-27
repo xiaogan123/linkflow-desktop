@@ -1,6 +1,8 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { ExecutionContext, SecretStore, Settings } from '../shared/types';
+import {inferMailPreset} from '../shared/mail-presets';
+import {safeMessage} from '../main/validation';
 
 const LOOKBACK_MS = 48 * 60 * 60 * 1000;
 const MAX_MESSAGES = 25;
@@ -29,6 +31,7 @@ export function verificationUrls(text: string, allowedHosts: string[]): string[]
 
 function mailboxClient(settings: Settings, password: string): ImapFlow {
   const { host, port, user, secure } = settings.mail;
+  if(inferMailPreset({host})?.support==='oauth-required')throw new Error('此邮箱需要 OAuth 登录，当前版本暂不支持，请选择其他邮箱。');
   if (!host || !user || !Number.isInteger(port) || port < 1 || port > 65535 || !secure) throw new Error('请配置 TLS 邮箱服务器、端口和账号');
   return new ImapFlow({ host, port, secure: true, auth: { user, pass: password }, logger: false, disableAutoIdle: true, connectionTimeout: 10_000, socketTimeout: 20_000, greetingTimeout: 10_000 });
 }
@@ -43,7 +46,7 @@ export async function testMail(settings: Settings, secrets: SecretStore): Promis
     const lock = await client.getMailboxLock('INBOX');
     lock.release();
     return { ok: true, message: '邮箱连接成功' };
-  } catch (error) { return { ok: false, message: error instanceof Error ? error.message : '邮箱连接失败' }; }
+  } catch (error) { return { ok: false, message: safeMessage(error) }; }
   finally { if (client?.usable) await client.logout().catch(() => {}); }
 }
 

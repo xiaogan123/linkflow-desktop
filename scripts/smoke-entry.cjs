@@ -24,7 +24,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   check('renderer cannot access Node',await evaluate('typeof require === "undefined" && typeof process === "undefined"'));
   let snapshot=await command('snapshot');check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
   await clickText('添加网站');check('add dialog opens',await evaluate('!!document.querySelector("[role=dialog]")'));await evaluate('document.querySelector("[aria-label=关闭]").click()');await delay(150);
-  await evaluate('document.querySelector(".demo-switch input").click()');await delay(200);
+  await evaluate('document.querySelector(".demo-switch").click()');await delay(200);
   check('explicit demo shows sample websites',await evaluate('document.body.innerText.includes("studio.example")'));
   win.webContents.debugger.attach('1.3');
   async function capture(name,width=1487,height=1058){
@@ -34,14 +34,38 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await capture('overview-1487x1058.png');
   await clickText('设置');check('settings page renders',await evaluate('document.body.innerText.includes("AI")'));
   await capture('settings.png');
-  await clickText('账号');check('accounts page renders',await evaluate('document.body.innerText.includes("账号")'));
+  await clickText('验证邮箱');
+  check('mail UI starts with Gmail and populated TLS server',await evaluate('document.body.innerText.includes("imap.gmail.com")&&document.querySelector("[aria-label=邮箱服务]").value==="gmail"'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=邮箱服务]");e.value="qq";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);
+  check('selecting QQ automatically fills IMAP host and port',await evaluate('document.body.innerText.includes("imap.qq.com")&&document.body.innerText.includes("993")'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=邮箱服务]");e.value="outlook";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);
+  check('unsupported Outlook clearly explains OAuth requirement',await evaluate('document.body.innerText.includes("OAuth2")&&document.body.innerText.includes("暂不支持")'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=邮箱服务]");e.value="gmail";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);await capture('mail-presets.png');
+  await clickText('账号');check('accounts page renders',await evaluate('document.body.innerText.includes("账号")'));await capture('accounts.png');check('accounts explain automatic creation instead of mandatory import',await evaluate('document.body.innerText.includes("随任务自动完成")&&document.body.innerText.includes("导入已有账号")'));
   await clickText('渠道');check('channel directory renders',await evaluate('document.body.innerText.includes("渠道")'));
+  check('channel directory is a complete list with 38 entries',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===38'));
+  await clickText('可自动执行');check('automation filter shows only five connected channels',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===5'));
+  await clickText('全部渠道');await evaluate('(()=>{const e=document.querySelector("[aria-label=发布要求]");e.value="no-email";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);
+  check('no-email filter finds Show HN without inventing email requirements',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===1&&document.body.innerText.includes("Show HN")'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=发布要求]");e.value="all";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);await capture('channels.png');
+  await evaluate(`document.querySelector('[aria-label="查看 GitHub 详情"]').click()`);await delay(150);
+  check('list rows disclose rules and honest unknown metrics',await evaluate('document.body.innerText.includes("GitHub 的适用条件")&&document.body.innerText.includes("暂无可靠数据")'));
+
   await clickText('总览');await capture('overview-1080x760.png',1080,760);check('compact desktop has no horizontal viewport overflow',await evaluate('document.documentElement.scrollWidth<=window.innerWidth+1'));
   await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride');win.webContents.debugger.detach();
   await clickText('演示模式 · 返回真实数据');snapshot=await command('snapshot');check('demo never mutates real state',snapshot.sites.length===0);
   let denied=false;try{await command('site:add',{domain:'127.0.0.1',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('private-domain input rejected by main process',denied);
   denied=false;try{await command('settings:save',{dailyAiLimit:0})}catch{denied=true}check('invalid execution budget rejected',denied);
   await command('settings:save',{dailyAiLimit:12,notify:false});check('settings persist through actual IPC',(await command('snapshot')).settings.dailyAiLimit===12);
+  check('new mailbox defaults to Gmail', (await command('snapshot')).settings.mail.host==='imap.gmail.com');
+  const testMail={host:'imap.gmail.com',port:993,user:'smoke@example.com',secure:true};
+  await command('settings:save',{mail:testMail,mailPassword:'Synthetic-Mail-Only-7!'});
+  check('synthetic mailbox password is saved without appearing in snapshot', (await command('snapshot')).settings.mail.hasPassword&&!JSON.stringify(await command('snapshot')).includes('Synthetic-Mail-Only-7!'));
+  await command('settings:save',{mail:{...testMail,host:'imap.qq.com',hasPassword:true}});
+  check('changing mailbox clears old secret and ignores forged hasPassword',!(await command('snapshot')).settings.mail.hasPassword);
+  const mailDb=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
+  check('old mailbox credential is removed from vault before changing destination',!mailDb.prepare('SELECT value FROM secrets WHERE key=?').get('mailPassword'));mailDb.close();
+  await command('settings:save',{mail:{host:'imap.gmail.com',port:993,user:'',secure:true}});
   await command('site:add',{domain:'example.com',email:'hello@example.com',monthlyTarget:2});snapshot=await command('snapshot');check('website can be created through real IPC',snapshot.sites.length===1);const id=snapshot.sites[0].id;
   denied=false;try{await command('site:add',{domain:'www.example.com',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('normalized duplicate websites rejected',denied);
   await command('site:update',{id,monthlyTarget:3,name:'Example'});check('website settings update',(await command('snapshot')).sites[0].monthlyTarget===3);

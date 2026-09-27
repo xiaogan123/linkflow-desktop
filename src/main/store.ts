@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Account, Event, Settings, Site, Task } from '../shared/types';
 
 export interface State {sites:Site[];tasks:Task[];accounts:Account[];settings:Settings;events:Event[];usage:Record<string,number>}
-export function defaultSettings():Settings{return {provider:'codex',codexPath:'codex',model:'',apiBase:'https://api.openai.com/v1',hasApiKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},mail:{host:'',port:993,user:'',secure:true,hasPassword:false}}}
+export function defaultSettings():Settings{return {provider:'codex',codexPath:'codex',model:'',apiBase:'https://api.openai.com/v1',hasApiKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},mail:{host:'imap.gmail.com',port:993,user:'',secure:true,hasPassword:false}}}
 export function emptyState():State{return {sites:[],tasks:[],accounts:[],settings:defaultSettings(),events:[],usage:{}}}
 
 /** The SQLite transaction persists a complete coherent scheduler state before notifying UI. */
@@ -21,6 +21,7 @@ export class Store {
     const row=this.db.prepare('SELECT body FROM state WHERE id=1').get() as {body:string}|undefined;
     this.state=row?JSON.parse(row.body):emptyState();
     this.state.settings={...defaultSettings(),...this.state.settings,mail:{...defaultSettings().mail,...this.state.settings.mail}};
+    if(!this.state.settings.mail.host&&!this.state.settings.mail.user&&!this.state.settings.mail.hasPassword)this.state.settings.mail.host='imap.gmail.com';
     this.persist(this.state);
   }
   read():State{return structuredClone(this.state)}

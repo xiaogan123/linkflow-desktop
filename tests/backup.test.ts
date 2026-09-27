@@ -11,3 +11,16 @@ test('site input validates actual public domain and reasonable monthly workload'
 test('invalid timezones and insecure mail settings rejected',()=>{assert.throws(()=>SettingsPatch.parse({timezone:'Bad/Zone'}));assert.throws(()=>SettingsPatch.parse({mail:{host:'x.com',port:143,user:'a',secure:false}}))});
 test('error redaction removes likely credentials and URL query tokens',()=>{const msg=safeMessage(new Error('password=hunter2 token=private sk-secret12 https://x.com/verify?token=private'));assert(!msg.includes('hunter2'));assert(!msg.includes('private'));assert(!msg.includes('sk-secret12'))});
 test('restored settings reject plaintext secrets',()=>{const state=emptyState();Object.assign(state.settings,{apiKey:'must-not-persist'});assert.throws(()=>validateBackup({state,secrets:{}}))});
+
+test('legacy saved accounts restore conservatively without exposing their password',()=>{
+  const state=emptyState();
+  const id='11111111-1111-4111-8111-111111111111',createdAt='2026-09-01T00:00:00.000Z';
+  state.accounts.push({id,channelId:'channel',email:'owner@example.org',username:'owner',createdAt,status:'unknown',hasPassword:true});
+  const legacy=structuredClone(state) as unknown as {accounts:Array<Record<string,unknown>>};legacy.accounts[0].status='saved';
+  const restored=validateBackup({state:legacy,secrets:{[`account:${id}`]:'encrypted-at-export-layer'}});
+  assert.equal(restored.state.accounts[0].status,'unknown');
+  assert.equal(restored.state.accounts[0].source,'imported');
+  assert.equal(restored.state.accounts[0].diagnostic?.code,'legacy_saved');
+  assert.equal('password' in restored.state.accounts[0],false);
+  assert.equal(JSON.stringify(restored.state).includes('encrypted-at-export-layer'),false);
+});

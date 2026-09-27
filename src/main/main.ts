@@ -9,13 +9,14 @@ import { z } from 'zod';
 import { Store, defaultSettings } from './store';
 import { Vault, encryptBackup, decryptBackup } from './vault';
 import { Controller } from './controller';
-import { AddSite, EditSite, SettingsPatch, AccountInput, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
+import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted } from './planner';
 import { IPC_COMMANDS, type Site, type Account } from '../shared/types';
 import { testAi } from '../integrations/ai';
 import { codexEnvironment, resolveCodexLaunch } from '../integrations/codex-process';
 import { testMail } from '../integrations/mail';
+import {mailboxIdentityChanged} from './mail-settings';
 import { prepareSelfTest, runPackagedSelfTest } from './self-test';
 
 app.setName('外链助手');
@@ -88,20 +89,44 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'settings:save':{
       const input=SettingsPatch.parse(p);if(input.provider||input.apiKey||input.mailPassword||input.codexPath||input.apiBase||input.model||input.mail)forbidBusy();
       if(!app.isPackaged&&input.launchAtLogin)throw Error('开机启动请在打包客户端中开启');
-      if(input.apiBase)publicUrl(input.apiBase);if(input.apiKey)await vault.set('apiKey',input.apiKey);if(input.mailPassword)await vault.set('mailPassword',input.mailPassword);
+      const previous=store.read().settings;
+      const nextMail={...previous.mail,...input.mail};
+      nextMail.host=nextMail.host.trim().toLowerCase().replace(/\.$/,'');nextMail.user=nextMail.user.trim();
+      const mailChanged=mailboxIdentityChanged(previous.mail,nextMail);
+      const apiChanged=input.apiBase!==undefined&&input.apiBase!==previous.apiBase;
+      if(input.apiBase)publicUrl(input.apiBase);
+      // Changing a destination must never forward the old destination's secret.
+      if(apiChanged&&!input.apiKey)await vault.delete('apiKey');
+      if(mailChanged&&!input.mailPassword)await vault.delete('mailPassword');
+      if(input.apiKey)await vault.set('apiKey',input.apiKey);
+      if(input.mailPassword)await vault.set('mailPassword',nextMail.host==='imap.gmail.com'?input.mailPassword.replace(/\s/g,''):input.mailPassword);
       const {apiKey,mailPassword,...safe}=input;
-      store.update(s=>{s.settings={...s.settings,...safe,mail:{...s.settings.mail,...safe.mail}};if(apiKey)s.settings.hasApiKey=true;if(mailPassword)s.settings.mail.hasPassword=true;});
+      if(mailChanged||mailPassword)controller.runtime.mailReady=false;
+      store.update(s=>{s.settings={...s.settings,...safe,hasApiKey:!!apiKey||(!apiChanged&&previous.hasApiKey),mail:{...nextMail,hasPassword:!!mailPassword||(!mailChanged&&previous.mail.hasPassword)}};});
       if(input.launchAtLogin!==undefined)app.setLoginItemSettings({openAtLogin:input.launchAtLogin});
       await detectAi();controller.plan();break;
     }
     case 'settings:test-ai':{const result=await testAi(store.read().settings,vault);controller.runtime.aiReady=result.ok;broadcast();return result;}
-    case 'settings:test-mail':{const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}
+    case 'settings:test-mail':{forbidBusy();const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}
     case 'account:save':{
       forbidBusy();const input=AccountInput.parse(p);if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
       const old=input.id?store.read().accounts.find(a=>a.id===input.id):undefined;if(input.id&&!old)throw Error('账号不存在');
       if(store.read().accounts.some(a=>a.id!==input.id&&a.channelId===input.channelId&&a.email.toLowerCase()===input.email.toLowerCase()))throw Error('该渠道已有此邮箱账号');
-      const account:Account={id:old?.id||randomUUID(),channelId:input.channelId,email:input.email,username:input.username,createdAt:old?.createdAt||new Date().toISOString(),status:old?.status||'saved',hasPassword:!!input.password||old?.hasPassword||false};
+      const now=new Date().toISOString(),identityChanged=!!old&&(old.channelId!==input.channelId||old.email.toLowerCase()!==input.email.toLowerCase()||old.username!==input.username);
+      const repairedCredentials=old?.status==='credentials_invalid'&&!!input.password;
+      const status=old?.status==='restricted'&&!identityChanged?'restricted':!old||identityChanged||repairedCredentials?'unknown':old.status;
+      const account:Account={...old,id:old?.id||randomUUID(),channelId:input.channelId,email:input.email,username:input.username,createdAt:old?.createdAt||now,updatedAt:now,status,source:old?.source||'imported',hasPassword:!!input.password||old?.hasPassword||false,diagnostic:status==='restricted'?old?.diagnostic:undefined};
       if(input.password)await vault.set('account:'+account.id,input.password);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==account.id);s.accounts.push(account)});break;
+    }
+    case 'account:retry':{
+      forbidBusy();const {id}=AccountRetry.parse(p),account=store.read().accounts.find(a=>a.id===id);if(!account)throw Error('账号不存在');
+      if(account.status==='restricted')throw Error('平台已报告账号或访问受限，不能自动规避或重试');
+      if(account.status==='credentials_invalid')throw Error('请先编辑账号并更新密码');
+      if(account.status==='unknown')throw Error('账号状态尚未确认，请先检查平台记录或导入正确凭据');
+      if(account.status==='registered')throw Error('账号已注册，无需重试注册');
+      if(account.status==='draft'&&account.source!=='generated')throw Error('只能重试本机生成且尚未创建的注册草稿');
+      if(account.diagnostic&&!account.diagnostic.retryable&&account.status!=='draft')throw Error('该账号异常需要人工处理');
+      const now=new Date().toISOString();store.update(s=>{const a=s.accounts.find(a=>a.id===id);if(a){a.updatedAt=now;a.diagnostic=undefined}for(const task of s.tasks){const site=s.sites.find(site=>site.id===task.siteId);if(task.channelId===account.channelId&&site?.email.toLowerCase()===account.email.toLowerCase()&&!task.submittedAt&&['needs_input','failed'].includes(task.status)){task.status='queued';task.scheduledAt=now;task.updatedAt=now;task.message=account.status==='needs_verification'?'准备继续验证账号':'准备重试未提交的注册草稿';}}});void controller.tick();break;
     }
     case 'account:reveal':{const id=getId(p);await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
     case 'account:delete':{forbidBusy();const id=getId(p);await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}

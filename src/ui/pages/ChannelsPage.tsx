@@ -1,0 +1,36 @@
+import {Fragment,useMemo,useState} from 'react';
+import {ArrowSquareOut,CaretDown,Check,FileText,Funnel,Leaf,LinkSimple,MagnifyingGlass,Robot,Stack,X} from '@phosphor-icons/react';
+import type {Category,Channel} from '../../shared/types';
+import {Button,Empty} from '../components';
+import {categoryText,dateLabel,kindText,languageLabel} from '../presentation';
+
+export function ChannelsPage({channels,demo,onOpen}:{channels:Channel[];demo:boolean;onOpen:(url:string)=>void}){
+  const [search,setSearch]=useState(''),[mode,setMode]=useState('all'),[category,setCategory]=useState('all'),[requirements,setRequirements]=useState('all'),[expanded,setExpanded]=useState('');
+  const browserCount=channels.filter(c=>c.enabled&&c.automation==='browser'&&c.free!=='unknown').length;
+  const filtered=useMemo(()=>channels.filter(c=>{
+    const text=[c.name,c.domain,c.notes,c.qualityReason,...c.categories.map(x=>categoryText[x])].join(' ').toLowerCase();
+    return text.includes(search.trim().toLowerCase())&&(category==='all'||c.categories.includes(category as Category)||c.categories.includes('general'))
+      &&(mode==='all'||mode==='free'&&c.free==='yes'||mode==='browser'&&c.enabled&&c.automation==='browser'||mode==='manual'&&c.automation==='manual')
+      &&(requirements==='all'||requirements==='no-account'&&!c.accountRequired||requirements==='no-email'&&!c.emailRequired||requirements==='article'&&c.articleRequired||requirements==='no-article'&&!c.articleRequired);
+  }),[channels,search,category,mode,requirements]);
+  const reset=()=>{setSearch('');setMode('all');setCategory('all');setRequirements('all')};
+  return <div className="page collection-page channels-page">
+    <div className="page-heading"><div><div className="eyebrow">DISCOVER / 渠道资源库</div><h1>找到值得留下的链接。</h1><p>先看适合与否，再看执行方式。免费机会，清楚比较。</p></div><div className="heading-seal"><Leaf size={18}/><span>免费优先</span></div></div>
+    <div className="summary-strip">
+      <div><span className="summary-icon"><Stack size={20}/></span><span><strong>{channels.length}</strong><small>已整理候选</small></span></div>
+      <div><span className="summary-icon green"><Leaf size={20}/></span><span><strong>{channels.filter(c=>c.free==='yes').length}</strong><small>免费刊登</small></span></div>
+      <div><span className="summary-icon"><Robot size={20}/></span><span><strong>{browserCount}</strong><small>接入自动执行</small></span></div>
+      <p>渠道库持续补充<br/><span>是否适用，仍取决于网站内容与平台规则。</span></p>
+    </div>
+    <section className="panel directory-panel" aria-label="渠道列表">
+      <div className="directory-toolbar"><div className="search"><MagnifyingGlass size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜索名称、域名或适合类别" aria-label="搜索渠道"/>{search&&<button className="icon-button" aria-label="清空搜索" onClick={()=>setSearch('')}><X size={15}/></button>}</div><div className="filter-select"><Funnel size={16}/><select aria-label="网站类别" value={category} onChange={e=>setCategory(e.target.value)}><option value="all">全部网站类别</option>{Object.entries(categoryText).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div><div className="filter-select"><select aria-label="发布要求" value={requirements} onChange={e=>setRequirements(e.target.value)}><option value="all">全部发布要求</option><option value="no-account">无需注册</option><option value="no-email">无需邮箱</option><option value="no-article">无需文章</option><option value="article">需要文章</option></select></div></div>
+      <div className="directory-tabs"><div className="filter-tabs" role="group" aria-label="渠道执行筛选">{[['all','全部渠道'],['free','免费渠道'],['browser','可自动执行'],['manual','辅助处理']].map(([key,label])=><button key={key} type="button" aria-pressed={mode===key} className={mode===key?'active':''} onClick={()=>setMode(key)}>{label}</button>)}</div><span className="result-count">显示 {filtered.length} / {channels.length} 个</span></div>
+      <div className="table-scroll"><table className="channel-table"><caption className="sr-only">渠道名称、适合类别、费用、发布要求、执行方式和参考评级</caption><thead><tr><th scope="col">渠道 / 类型</th><th scope="col">适合的网站</th><th scope="col">费用</th><th scope="col">发布要求</th><th scope="col">执行方式</th><th scope="col">参考评级</th><th scope="col"><span className="sr-only">详情</span></th></tr></thead><tbody>{filtered.map(c=>{
+        const open=expanded===c.id;
+        return <Fragment key={c.id}><tr className={open?'expanded':''}><td><button className="channel-identity" onClick={()=>setExpanded(open?'':c.id)} aria-expanded={open} aria-controls={`channel-detail-${c.id}`}><span className={`channel-monogram tone-${c.kind}`}>{c.name.slice(0,1).toUpperCase()}</span><span><strong>{c.name}</strong><small>{c.domain} <i>· {kindText[c.kind]}</i></small></span></button></td><td><div className="category-tags">{c.categories.slice(0,2).map(x=><span key={x}>{categoryText[x]}</span>)}{c.categories.length>2&&<span title={c.categories.map(x=>categoryText[x]).join('、')}>+{c.categories.length-2}</span>}</div></td><td><span className={`fee-label ${c.free==='yes'?'free':''}`}>{c.free==='yes'?<><Check size={13}/>免费</>:c.free==='conditional'?'有条件免费':'待核实'}</span></td><td><div className="requirement-cell"><span>{c.accountRequired?'需注册':'免注册'}<i>·</i>{c.emailRequired?'需邮箱':'免邮箱'}</span><small>{c.articleRequired?'需准备文章':'无需文章'}</small></div></td><td><span className={`execution-label ${c.enabled&&c.automation==='browser'?'automatic':''}`}><i/>{!c.enabled?'暂不排队':c.automation==='browser'?'自动执行':'辅助处理'}</span></td><td><span className={`quality-grade grade-${c.quality}`} title="编辑参考评级，不是搜索引擎权重">{c.quality}</span></td><td><button className="icon-button" aria-label={`查看 ${c.name} 详情`} aria-expanded={open} aria-controls={`channel-detail-${c.id}`} onClick={()=>setExpanded(open?'':c.id)}><CaretDown size={17} className={open?'rotated':''}/></button></td></tr>
+          <tr id={`channel-detail-${c.id}`} hidden={!open} className="channel-details-row"><td colSpan={7}><div className="channel-detail-content"><div><h3>{c.name} 的适用条件</h3><p>{c.notes||c.qualityReason}</p><dl><dt>免费条件</dt><dd>{c.freeNote}</dd><dt>适合类别</dt><dd>{c.categories.map(x=>categoryText[x]).join('、')}</dd><dt>支持语言</dt><dd>{c.languages.map(languageLabel).join('、')}</dd><dt>执行说明</dt><dd>{c.automation==='browser'?'已接入浏览器操作，遇到验证码或平台限制时需要接续。':'按平台规则准备资料，并在平台完成提交。'}</dd></dl></div><div className="channel-evidence"><span className="mini-eyebrow">参考与核查</span><p>{c.qualityReason}</p><dl><dt>第三方权重</dt><dd>{c.authority?`${c.authority.name} ${c.authority.value} · ${c.authority.asOf}`:'暂无可靠数据'}</dd><dt>月访问量</dt><dd>{c.traffic?`${c.traffic.monthly.toLocaleString()} · ${c.traffic.asOf}`:'暂无可靠数据'}</dd><dt>最近核查</dt><dd>{dateLabel(c.checkedAt)}</dd></dl><div className="card-actions"><Button onClick={()=>onOpen(c.submitUrl)} disabled={demo}>打开渠道<ArrowSquareOut size={14}/></Button><Button variant="text" onClick={()=>onOpen(c.rulesUrl)} disabled={demo}>官方规则<ArrowSquareOut size={14}/></Button></div></div></div></td></tr></Fragment>;
+      })}</tbody></table>{!filtered.length&&<Empty icon={FileText} title="没有匹配的渠道" body="减少一个筛选条件，看看其他免费机会。" action={<Button onClick={reset}>重置筛选</Button>}/>}</div>
+      <footer className="table-footnote"><span><LinkSimple size={15}/> A–C 为编辑参考评级，不等于第三方权重。</span><span>点击渠道，展开条件与官方来源。</span></footer>
+    </section>
+  </div>;
+}

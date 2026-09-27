@@ -1,11 +1,13 @@
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
-import type { Account, ExecutionContext, ExecutionResult } from '../shared/types';
+import type { Account, AccountDiagnostic, AccountIssueCode, AccountStatus, ExecutionContext, ExecutionResult } from '../shared/types';
 import { findVerification } from './mail';
 
 type Control = { id: number; tag: string; type: string; label: string; name: string; href: string; formAction?: string; handlerHint?: string; signature: string; options?: string[]; formHasPassword?: boolean; formHasInput?: boolean; filled?: boolean; checked?: boolean; selectedIndex?: number };
 type Observation = { url: string; text: string; controls: Control[]; captcha: boolean; phone: boolean; identity: boolean; payment: boolean; terms: boolean; termsChecked: boolean };
 type Action = { kind: 'click'|'fill'|'select'|'done'|'needs_input'; id: number; ref: string; option: number; purpose: 'navigation'|'login'|'register'|'final_submit'; reason: string };
+export type AccountPageSignal='authenticated'|'verified'|'verification_required'|'username_taken'|'email_exists'|'bad_password'|'restricted'|'registration_failed'|'unknown';
+export interface AccountPageEvidence {text:string;controls:Array<{label:string;type:string;formHasPassword?:boolean}>}
 
 const windows = new Map<string, BrowserWindow>();
 const manualTermsSeen = new Set<string>();
@@ -100,9 +102,15 @@ async function observe(window: BrowserWindow, secrets: string[]): Promise<Observ
   const observation = await window.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: OBSERVE_JS }]) as Observation;
   observation.text = observation.text.slice(0, MAX_PAGE_TEXT);
   observation.controls = observation.controls.slice(0, MAX_CONTROLS).map(control => ({ ...control, label: control.label.slice(0, 160), name: control.name.slice(0, 100), href: control.href.slice(0, 500), formAction: control.formAction?.slice(0, 500), handlerHint: control.handlerHint?.slice(0, 300), options: control.options?.slice(0, 50) }));
-  let serialized = JSON.stringify(observation);
-  for (const secret of secrets) if (secret) serialized = serialized.split(secret).join('[redacted]');
-  return JSON.parse(serialized) as Observation;
+  return redactStructuredSecrets(observation,secrets);
+}
+
+export function redactStructuredSecrets<T>(value:T,secrets:string[]):T {
+  const active=secrets.filter(Boolean);
+  if(typeof value==='string')return active.reduce((text,secret)=>text.split(secret).join('[redacted]'),value) as T;
+  if(Array.isArray(value))return value.map(item=>redactStructuredSecrets(item,active)) as T;
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,redactStructuredSecrets(item,active)])) as T;
+  return value;
 }
 
 function chosenValue(ref: Action['ref'], context: ExecutionContext, account?: Account, password?: string): string | undefined {
@@ -149,49 +157,111 @@ async function applyAction(window: BrowserWindow, control: Control, action: Acti
   return !!await window.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `${ACT_JS}(${JSON.stringify(control.id)},${JSON.stringify(control.signature)},${JSON.stringify(action.kind)},${JSON.stringify(value)},${JSON.stringify(action.option)},${JSON.stringify(allowedHosts.map(host => host.toLowerCase().replace(/\.$/, '')))},${action.ref === 'account.password'},${JSON.stringify(DESTRUCTIVE.source)})` }]);
 }
 
+function diagnostic(code:AccountIssueCode,message:string,retryable=false):AccountDiagnostic{return {code,message,at:new Date().toISOString(),retryable}}
+
+export function classifyAccountPage(page:AccountPageEvidence):AccountPageSignal {
+  const text=page.text.replace(/\s+/g,' ').slice(0,5000);
+  const labels=page.controls.map(control=>control.label).join(' ');
+  const combined=`${text} ${labels}`;
+  const hasPassword=page.controls.some(control=>control.type==='password'||control.formHasPassword);
+  if(/account (?:is |has been )?(?:suspended|banned|disabled|locked)|access (?:is )?(?:restricted|denied)|too many (?:login )?attempts|unusual activity|rate limit|temporarily locked|账号.{0,12}(?:封禁|冻结|停用|限制)|访问.{0,8}(?:受限|拒绝)|尝试次数过多|风控/i.test(combined))return 'restricted';
+  if(/\b(log\s?out|sign\s?out|my account|my profile)\b|退出登录|我的账户|个人中心/i.test(labels)&&!page.controls.some(control=>control.type==='password'))return 'authenticated';
+  if(/email (?:has been )?verified|account (?:has been )?activated|verification successful|验证成功|激活成功|确认成功/i.test(text)&&!/not verified|verification failed|验证失败/i.test(text))return 'verified';
+  if(hasPassword&&(/(?:incorrect|invalid|wrong).{0,30}(?:password|credentials)|password.{0,30}(?:incorrect|invalid|wrong)|密码.{0,20}(?:错误|无效|不正确)|凭据.{0,12}(?:错误|无效)/i.test(text)))return 'bad_password';
+  if(/(?:verify|confirm|activate) (?:your )?(?:email|account)|verification (?:email|link).{0,30}(?:sent|required)|check your (?:email|inbox)|请.{0,12}(?:验证|确认|激活).{0,12}(?:邮箱|账户)|验证邮件.{0,12}(?:已发送|已寄出)/i.test(text))return 'verification_required';
+  if(/(?:email|e-mail).{0,40}(?:already (?:exists|registered|in use)|is taken)|(?:already (?:exists|registered|in use)).{0,40}(?:email|e-mail)|邮箱.{0,30}(?:已存在|已注册|已被使用)/i.test(text))return 'email_exists';
+  if(/(?:user\s?name|handle).{0,40}(?:already (?:exists|taken|in use)|unavailable)|(?:already (?:exists|taken|in use)|unavailable).{0,40}(?:user\s?name|handle)|用户名.{0,30}(?:已存在|已占用|不可用)/i.test(text))return 'username_taken';
+  if(/registration (?:failed|error)|unable to (?:create|register) (?:account|user)|error (?:creating|registering) (?:account|user)|注册.{0,12}(?:失败|出错)|无法创建账户/i.test(text))return 'registration_failed';
+  return 'unknown';
+}
+
+export function accountIssueForSignal(signal:AccountPageSignal):{status:AccountStatus;diagnostic:AccountDiagnostic;message:string}|undefined{
+  switch(signal){
+    case 'bad_password':return {status:'credentials_invalid',diagnostic:diagnostic('bad_password','平台拒绝了已保存的登录凭据。'),message:'保存的账号密码被平台拒绝，请更新凭据后重试'};
+    case 'restricted':return {status:'restricted',diagnostic:diagnostic('restricted','平台报告账号或访问受到限制。'),message:'平台报告账号或访问受限，已暂停自动操作'};
+    case 'email_exists':return {status:'unknown',diagnostic:diagnostic('email_exists','平台注册页报告邮箱已存在，不能确认账号归属。'),message:'平台报告邮箱已存在，请核对原账号，不会自动创建新账号'};
+    case 'registration_failed':return {status:'unknown',diagnostic:diagnostic('registration_failed','平台注册失败，原因未能安全确定。'),message:'平台注册失败且原因不明确，已暂停等待检查'};
+    case 'verification_required':return {status:'needs_verification',diagnostic:diagnostic('verification_required','平台要求完成邮箱验证。',true),message:'账号需要完成邮箱验证'};
+    default:return undefined;
+  }
+}
+
+export function canRetryGeneratedUsername(account:Pick<Account,'status'|'source'|'registrationAttempts'>):boolean{return account.status==='draft'&&account.source==='generated'&&(account.registrationAttempts??0)<=1}
+
+export function accountStateBlock(account:Pick<Account,'status'|'source'>|undefined):{status:'needs_input';message:string}|undefined{
+  if(account?.status==='restricted')return {status:'needs_input',message:'该账号或访问已被平台限制，请确认解除限制后删除并重新导入账号'};
+  if(account?.status==='credentials_invalid')return {status:'needs_input',message:'已保存的账号凭据不可用，请编辑账号并更新密码'};
+  if(account?.status==='draft'&&account.source!=='generated')return {status:'needs_input',message:'账号来源不明，不会自动提交注册'};
+  return undefined;
+}
+
+async function requireExistingAccount(context:ExecutionContext):Promise<{account:Account;password:string}>{
+  const existing=context.getAccount();if(!existing)throw new Error('尚未保存当前渠道的账号，不会尝试登录');
+  const blocked=accountStateBlock(existing);if(blocked)throw new Error(blocked.message);
+  if(existing.channelId!==context.channel.id||existing.email.toLowerCase()!==context.site.email.toLowerCase())throw new Error('账号与当前渠道或邮箱不匹配');
+  const password=await context.secrets.get(`account:${existing.id}`);
+  if(!password){await context.saveAccount({...existing,status:'credentials_invalid',hasPassword:false,diagnostic:diagnostic('password_missing','本机保险箱中没有此账号的密码。')});throw new Error('账号密码缺失，请更新凭据后重试');}
+  const account={...existing,lastUsedAt:new Date().toISOString()};await context.saveAccount(account);return {account,password};
+}
+
 async function ensureAccount(context: ExecutionContext): Promise<{ account: Account; password: string }> {
   const existing = context.getAccount();
-  if (existing) {
-    if (existing.channelId !== context.channel.id || existing.email.toLowerCase() !== context.site.email.toLowerCase()) throw new Error('账号与当前渠道或邮箱不匹配');
-    const password = await context.secrets.get(`account:${existing.id}`);
-    if (!password) throw new Error('账号密码缺失，请手动处理');
-    return { account: existing, password };
-  }
+  if (existing)return requireExistingAccount(context);
   const slug = context.site.domain.replace(/^www\./i, '').split('.')[0].replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 16) || 'site';
-  const account: Account = { id: randomUUID(), channelId: context.channel.id, email: context.site.email, username: `${slug}${randomBytes(3).toString('hex')}`, createdAt: new Date().toISOString(), status: 'saved', hasPassword: true };
+  const createdAt=new Date().toISOString();
+  const account: Account = { id: randomUUID(), channelId: context.channel.id, email: context.site.email, username: `${slug}${randomBytes(3).toString('hex')}`, createdAt, updatedAt:createdAt, status: 'draft', source:'generated', registrationAttempts:0, hasPassword: true };
   const password = `Lf7!${randomBytes(24).toString('base64url')}`;
   await context.saveAccount(account, password);
   return { account, password };
 }
 
-function authenticated(page: Observation): boolean {
-  return page.controls.some(control => /\b(log\s?out|sign\s?out|my account|my profile)\b|退出登录|我的账户|个人中心/i.test(control.label)) && !page.controls.some(control => control.type === 'password');
-}
-
-function confirmed(page: Observation): boolean {
-  return /email (has been )?verified|account (has been )?activated|verification successful|验证成功|激活成功|确认成功/i.test(page.text) && !/not verified|verification failed|验证失败/i.test(page.text);
-}
-
-async function verifyPendingAccount(context: ExecutionContext, window: BrowserWindow, pendingNow = false): Promise<ExecutionResult | undefined> {
+async function verifyPendingAccount(context: ExecutionContext, window: BrowserWindow, pendingNow = false): Promise<ExecutionResult | 'retrying' | undefined> {
   const account = context.getAccount();
   if (!account || (!pendingNow && context.task.checkpoint !== 'account_registration_submitted')) return undefined;
   const current = await observe(window, []);
-  if (account.status === 'registered' || authenticated(current) || confirmed(current)) {
-    if (account.status !== 'registered') await context.saveAccount({ ...account, status: 'registered' });
+  const signal=classifyAccountPage(current);
+  if (signal==='authenticated' || signal==='verified' || (account.status==='registered'&&signal==='unknown')) {
+    const now=new Date().toISOString();
+    if (account.status !== 'registered'||account.diagnostic) await context.saveAccount({ ...account, status: 'registered', registeredAt:account.registeredAt??now, verifiedAt:signal==='verified'?now:account.verifiedAt, lastUsedAt:now, diagnostic:undefined });
     context.checkpoint({ checkpoint: 'account_verified' });
     return undefined;
   }
-  if (/invalid|already exists|already registered|error creating|注册失败|邮箱已存在|密码无效/i.test(current.text) && current.controls.some(control => control.formHasPassword)) {
-    return { status: 'needs_input', message: '注册页面报告错误，请人工检查', checkpoint: 'account_registration_submitted' };
+  if(signal==='username_taken'&&canRetryGeneratedUsername(account)){
+    const slug=context.site.domain.replace(/^www\./i,'').split('.')[0].replace(/[^a-z0-9]/gi,'').toLowerCase().slice(0,16)||'site';
+    await context.saveAccount({...account,username:`${slug}${randomBytes(4).toString('hex')}`,diagnostic:diagnostic('username_taken','平台明确报告用户名不可用，已为尚未创建的草稿更换用户名。',true)});
+    context.checkpoint({checkpoint:'account_registration_retry'});
+    mustContinue(context);await window.loadURL(context.channel.submitUrl);
+    return 'retrying';
   }
-  if (!context.channel.emailRequired) return { status: 'needs_input', message: '账号注册已提交，请确认平台结果后继续', checkpoint: 'account_registration_submitted' };
+  if(signal==='username_taken'){
+    const issue={status:'unknown' as const,diagnostic:diagnostic('username_taken','平台报告用户名不可用，自动更换次数已用尽。'),message:'用户名仍不可用，已暂停等待检查'};
+    await context.saveAccount({...account,status:issue.status,diagnostic:issue.diagnostic});
+    return {status:'needs_input',message:issue.message,checkpoint:'account_registration_submitted'};
+  }
+  const issue=accountIssueForSignal(signal);
+  if(issue&&signal!=='verification_required'){
+    await context.saveAccount({...account,status:issue.status,diagnostic:issue.diagnostic});
+    return {status:'needs_input',message:issue.message,checkpoint:'account_registration_submitted'};
+  }
+  if (!context.channel.emailRequired){
+    await context.saveAccount({...account,status:'unknown',diagnostic:diagnostic('registration_unknown','注册已提交，但平台未提供可确认的成功或失败证据。')});
+    return { status: 'needs_input', message: '注册结果无法确认，请检查原账号；不会重复注册', checkpoint: 'account_registration_submitted' };
+  }
+  if(signal==='verification_required')await context.saveAccount({...account,status:'needs_verification',diagnostic:diagnostic('verification_required','平台要求完成邮箱验证。',true)});
+  else await context.saveAccount({...account,status:'unknown',diagnostic:diagnostic('registration_unknown','注册已提交，正在等待可确认账号状态的验证邮件。')});
   const link = await findVerification(context);
   if (!link) return { status: 'needs_input', message: '等待匹配的验证邮件，请稍后重试或手动完成', checkpoint: 'account_registration_submitted' };
+  await context.saveAccount({...account,status:'needs_verification',diagnostic:diagnostic('verification_required','已找到匹配的验证邮件，正在确认账号。',true)});
   mustContinue(context);
   await window.loadURL(link);
   const page = await observe(window, []);
-  if (authenticated(page) || confirmed(page)) {
-    await context.saveAccount({ ...account, status: 'registered' });
+  const verifiedSignal=classifyAccountPage(page),verifiedIssue=accountIssueForSignal(verifiedSignal);
+  if(verifiedIssue&&verifiedSignal!=='verification_required'){
+    await context.saveAccount({...account,status:verifiedIssue.status,diagnostic:verifiedIssue.diagnostic});
+    return {status:'needs_input',message:verifiedIssue.message,checkpoint:'account_registration_submitted'};
+  }
+  if (verifiedSignal==='authenticated'||verifiedSignal==='verified') {
+    const now=new Date().toISOString();await context.saveAccount({ ...account, status: 'registered',registeredAt:account.registeredAt??now,verifiedAt:now,lastUsedAt:now,diagnostic:undefined });
     context.checkpoint({ checkpoint: 'account_verified' });
     return undefined;
   }
@@ -227,20 +297,31 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
   if (context.task.checkpoint === 'existing_link') return { status: 'skipped', message: '发现既有公开链接，不计为本次新增', publicUrl: context.task.publicUrl, checkpoint: 'existing_link' };
   if (context.task.submittedAt || ['submitting','submission_uncertain','submitted'].includes(context.task.checkpoint ?? '')) return { status: 'review', message: '此前已经提交，等待公开结果核验', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt };
   if (context.channel.articleRequired && !context.task.draft?.body) return { status: 'needs_input', message: '该渠道需要先准备文章内容' };
+  const initialBlock=accountStateBlock(context.getAccount());if(initialBlock)return {...initialBlock,checkpoint:context.task.checkpoint};
   let window: BrowserWindow;
   let lastCheckpoint = context.task.checkpoint;
   try { window = await browserFor(context); } catch (error) { return { status: 'failed', message: error instanceof Error ? error.message : '浏览器打开失败' }; }
   try {
     const pending = await verifyPendingAccount(context, window);
-    if (pending) { window.show(); return pending; }
-    if (context.task.checkpoint === 'account_registration_submitted') lastCheckpoint = 'account_verified';
+    if (pending&&pending!=='retrying') { window.show(); return pending; }
+    if(pending==='retrying')lastCheckpoint='account_registration_retry';
+    else if (context.task.checkpoint === 'account_registration_submitted') lastCheckpoint = 'account_verified';
     const maxSteps = Math.min(Math.max(context.settings.maxSteps || 1, 1), 50);
     for (let step = 0; step < maxSteps; step++) {
       mustContinue(context);
       const existing = context.getAccount();
+      const stateBlock=accountStateBlock(existing);if(stateBlock){window.show();return {...stateBlock,checkpoint:lastCheckpoint};}
       const knownPassword = existing ? await context.secrets.get(`account:${existing.id}`) : undefined;
       const page = await observe(window, knownPassword ? [knownPassword] : []);
       if (!isAllowedTaskUrl(page.url, context.channel.allowedHosts)) throw new Error('页面跳转到未允许域名');
+      if(existing){
+        const signal=classifyAccountPage(page),issue=accountIssueForSignal(signal);
+        if(signal==='authenticated'||signal==='verified'){
+          if(existing.status!=='registered'||existing.diagnostic){const now=new Date().toISOString();await context.saveAccount({...existing,status:'registered',registeredAt:existing.registeredAt??now,verifiedAt:signal==='verified'?now:existing.verifiedAt,lastUsedAt:now,diagnostic:undefined});}
+        }else if(issue){
+          await context.saveAccount({...existing,status:issue.status,diagnostic:issue.diagnostic});window.show();return {status:'needs_input',message:issue.message,checkpoint:lastCheckpoint};
+        }
+      }
       const termsNeedHuman = page.terms && (!manualTermsSeen.has(context.task.id) || !page.termsChecked);
       if (termsNeedHuman) manualTermsSeen.add(context.task.id);
       if (page.captcha || page.phone || page.identity || page.payment || termsNeedHuman) {
@@ -266,7 +347,7 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
         if (control.filled) throw new Error('该字段已有内容，请人工确认后修改');
         let account = existing;
         let password = knownPassword;
-        if (action.ref.startsWith('account.') && (!account || !password)) ({ account, password } = await ensureAccount(context));
+        if (action.ref.startsWith('account.')) ({ account, password } = await ensureAccount(context));
         if (action.ref === 'account.password' && control.type !== 'password') throw new Error('密码只能填写到密码控件');
         if (control.type === 'password' && action.ref !== 'account.password') throw new Error('密码控件字段不匹配');
         if ((action.ref === 'account.email' || action.ref === 'site.email') && control.type !== 'email' && !/e.?mail|邮箱/i.test(`${control.name} ${control.label}`)) throw new Error('邮箱只能填写到邮箱控件');
@@ -292,6 +373,9 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
         if (classification === 'submission' && action.purpose === 'register') { window.show(); return { status: 'needs_input', message: '注册和投稿按钮用途冲突，请人工处理' }; }
         if (control.tag !== 'a' && control.formHasInput && (classification === 'registration' || (classification === 'uncertain' && action.purpose === 'register' && control.formHasPassword))) {
           const { account } = await ensureAccount(context);
+          if(account.status!=='draft'||account.source!=='generated'){
+            window.show();return {status:'needs_input',message:'已有账号记录需要先登录核验；不会重复提交注册',checkpoint:lastCheckpoint};
+          }
           const previousCheckpoint = lastCheckpoint;
           lastCheckpoint = 'account_registration_submitted';
           context.checkpoint({ checkpoint: lastCheckpoint });
@@ -302,14 +386,16 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
             window.show();
             return { status: 'needs_input', message: '注册控件已变化或被阻止，未执行提交', checkpoint: previousCheckpoint };
           }
-          await context.saveAccount({ ...account, status: context.channel.emailRequired ? 'needs_verification' : 'saved' });
+          await context.saveAccount({...account,registrationAttempts:(account.registrationAttempts??0)+1,lastUsedAt:new Date().toISOString()});
           await new Promise(resolve => setTimeout(resolve, 900));
           const pending = await verifyPendingAccount(context, window, true);
+          if (pending==='retrying'){lastCheckpoint='account_registration_retry';continue;}
           if (pending) { window.show(); return pending; }
           lastCheckpoint = 'account_verified';
           continue;
         }
         if (classification === 'submission') {
+          if(context.channel.accountRequired){const active=context.getAccount();if(!active||active.status!=='registered'){window.show();return {status:'needs_input',message:'账号尚未确认已登录，不会提交内容',checkpoint:lastCheckpoint};}}
           const previousCheckpoint = lastCheckpoint;
           const submittedAt = new Date().toISOString();
           lastCheckpoint = 'submitting';
@@ -329,6 +415,7 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
           window.show();
           return { status: 'needs_input', message: '按钮用途不明确，请人工处理', checkpoint: lastCheckpoint };
         }
+        await requireExistingAccount(context);
         mustContinue(context);
         if (!await applyAction(window, control, action, context.channel.allowedHosts)) throw new Error('页面控件已变化或表单目标被阻止');
       }
