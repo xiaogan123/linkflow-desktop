@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Store, emptyState } from '../src/main/store';
-import { dateKey, monthKey, makePlan, nextTask, markVerified, recoverInterrupted, expireReviews, liveThisMonth } from '../src/main/planner';
+import { dateKey, monthKey, makePlan, nextTask, markVerified, recoverInterrupted, expireReviews, liveThisMonth, applyLinkResult } from '../src/main/planner';
 import type { Channel, Site, Task } from '../src/shared/types';
 
 const now=new Date('2026-09-26T04:00:00Z');
@@ -23,3 +23,6 @@ test('SQLite update rollback leaves unchanged state on callback error',()=>{cons
 test('SQLite snapshot is independent and secrets never enter state',()=>{const store=new Store(':memory:');store.setCipher('apiKey','encrypted-cipher');const snapshot=store.read();snapshot.settings.model='edited';assert.equal(store.read().settings.model,'');assert(!JSON.stringify(store.read()).includes('encrypted-cipher'));assert.equal(store.getCipher('apiKey'),'encrypted-cipher');store.close()});
 test('restored queued final submission is quarantined before task claim',()=>{const {s,site,matches}=fixture();makePlan(s,site,matches,now);s.tasks[0].submittedAt=now.toISOString();s.tasks[0].checkpoint='submitting';recoverInterrupted(s,now);assert.equal(s.tasks[0].status,'needs_input');assert.equal(nextTask(s,now),undefined)});
 test('restart before final write restores the reserved retry attempt',()=>{const {s,site,matches}=fixture();makePlan(s,site,matches,now);s.tasks[0].status='running';s.tasks[0].attempts=s.settings.maxAttempts;recoverInterrupted(s,now);assert.equal(s.tasks[0].attempts,s.settings.maxAttempts-1);assert.equal(nextTask(s,now)?.id,s.tasks[0].id)});
+
+test('network errors preserve live evidence while confirmed absent pages need attention',()=>{const {s,site,matches}=fixture();const [t]=makePlan(s,site,matches,now);markVerified(t,now,'https://channel0.com/post','nofollow');applyLinkResult(t,{found:false,outcome:'unreachable',url:t.publicUrl!,rel:'',reason:'HTTP 503'},new Date('2026-09-27'));assert.equal(t.status,'live');assert.equal(t.linkCheck,'unreachable');const first=t.firstLiveAt;applyLinkResult(t,{found:false,outcome:'absent',url:t.publicUrl!,rel:'',reason:'No direct link'},new Date('2026-09-28'));assert.equal(t.status,'needs_input');assert.equal(t.firstLiveAt,first)});
+test('official API article channels can enter monthly queue',()=>{const {s,site,matches}=fixture();matches[0].channel.automation='api';assert.equal(makePlan(s,site,matches,now)[0].channelId,'c0')});

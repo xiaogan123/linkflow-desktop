@@ -1,13 +1,21 @@
 import { lookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
 import { load } from 'cheerio';
 import type { Category, LinkResult } from '../shared/types.js';
 
 const MAX_HTML_BYTES = 1_000_000;
+const MAX_DOH_BYTES = 65_536;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 5;
+const DOH_HOST = 'cloudflare-dns.com';
+const DOH_ADDRESS = '1.1.1.1';
+
+interface ResolvedAddress {
+  address: string;
+  family: number;
+}
 
 export interface WebsiteAnalysis {
   url: string;
@@ -19,8 +27,11 @@ export interface WebsiteAnalysis {
 }
 
 export interface PublicFetchDependencies {
-  resolve: (host: string) => Promise<Array<{ address: string; family: number }>>;
-  request: (url: URL, pinned: { address: string; family: number }, signal?: AbortSignal) => Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>;
+  resolve: (host: string) => Promise<ResolvedAddress[]>;
+  resolvePublic?: (host: string, signal?: AbortSignal) => Promise<ResolvedAddress[]>;
+  request: (url: URL, pinned: ResolvedAddress, signal?: AbortSignal) => Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>;
+  /** Tests may shorten deadlines without changing production network policy. */
+  timeoutMs?: number;
 }
 
 export function nextHtmlByteCount(current: number, chunkBytes: number): number {
@@ -56,6 +67,186 @@ export function isPublicIpAddress(address: string): boolean {
   return true;
 }
 
+export function isProxyFakeDnsAddress(address: string): boolean {
+  if (isIP(address) !== 4) return false;
+  const [a, b] = address.split('.').map(Number);
+  return a === 198 && (b === 18 || b === 19);
+}
+
+export function createPinnedLookup(pinned: ResolvedAddress): LookupFunction {
+  return (_host, options, callback) => {
+    if (options.all) {
+      callback(null, [pinned]);
+      return;
+    }
+    callback(null, pinned.address, pinned.family);
+  };
+}
+
+function runWithDeadline<T>(
+  operation: (boundedSignal: AbortSignal) => Promise<T>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Request aborted'));
+      return;
+    }
+    const controller = new AbortController();
+    let settled = false;
+    let deadline: ReturnType<typeof setTimeout>;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      signal?.removeEventListener('abort', abort);
+    };
+    const succeed = (value: T) => {
+      if (settled) return;
+      cleanup();
+      resolve(value);
+      controller.abort();
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      cleanup();
+      reject(error);
+      controller.abort();
+    };
+    const abort = () => {
+      fail(new Error('Request aborted'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    deadline = setTimeout(() => fail(new Error(timeoutMessage)), timeoutMs);
+    Promise.resolve()
+      .then(() => operation(controller.signal))
+      .then(succeed, fail);
+  });
+}
+
+interface DnsJsonAnswer {
+  type?: unknown;
+  data?: unknown;
+}
+
+interface DnsJsonResponse {
+  Status?: unknown;
+  TC?: unknown;
+  Answer?: unknown;
+}
+
+export function parsePublicDnsResponse(body: Buffer): ResolvedAddress[] {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(body.toString('utf8'));
+  } catch {
+    throw new Error('Encrypted public DNS returned invalid JSON');
+  }
+  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+    throw new Error('Encrypted public DNS returned a malformed response');
+  }
+  const payload = decoded as DnsJsonResponse;
+  if (!Number.isInteger(payload.Status) || payload.Status !== 0) {
+    throw new Error(`Encrypted public DNS returned status ${String(payload.Status)}`);
+  }
+  if (payload.TC === true) throw new Error('Encrypted public DNS response was truncated');
+  if (payload.Answer !== undefined && !Array.isArray(payload.Answer)) {
+    throw new Error('Encrypted public DNS returned malformed answers');
+  }
+
+  const addresses: ResolvedAddress[] = [];
+  for (const raw of (payload.Answer ?? []) as DnsJsonAnswer[]) {
+    if (!raw || typeof raw !== 'object') throw new Error('Encrypted public DNS returned a malformed answer');
+    if (raw.type !== 1 && raw.type !== 28) continue; // CNAME and other non-address answers are expected.
+    if (typeof raw.data !== 'string') throw new Error('Encrypted public DNS returned a malformed address');
+    const family = isIP(raw.data);
+    if (family !== (raw.type === 1 ? 4 : 6) || !isPublicIpAddress(raw.data)) {
+      throw new Error('Encrypted public DNS returned a private, reserved, or malformed address');
+    }
+    addresses.push({ address: raw.data, family });
+  }
+  return addresses;
+}
+
+function queryPublicDns(host: string, type: 'A' | 'AAAA', signal: AbortSignal): Promise<ResolvedAddress[]> {
+  const url = new URL(`https://${DOH_HOST}/dns-query`);
+  url.searchParams.set('name', host);
+  url.searchParams.set('type', type);
+  return new Promise((resolve, reject) => {
+    const request = https.request(url, {
+      method: 'GET',
+      minVersion: 'TLSv1.2',
+      servername: DOH_HOST,
+      lookup: createPinnedLookup({ address: DOH_ADDRESS, family: 4 }),
+      headers: {
+        accept: 'application/dns-json',
+        'accept-encoding': 'identity',
+        'user-agent': 'Linkflow/1.0 (+public-link-verification)',
+      },
+    }, (reply) => {
+      if (reply.statusCode !== 200) {
+        reply.resume();
+        reject(new Error(`Encrypted public DNS returned HTTP ${reply.statusCode ?? 0}`));
+        return;
+      }
+      const contentType = String(reply.headers['content-type'] ?? '').toLowerCase();
+      if (!/^application\/dns-json(?:;|\s|$)/.test(contentType)) {
+        reply.resume();
+        reject(new Error('Encrypted public DNS returned an unexpected content type'));
+        return;
+      }
+      if (reply.headers['content-encoding'] && reply.headers['content-encoding'] !== 'identity') {
+        reply.resume();
+        reject(new Error('Compressed encrypted DNS response is unsupported'));
+        return;
+      }
+      const declaredHeader = reply.headers['content-length'];
+      const declaredLength = Number(declaredHeader ?? 0);
+      if (declaredHeader !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_DOH_BYTES)) {
+        reply.destroy(new Error('Encrypted public DNS response exceeds size limit'));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      reply.on('data', (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (!Number.isSafeInteger(bytes) || bytes > MAX_DOH_BYTES) {
+          request.destroy(new Error('Encrypted public DNS response exceeds size limit'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      reply.on('end', () => {
+        try { resolve(parsePublicDnsResponse(Buffer.concat(chunks))); }
+        catch (error) { reject(error); }
+      });
+      reply.on('error', reject);
+    });
+    const deadline = setTimeout(() => request.destroy(new Error('Encrypted public DNS timed out')), REQUEST_TIMEOUT_MS);
+    const abort = () => request.destroy(new Error('Request aborted'));
+    signal.addEventListener('abort', abort, { once: true });
+    request.on('close', () => {
+      clearTimeout(deadline);
+      signal.removeEventListener('abort', abort);
+    });
+    request.on('error', reject);
+    request.end();
+  });
+}
+
+async function resolveWithEncryptedPublicDns(host: string, signal: AbortSignal): Promise<ResolvedAddress[]> {
+  const [ipv4, ipv6] = await Promise.all([
+    queryPublicDns(host, 'A', signal),
+    queryPublicDns(host, 'AAAA', signal),
+  ]);
+  const unique = new Map<string, ResolvedAddress>();
+  for (const item of [...ipv4, ...ipv6]) unique.set(item.address, item);
+  if (!unique.size) throw new Error('Encrypted public DNS returned no public addresses');
+  return [...unique.values()];
+}
+
 export function normalizePublicUrl(input: string): URL {
   const raw = input.trim();
   const parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
@@ -80,23 +271,31 @@ export function normalizePublicUrl(input: string): URL {
 // the pinned native request below; host and DNS checks run in both paths.
 export async function fetchPublicHtml(input: string, signal?: AbortSignal, dependencies?: PublicFetchDependencies): Promise<{ url: string; html: string }> {
   let current = normalizePublicUrl(input);
+  const timeoutMs = dependencies?.timeoutMs ?? REQUEST_TIMEOUT_MS;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
     if (signal?.aborted) throw new Error('Request aborted');
     const host = current.hostname.replace(/^\[|\]$/g, '');
-    let addresses: Array<{ address: string; family: number }>;
+    let addresses: ResolvedAddress[];
     if (isIP(host)) {
       addresses = [{ address: host, family: isIP(host) }];
     } else {
-      let deadline: ReturnType<typeof setTimeout> | undefined;
-      try {
-        addresses = await Promise.race([
-          dependencies ? dependencies.resolve(host) : lookup(host, { all: true, verbatim: true }),
-          new Promise<never>((_resolve, reject) => {
-            deadline = setTimeout(() => reject(new Error('DNS lookup timed out')), REQUEST_TIMEOUT_MS);
-          }),
-        ]);
-      } finally {
-        if (deadline) clearTimeout(deadline);
+      addresses = await runWithDeadline(
+        () => dependencies ? dependencies.resolve(host) : lookup(host, { all: true, verbatim: true }),
+        signal,
+        timeoutMs,
+        'DNS lookup timed out',
+      );
+      // Some proxy modes synthesize the benchmarking range for every public host.
+      // Re-resolve those names over pinned TLS; never connect to or whitelist a fake IP.
+      if (addresses.length > 0 && addresses.every(({ address }) => isProxyFakeDnsAddress(address))) {
+        addresses = await runWithDeadline(
+          (boundedSignal) => dependencies?.resolvePublic
+            ? dependencies.resolvePublic(host, boundedSignal)
+            : resolveWithEncryptedPublicDns(host, boundedSignal),
+          signal,
+          timeoutMs,
+          'Encrypted public DNS timed out',
+        );
       }
     }
     if (signal?.aborted) throw new Error('Request aborted');
@@ -107,10 +306,10 @@ export async function fetchPublicHtml(input: string, signal?: AbortSignal, depen
     // switch the connection to a private host between validation and the request.
     const pinned = addresses[0];
     const transport = current.protocol === 'https:' ? https : http;
-    const response = dependencies ? await dependencies.request(current, pinned, signal) : await new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+    const response = await runWithDeadline((boundedSignal) => dependencies ? dependencies.request(current, pinned, boundedSignal) : new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
       const request = transport.request(current, {
         method: 'GET',
-        lookup: (_host, _options, callback) => callback(null, pinned.address, pinned.family),
+        lookup: createPinnedLookup(pinned),
         headers: { 'accept': 'text/html,application/xhtml+xml', 'accept-encoding': 'identity', 'user-agent': 'Linkflow/1.0 (+public-link-verification)' },
       }, (reply) => {
         const status = reply.statusCode ?? 0;
@@ -133,9 +332,11 @@ export async function fetchPublicHtml(input: string, signal?: AbortSignal, depen
       request.on('close', () => clearTimeout(deadline));
       request.setTimeout(REQUEST_TIMEOUT_MS, () => request.destroy(new Error('Request timed out')));
       request.on('error', reject);
-      if (signal) signal.addEventListener('abort', () => request.destroy(new Error('Request aborted')), { once: true });
+      const abort = () => request.destroy(new Error('Request aborted'));
+      boundedSignal.addEventListener('abort', abort, { once: true });
+      request.on('close', () => boundedSignal.removeEventListener('abort', abort));
       request.end();
-    });
+    }), signal, timeoutMs, 'Request timed out');
     nextHtmlByteCount(0, response.body.length);
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       if (redirect === MAX_REDIRECTS) throw new Error('Too many redirects');
@@ -220,29 +421,34 @@ export function findDirectLink(html: string, pageUrl: string, targetUrl: string)
       if (normalizedHost(destination.href) !== targetHost) return;
       result = {
         found: true,
+        outcome: 'found',
         url: pageUrl,
         rel: clean($(element).attr('rel')).toLowerCase(),
         reason: 'Public HTML contains a direct anchor to the target host; indexing is not verified',
       };
     } catch { /* Ignore malformed anchors. */ }
   });
-  return result ?? { found: false, url: pageUrl, rel: '', reason: 'No direct anchor to the target host in public HTML' };
+  return result ?? { found: false, outcome: 'absent', url: pageUrl, rel: '', reason: 'No direct anchor to the target host in public HTML' };
 }
 
-export async function verifyLink(publicUrl: string, targetUrl: string, expectedDomain?: string, signal?: AbortSignal): Promise<LinkResult> {
+export async function verifyLink(publicUrl: string, targetUrl: string, expectedDomain?: string, signal?: AbortSignal, dependencies?: PublicFetchDependencies): Promise<LinkResult> {
   let sourceUrl = publicUrl;
   try {
     sourceUrl = normalizePublicUrl(publicUrl).href;
     normalizedHost(targetUrl);
     if (expectedDomain && !belongsToSource(sourceUrl, expectedDomain)) {
-      return { found: false, url: sourceUrl, rel: '', reason: 'Public page is outside the expected channel domain' };
+      return { found: false, outcome: 'invalid', url: sourceUrl, rel: '', reason: 'Public page is outside the expected channel domain' };
     }
-    const fetched = await fetchPublicHtml(sourceUrl, signal);
+  } catch (error) {
+    return { found: false, outcome: 'invalid', url: sourceUrl, rel: '', reason: error instanceof Error ? error.message : 'Invalid verification input' };
+  }
+  try {
+    const fetched = await fetchPublicHtml(sourceUrl, signal, dependencies);
     if (expectedDomain && !belongsToSource(fetched.url, expectedDomain)) {
-      return { found: false, url: fetched.url, rel: '', reason: 'Public page redirected outside the expected channel domain' };
+      return { found: false, outcome: 'invalid', url: fetched.url, rel: '', reason: 'Public page redirected outside the expected channel domain' };
     }
     return findDirectLink(fetched.html, fetched.url, targetUrl);
   } catch (error) {
-    return { found: false, url: sourceUrl, rel: '', reason: error instanceof Error ? error.message : 'Verification failed' };
+    return { found: false, outcome: 'unreachable', url: sourceUrl, rel: '', reason: error instanceof Error ? error.message : 'Verification failed' };
   }
 }

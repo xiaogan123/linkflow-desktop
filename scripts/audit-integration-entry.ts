@@ -2,6 +2,7 @@ import { app, session, BrowserWindow } from 'electron';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import {Store} from '../src/main/store';
 import { Controller } from '../src/main/controller';
 import { runBrowserTask, closeTaskBrowser } from '../src/integrations/browser';
 import type { ExecutionContext, Account } from '../src/shared/types';
@@ -26,6 +27,7 @@ const importedAccount=(status:Account['status']='unknown'):Account=>({id:'111111
 app.whenReady().then(async()=>{
  try{
  const blockedController=Object.create(Controller.prototype) as Controller;
+ (blockedController as any).drafting=new Set();
  const policyState={settings:{channelOverrides:{flathub:true,dev:true,medium:true}},tasks:[{id:'policy-task',siteId:'fixture-site',channelId:'flathub'}],sites:[{id:'fixture-site'}]};
  Object.defineProperty(blockedController,'store',{value:{read:()=>policyState}});
  let draftAiCalls=0;(blockedController as any).ai=()=>{draftAiCalls++;throw Error('AI must not run for disabled channels');};
@@ -35,6 +37,16 @@ app.whenReady().then(async()=>{
    await assert.rejects(blockedController.generateDraft('policy-task'),/渠道已停用/);
  }
  assert.equal(draftAiCalls,0);evidence.push({name:'disabled-channel-draft-and-override-guard',passed:true,aiCalls:draftAiCalls});
+ const draftStore=new Store(':memory:');const stamp=new Date().toISOString();const siteId='22222222-2222-4222-8222-222222222222';
+ draftStore.update(s=>s.sites.push({id:siteId,domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'AI information education',description:'Crypto information verification with affiliate disclosure',category:'ai',language:'zh',monthlyTarget:2,status:'ready',createdAt:stamp}));
+ const savedSecrets=new Map<string,string>();const fakeVault={ready:true,available:()=>true,get:async(k:string)=>savedSecrets.get(k),set:async(k:string,v:string)=>{savedSecrets.set(k,v)}};
+ const draftController=new Controller(draftStore,fakeVault as any,'');draftController.runtime.aiReady=true;
+ (draftController as any).ai=()=>({json:async()=>({title:'信息来源核验教程',description:'核对公开信息',body:('通过原文和日期核对信息，明确未知之处。'.repeat(30)+'\n\n').repeat(3)})});
+ await draftController.tick();const staged=draftStore.read();assert.equal(staged.tasks.length,1);assert.equal(staged.tasks[0].channelId,'telegraph');assert.equal(staged.tasks[0].checkpoint,'article_review');assert.equal(staged.tasks[0].status,'needs_input');assert.equal(staged.tasks[0].submittedAt,undefined);assert.equal(staged.accounts.length,0);assert.equal(staged.tasks[0].attempts,0);assert.match(staged.sites[0].error??'',/还缺 1 个/);
+ evidence.push({name:'real-controller-financial-draft-gate-and-eligibility',passed:true,accountCreated:false,published:false});
+ const abortAccount=new AbortController();const context=(draftController as any).context(staged.tasks[0],abortAccount.signal);abortAccount.abort();const author={id:'33333333-3333-4333-8333-333333333333',channelId:'telegraph',email:'owner@example.com',username:'owner',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:stamp};await context.saveAccount(author,'fixture-token-must-persist-after-response');assert.equal(savedSecrets.size,1);assert.equal(draftStore.read().accounts[0].status,'registered');await assert.rejects(context.saveAccount({...author,status:'unknown'}),/暂停/);
+ evidence.push({name:'inflight-registration-response-retains-token-after-pause',passed:true});draftStore.close();
+
  await scenario('register-fill-publish-observed-public-url',{
  '/start':'<form method="post" action="/editor"><label>Email<input name="email" type="email"></label><label>Password<input name="password" type="password"></label><button type="submit">Create account</button></form>',
  '/editor':'<a href="/logout">Log out</a><form method="post" action="/listing/123"><label>Website<input name="website" type="url"></label><label>Title<input name="title"></label><button type="submit">Publish listing</button></form>',

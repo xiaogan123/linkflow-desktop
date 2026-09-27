@@ -1,4 +1,5 @@
 import type { Category, Channel, Site } from '../shared/types.js';
+import {eligibilityFor} from './eligibility';
 
 const checkedAt = '2026-09-27';
 type Entry = Pick<Channel, 'id'|'name'|'domain'|'submitUrl'|'categories'|'kind'|'free'|'freeNote'|'quality'|'qualityReason'|'rulesUrl'|'notes'> &
@@ -22,6 +23,7 @@ function channel(entry: Entry): Channel {
 // 渠道必须面向相关受众，并承载真实的资料页、产品、作品或文章。
 // A/B/C 仅表示编辑适配度，不代表域名权重、流量或预期 SEO 效果。
 export const CHANNELS: Channel[] = [
+  channel({id:'telegraph',name:'Telegraph',domain:'telegra.ph',submitUrl:'https://telegra.ph/',categories:['general','content','education','finance','ai','developer'],languages:['*'],kind:'article',free:'yes',freeNote:'官方发布接口无需付费，使用自动创建的作者令牌。',quality:'C',qualityReason:'可独立阅读的公开文章；不代表编辑背书或搜索引擎收录。',rulesUrl:'https://telegra.ph/api',notes:'通过官方 API 创建作者和文章，令牌仅加密保存在本机。文章须有独立价值，明确作者与网站关系，不批量复制或堆放链接。金融相关稿件先在客户端核对。',emailRequired:false,accountRequired:true,articleRequired:true,automation:'api'}),
   channel({ id:'product-hunt', name:'Product Hunt', domain:'producthunt.com', submitUrl:'https://www.producthunt.com/posts/new', categories:['software','ai','developer','design','business'], kind:'directory', free:'yes', freeNote:'普通产品发布免费；个人账号还需满足平台的发布权限要求。', quality:'A', qualityReason:'适合已经可用的数字产品，并由平台审核发布内容。', rulesUrl:'https://help.producthunt.com/en/articles/479557-how-to-post-a-product', notes:'每个真实产品只做一次有意义的发布；需完成个人账号引导并满足账号时长等要求，禁止拉票。', allowedHosts:['producthunt.com','www.producthunt.com'] }),
   channel({ id:'alternativeto', name:'AlternativeTo', domain:'alternativeto.net', submitUrl:'https://alternativeto.net/', categories:['software','ai','developer','design'], kind:'directory', free:'yes', freeNote:'可以自行提交新应用，但须通过邮箱验证和编辑审核。', quality:'A', qualityReason:'软件对比目录，提交项需有真实产品网址并进入审核队列。', rulesUrl:'https://alternativeto.net/faq/', notes:'邮箱验证后使用“Suggest new application”；待审条目不会公开。' }),
   channel({ id:'g2', name:'G2', domain:'g2.com', submitUrl:'https://sell.g2.com/create-a-profile', categories:['software','ai','developer','business'], kind:'directory', free:'yes', freeNote:'认领基础产品资料页免费，另有付费升级方案。', quality:'A', qualityReason:'面向软件采购者的产品资料和评价平台。', rulesUrl:'https://sell.g2.com/plans', notes:'只适用于真实软件产品；资格、资料审核和评价规则均由平台决定。', allowedHosts:['g2.com','sell.g2.com','my.g2.com'] }),
@@ -48,9 +50,9 @@ export const CHANNELS: Channel[] = [
   channel({ id:'itch-io', name:'itch.io', domain:'itch.io', submitUrl:'https://itch.io/game/new', categories:['design','content','software'], kind:'directory', free:'yes', freeNote:'创建账号、项目页和上传内容免费；出售内容时会涉及自选平台分成及支付费用。', quality:'A', qualityReason:'独立游戏、漫画、音乐和数字素材的真实作品页。', rulesUrl:'https://itch.io/docs/creators/getting-started', notes:'仅用于本人创作且实际可展示或下载的项目；新页面默认私有，需完成内容后改为公开。' }),
 
   channel({ id:'dev', name:'DEV Community', domain:'dev.to', submitUrl:'https://dev.to/new', categories:['developer','software','ai','education'], kind:'article', free:'yes', freeNote:'账号可免费发布社区文章。', quality:'B', qualityReason:'原创技术文章可在正文语境中为读者提供有用链接。', rulesUrl:'https://dev.to/terms', notes:'默认关闭：DEV 禁止主要为了推广或获取反向链接而写的内容。仅适合由人工主导的实质性技术文章。', articleRequired:true, enabled:false }),
-  channel({ id:'hashnode', name:'Hashnode', domain:'hashnode.com', submitUrl:'https://hashnode.com/onboard', categories:['developer','software','ai','education'], kind:'article', free:'yes', freeNote:'Hashnode 子域名上的技术出版物可免费建立；部分自定义域名功能需要 Pro。', quality:'B', qualityReason:'实质性教程或产品说明可服务技术读者。', rulesUrl:'https://hashnode.com/code-of-conduct', notes:'需发布原创且有用的技术内容；公开文章可能位于 hashnode.dev 子域名。', articleRequired:true, allowedHosts:['hashnode.com','hashnode.dev'] }),
+  channel({ id:'hashnode', name:'Hashnode', domain:'hashnode.com', submitUrl:'https://hashnode.com/onboard', categories:['developer','software','ai','education'], kind:'article', free:'yes', freeNote:'Hashnode 子域名上的技术出版物可免费建立；部分自定义域名功能需要 Pro。', quality:'B', qualityReason:'实质性教程或产品说明可服务技术读者。', rulesUrl:'https://hashnode.com/code-of-conduct', notes:'只做人工主导的技术知识分享；平台禁止 automated or bulk posting 和 SEO abuse。AI 辅助稿须人工审核，不能作为无人值守发布渠道。公开文章可能位于 hashnode.dev 子域名。', articleRequired:true, allowedHosts:['hashnode.com','hashnode.dev'] }),
   channel({ id:'medium', name:'Medium', domain:'medium.com', submitUrl:'https://medium.com/new-story', categories:['content','education','business','design','software','ai'], kind:'article', free:'conditional', freeNote:'免费账号可以发布文章；读者能否免费阅读取决于文章的付费墙设置。', quality:'B', qualityReason:'有实质内容的原创文章可以服务目标读者。', rulesUrl:'https://help.medium.com/hc/en-us/articles/213477928-Medium-Rules', notes:'默认关闭：Medium 禁止主要为提升外部流量或搜索排名而写的文章，必须由人工作者审核。', articleRequired:true, enabled:false }),
-  channel({ id:'substack', name:'Substack', domain:'substack.com', submitUrl:'https://substack.com/start', categories:['content','education','business','design'], kind:'profile', free:'conditional', freeNote:'免费出版物可添加主页链接，但仍需完成出版物和受众设置。', quality:'B', qualityReason:'真实运营的出版物可为读者提供相关自有资源。', rulesUrl:'https://support.substack.com/hc/en-us/articles/360059181172-How-do-I-add-links-to-my-Substack-homepage', notes:'浏览器流程只维护所有者现有出版物的主页链接；公开页面可能位于子域名。', automation:'browser', allowedHosts:['substack.com'] }),
+  channel({ id:'substack', name:'Substack', domain:'substack.com', submitUrl:'https://substack.com/start', categories:['content','education','business','design'], kind:'profile', free:'conditional', freeNote:'免费出版物可添加主页链接，但仍需完成出版物和受众设置。', quality:'B', qualityReason:'真实运营的出版物可为读者提供相关自有资源。', rulesUrl:'https://support.substack.com/hc/en-us/articles/360059181172-How-do-I-add-links-to-my-Substack-homepage', notes:'仅维护本人真实运营的出版物；不适合为外部引流或 SEO 新建出版物。按平台规则人工处理，不进行无人值守浏览器操作。', automation:'manual', allowedHosts:['substack.com'] }),
   channel({ id:'indie-hackers', name:'Indie Hackers', domain:'indiehackers.com', submitUrl:'https://www.indiehackers.com/products', categories:['business','software','ai','developer'], kind:'community', free:'unknown', freeNote:'产品目录提供“Add Your Product”，但该页面未明确当前账号或费用条件。', quality:'B', qualityReason:'创业者和产品社区，适合真实创作者及产品资料。', rulesUrl:'https://www.indiehackers.com/products', notes:'只做人工提交和真实参与；不得批量发帖。', allowedHosts:['indiehackers.com','www.indiehackers.com'] }),
   channel({ id:'show-hn', name:'Show HN', domain:'news.ycombinator.com', submitUrl:'https://news.ycombinator.com/submit', categories:['developer','software','ai','design'], kind:'community', free:'yes', freeNote:'社区提交免费，但发布权限可能取决于账号状态。', quality:'A', qualityReason:'本人制作且可直接体验的项目能获得技术社区的真实反馈。', rulesUrl:'https://news.ycombinator.com/showhn.html', notes:'只允许人工做一次性判断。项目必须可体验；不接受纯落地页、新闻通讯、拉票或例行版本更新。', emailRequired:false }),
 
@@ -81,11 +83,11 @@ const categoryLabel: Record<Category, string> = {
 
 export function matchChannels(site: Site, channels: Channel[]): Array<{channel: Channel; score: number; reason: string}> {
   return channels.flatMap(channel => {
-    if (!channel.enabled) return [];
+    if (!eligibilityFor(site,channel).eligible) return [];
     const direct = channel.categories.includes(site.category);
     const adjacent = !direct && (related[site.category] ?? []).some(category => channel.categories.includes(category));
     const general = channel.categories.includes('general');
-    const relevance = direct ? 70 : adjacent ? 42 : general ? (site.category === 'general' ? 55 : 20) : 0;
+    const relevance = direct ? 70 : adjacent ? 42 : general ? (channel.id==='telegraph'?55:site.category === 'general' ? 55 : 20) : 0;
     if (relevance < 35) return [];
     const language = site.language.toLowerCase().split('-')[0];
     const languageFit = channel.languages.includes(language) || channel.languages.includes('*');
@@ -96,6 +98,6 @@ export function matchChannels(site: Site, channels: Channel[]): Array<{channel: 
       (channel.free === 'yes' ? 5 : channel.free === 'conditional' ? 1 : 0));
     const label = categoryLabel[site.category];
     const reason = direct ? `适合${label}类受众` : adjacent ? `与${label}类受众相关` : '覆盖面较广，需人工确认适配度';
-    return [{ channel, score, reason: `${reason}；${channel.qualityReason}` }];
+    return [{ channel, score, reason: `${reason}；${eligibilityFor(site,channel).reason}；${channel.qualityReason}` }];
   }).sort((a, b) => b.score - a.score || a.channel.name.localeCompare(b.channel.name));
 }

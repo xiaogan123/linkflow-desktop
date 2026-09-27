@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Channel, Site, Task } from '../shared/types';
+import type { Channel, Site, Task, LinkResult } from '../shared/types';
 import type { State } from './store';
 
 export function dateKey(value:Date|string,timeZone:string):string{
@@ -32,7 +32,7 @@ export function makePlan(state:State,site:Site,matches:Match[],now=new Date()):T
   const created:Task[]=[];
   for(const {channel,reason}of matches){
     if(created.length>=available)break;
-    if(used.has(channel.domain)||channel.free==='unknown'||channel.automation!=='browser'||!channel.enabled||state.settings.channelOverrides[channel.id]===false)continue;
+    if(used.has(channel.domain)||channel.free==='unknown'||!['browser','api'].includes(channel.automation)||!channel.enabled||state.settings.channelOverrides[channel.id]===false)continue;
     // Space work through the remaining natural month without carrying missed months forward.
     let when=new Date(now.getTime()+created.length*7*86400000);
     while(monthKey(when,state.settings.timezone)!==monthKey(now,state.settings.timezone)&&when>now)when=new Date(when.getTime()-86400000);
@@ -52,3 +52,9 @@ export function nextTask(state:State,now=new Date()):Task|undefined{
   }).sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt))[0];
 }
 export function markVerified(t:Task,now:Date,url:string,rel:string){t.status='live';t.publicUrl=url;t.firstLiveAt??=now.toISOString();t.verifiedAt=now.toISOString();t.lastCheckedAt=now.toISOString();t.updatedAt=now.toISOString();t.linkRel=rel;t.message='公开页面已核验，外链已生效。'}
+
+export function applyLinkResult(task:Task,result:LinkResult,now=new Date()){
+ task.lastCheckedAt=now.toISOString();task.linkCheck=result.outcome??(result.found?'found':'unreachable');
+ if(result.found){if(task.checkpoint==='existing_link'){task.status='skipped';task.verifiedAt=now.toISOString();task.linkRel=result.rel;task.message='发现已有外链，保留来源记录，不计为本月新增。'}else markVerified(task,now,result.url,result.rel)}
+ else{task.message=result.reason||'尚未在公开页面发现目标链接';if(task.status==='live'&&result.outcome==='absent')task.status='needs_input'}
+}

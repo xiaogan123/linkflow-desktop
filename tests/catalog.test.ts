@@ -4,13 +4,13 @@ import { CHANNELS, matchChannels } from '../src/integrations/catalog.js';
 import type { Category, Site } from '../src/shared/types.js';
 
 function site(category: Category, language = 'en'): Site {
-  return { id:'s', domain:'example.com', url:'https://example.com/', email:'owner@example.com', name:'Example', description:'Example product', category, language, monthlyTarget:2, status:'ready', createdAt:'2026-09-26' };
+  return { id:'s', domain:'example.com', url:'https://example.com/', email:'owner@example.com', name:'Example', description:'Example product', category, language, monthlyTarget:2, status:'ready', createdAt:'2026-09-26',qualifications:category==='design'?{portfolio:'https://example.com/portfolio'}:undefined };
 }
 
 test('catalog contains distinct curated channels with source evidence', () => {
   assert.ok(CHANNELS.length >= 30 && CHANNELS.length <= 40);
   assert.equal(new Set(CHANNELS.map(channel => channel.id)).size, CHANNELS.length);
-  assert.equal(CHANNELS.filter(channel => channel.automation === 'browser').length, 5);
+  assert.equal(CHANNELS.filter(channel => channel.automation === 'browser').length, 4);
   for (const channel of CHANNELS) {
     assert.ok(channel.rulesUrl.startsWith('https://'), channel.id);
     assert.ok(channel.submitUrl.startsWith('https://'), channel.id);
@@ -55,3 +55,6 @@ test('matches a relevant audience and does not grant general links a high score'
   assert.ok(matchChannels(site('design','fr'), CHANNELS).some(({channel}) => channel.id === 'behance'));
   assert.equal(matchChannels(site('design','fr'), CHANNELS).some(({channel}) => channel.id === 'product-hunt'), false);
 });
+
+ test('AI financial content never gets developer or portfolio channels from category alone',()=>{const s=site('ai','zh');s.description='AI crypto education and referral disclosures';const matches=matchChannels(s,CHANNELS);for(const id of ['github','gitlab','behance','artstation','product-hunt'])assert.equal(matches.some(m=>m.channel.id===id),false,id);assert(matches.some(m=>m.channel.id==='telegraph'));assert.equal(CHANNELS.find(c=>c.id==='telegraph')?.automation,'api')});
+ test('declared real developer evidence opens developer profiles without forging category',()=>{const s=site('developer');assert(!matchChannels(s,CHANNELS).some(m=>m.channel.id==='github'));s.qualifications={developer:'https://github.com/example/project'};assert(matchChannels(s,CHANNELS).some(m=>m.channel.id==='github'))});

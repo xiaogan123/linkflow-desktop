@@ -25,10 +25,12 @@ function inspect(name,data){
 }
 async function walk(dir){const out=[];for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())out.push(...await walk(p));else if(e.isFile())out.push(p);}return out;}
 if(mode==='source'){
- const tracked=execFileSync('git',['ls-files','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);
+ const tracked=execFileSync('git',['ls-files','--cached','--others','--exclude-standard','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);
  if(!tracked.length)throw Error('No staged/tracked publication files');
+ const indexed=new Set(execFileSync('git',['ls-files','--cached','-z'],{encoding:'utf8'}).split('\0').filter(Boolean));
  for(const p of tracked){
-  const data=execFileSync('git',['show',':'+p],{maxBuffer:20*1024*1024});
+  if(indexed.has(p))inspect(p,execFileSync('git',['show',':'+p],{maxBuffer:20*1024*1024}));
+  let data;try{data=await readFile(p)}catch(error){if(error.code==='ENOENT')continue;throw error;}
   inspect(p,data);
  }
 }else{

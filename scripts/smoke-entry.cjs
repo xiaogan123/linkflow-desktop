@@ -43,15 +43,15 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await evaluate('(()=>{const e=document.querySelector("[aria-label=邮箱服务]");e.value="gmail";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);await capture('mail-presets.png');
   await clickText('账号');check('accounts page renders',await evaluate('document.body.innerText.includes("账号")'));await capture('accounts.png');check('accounts explain automatic creation instead of mandatory import',await evaluate('document.body.innerText.includes("随任务自动完成")&&document.body.innerText.includes("导入已有账号")'));
   await clickText('渠道');check('channel directory renders',await evaluate('document.body.innerText.includes("渠道")'));
-  check('channel directory is a complete list with 38 entries',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===38'));
-  await clickText('可自动执行');check('automation filter shows only five connected channels',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===5'));
+  check('channel directory is a complete list with 39 entries',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===39'));
+  await clickText('可自动执行');check('automation filter shows four browser and one API channel',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===5'));
   await clickText('全部渠道');await evaluate('(()=>{const e=document.querySelector("[aria-label=发布要求]");e.value="no-email";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);
-  check('no-email filter finds Show HN without inventing email requirements',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===1&&document.body.innerText.includes("Show HN")'));
+  check('no-email filter finds Show HN without inventing email requirements',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===2&&document.body.innerText.includes("Show HN")&&document.body.innerText.includes("Telegraph")'));
   await evaluate('(()=>{const e=document.querySelector("[aria-label=发布要求]");e.value="all";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(150);await capture('channels.png');
   await evaluate(`document.querySelector('[aria-label="查看 GitHub 详情"]').click()`);await delay(150);
   check('list rows disclose rules and honest unknown metrics',await evaluate('document.body.innerText.includes("GitHub 的适用条件")&&document.body.innerText.includes("暂无可靠数据")'));
 
-  await clickText('总览');await capture('overview-1080x760.png',1080,760);check('compact desktop has no horizontal viewport overflow',await evaluate('document.documentElement.scrollWidth<=window.innerWidth+1'));
+  await clickText('总览');await evaluate('document.querySelector(".site-name").click()');await delay(200);check('site details expose eligibility and separate search reports',await evaluate('document.body.innerText.includes("这个网站适合哪些渠道")&&document.body.innerText.includes("GSC 导入样本")&&document.body.innerText.includes("Bing API 样本")'));await evaluate('document.querySelector(".site-tools").scrollIntoView()');await capture('site-tools.png');await clickText('总览');await capture('overview-1080x760.png',1080,760);check('compact desktop has no horizontal viewport overflow',await evaluate('document.documentElement.scrollWidth<=window.innerWidth+1'));
   await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride');win.webContents.debugger.detach();
   await clickText('演示模式 · 返回真实数据');snapshot=await command('snapshot');check('demo never mutates real state',snapshot.sites.length===0);
   let denied=false;try{await command('site:add',{domain:'127.0.0.1',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('private-domain input rejected by main process',denied);
@@ -68,6 +68,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await command('settings:save',{mail:{host:'imap.gmail.com',port:993,user:'',secure:true}});
   await command('site:add',{domain:'example.com',email:'hello@example.com',monthlyTarget:2});snapshot=await command('snapshot');check('website can be created through real IPC',snapshot.sites.length===1);const id=snapshot.sites[0].id;
   denied=false;try{await command('site:add',{domain:'www.example.com',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('normalized duplicate websites rejected',denied);
+  for(let i=0;i<200&&(await command('snapshot')).sites[0]?.status==='analyzing';i++)await delay(100);
   await command('site:update',{id,monthlyTarget:3,name:'Example'});check('website settings update',(await command('snapshot')).sites[0].monthlyTarget===3);
   await command('site:pause',{id,paused:true});check('website pause persists',(await command('snapshot')).sites[0].status==='paused');
   await command('site:delete',{id});check('site delete removes associated local tasks',(await command('snapshot')).sites.length===0);

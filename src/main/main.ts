@@ -13,6 +13,9 @@ import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, no
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted } from './planner';
 import { IPC_COMMANDS, type Site, type Account } from '../shared/types';
+import {matchChannels} from '../integrations/catalog';
+import {eligibilityFor} from '../integrations/eligibility';
+import {parseGscLinksCsv} from '../integrations/search-reports';
 import { testAi } from '../integrations/ai';
 import { codexEnvironment, resolveCodexLaunch } from '../integrations/codex-process';
 import { testMail } from '../integrations/mail';
@@ -45,7 +48,7 @@ async function confirmSecret(){
   if(process.platform==='darwin'&&systemPreferences.canPromptTouchID()){await systemPreferences.promptTouchID('查看外链助手保存的密码');return;}
   const r=await dialog.showMessageBox(win!,{type:'question',title:'显示密码',message:'将在当前屏幕显示保存的密码。',buttons:['取消','显示密码'],defaultId:0,cancelId:0});if(r.response!==1)throw Error('已取消');
 }
-function forbidBusy(){if(controller.runtime.busy||controller.runtime.activeTaskId)throw Error('请先暂停执行，等待当前操作结束后再修改。')}
+function forbidBusy(){if(controller.hasPendingWork())throw Error('请先暂停执行，等待当前操作结束后再修改。')}
 function ensureRestoreIdle(){if(controller.store.read().settings.autoRun||controller.hasPendingWork())throw Error('恢复备份前请暂停自动执行，并等待分析或核验完成。')}
 async function detectAi(){
   const s=controller.store.read().settings;
@@ -62,10 +65,26 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const site:Site={id:randomUUID(),...address,email:data.email,name:address.domain,description:'',category:'general',language:'en',monthlyTarget:data.monthlyTarget,status:'analyzing',createdAt:new Date().toISOString()};
       store.update(s=>s.sites.push(site));void controller.analyze(site.id);break;
     }
-    case 'site:update':{const input=EditSite.parse(p);store.update(s=>{const site=s.sites.find(x=>x.id===input.id);if(!site)throw Error('网站不存在');Object.assign(site,input)});controller.plan();break;}
+    case 'site:update':{forbidBusy();const input=EditSite.parse(p);store.update(s=>{const site=s.sites.find(x=>x.id===input.id);if(!site)throw Error('网站不存在');Object.assign(site,input);for(const task of s.tasks.filter(t=>t.siteId===site.id&&!t.submittedAt)){task.articleApprovedAt=undefined;if(['name','description','category','language','email'].some(k=>k in input))task.draft=undefined}});controller.plan();break;}
+    case 'site:queue-channel':{
+      forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).parse(p);const s=store.read(),site=s.sites.find(x=>x.id===d.id),channel=controller.channels().find(c=>c.id===d.channelId);
+      if(!site||!channel)throw Error('网站或渠道不存在');if(site.status!=='ready')throw Error('请先完成网站分析并恢复计划');
+      if(!matchChannels(site,[channel]).length||channel.free==='unknown')throw Error(eligibilityFor(site,channel).reason+'；分类、语言或费用不符合条件');
+      if(s.tasks.some(t=>t.siteId===site.id&&t.sourceDomain===channel.domain))throw Error('该来源已有任务，请查看已有记录');
+      const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?'可生成材料，按平台规则人工提交':'已加入计划',reason:eligibilityFor(site,channel).reason}));break;
+    }
+    case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
+    case 'search:bing':await controller.checkSearch(getId(p));break;
+    case 'search:import-gsc':{
+      const id=getId(p),site=store.read().sites.find(s=>s.id===id);if(!site)throw Error('网站不存在');const file=await dialog.showOpenDialog(win!,{title:'选择 '+site.domain+' 的 GSC 外部链接来源 CSV',properties:['openFile'],filters:[{name:'GSC CSV',extensions:['csv']}]});if(file.canceled)return;
+      const report=parseGscLinksCsv(await readFile(file.filePaths[0],'utf8'));
+      const confirm=await dialog.showMessageBox(win!,{type:'question',message:'确认这是 '+site.domain+' 的 GSC 外部链接报告？',detail:'CSV 本身不包含可校验的网站归属。仅导入来源网页，不提交索引。',buttons:['取消','导入'],defaultId:0,cancelId:0});if(confirm.response!==1)return;
+      store.update(s=>{const x=s.sites.find(s=>s.id===id);if(x)x.searchReports={...x.searchReports,gsc:report}});break;
+    }
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
-    case 'site:analyze':void controller.analyze(getId(p));break;
+    case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
+    case 'task:approve':{forbidBusy();const id=getId(p),task=store.read().tasks.find(t=>t.id===id);if(!task?.draft?.body||task.submittedAt||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');controller.patch(id,{articleApprovedAt:new Date().toISOString(),status:'queued',scheduledAt:new Date().toISOString(),message:'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
@@ -77,12 +96,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'task:verify':await controller.verify(getId(p));break;
     case 'task:set-url':{
       const input=z.object({id:z.string().uuid(),url:z.string().max(2048)}).parse(p),u=publicUrl(input.url);const t=store.read().tasks.find(t=>t.id===input.id);if(!t)throw Error('任务不存在');
-      if(u.hostname!==t.sourceDomain&&!u.hostname.endsWith('.'+t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href});await controller.verify(input.id);break;
+      if(u.hostname!==t.sourceDomain&&!u.hostname.endsWith('.'+t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const}: {})});await controller.verify(input.id);break;
     }
     case 'task:open':await controller.manualOpen(getId(p));break;
     case 'task:generate':{forbidBusy();await controller.generateDraft(getId(p));break;}
     case 'task:update-draft':{
-      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).parse(p);const task=store.read().tasks.find(t=>t.id===d.id);if(!task)throw Error('任务不存在');if(task.status==='running'||task.submittedAt)throw Error('正在执行或已提交的材料不能修改');controller.patch(d.id,{draft:{title:d.title,description:d.description,body:d.body}});break;
+      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).parse(p);const task=store.read().tasks.find(t=>t.id===d.id);if(!task)throw Error('任务不存在');if(task.status==='running'||task.submittedAt)throw Error('正在执行或已提交的材料不能修改');controller.patch(d.id,{articleApprovedAt:undefined,draft:{title:d.title,description:d.description,body:d.body}});break;
     }
     case 'plan:run':store.update(s=>{s.settings.autoRun=true});void controller.tick();break;
     case 'plan:pause':controller.pause();break;
@@ -102,7 +121,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(input.mailPassword)await vault.set('mailPassword',nextMail.host==='imap.gmail.com'?input.mailPassword.replace(/\s/g,''):input.mailPassword);
       const {apiKey,mailPassword,...safe}=input;
       if(mailChanged||mailPassword)controller.runtime.mailReady=false;
-      store.update(s=>{s.settings={...s.settings,...safe,hasApiKey:!!apiKey||(!apiChanged&&previous.hasApiKey),mail:{...nextMail,hasPassword:!!mailPassword||(!mailChanged&&previous.mail.hasPassword)}};});
+      store.update(s=>{s.settings={...s.settings,...safe,hasBingKey:previous.hasBingKey,hasApiKey:!!apiKey||(!apiChanged&&previous.hasApiKey),mail:{...nextMail,hasPassword:!!mailPassword||(!mailChanged&&previous.mail.hasPassword)}};});
       if(input.launchAtLogin!==undefined)app.setLoginItemSettings({openAtLogin:input.launchAtLogin});
       await detectAi();controller.plan();break;
     }
@@ -113,6 +132,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const old=input.id?store.read().accounts.find(a=>a.id===input.id):undefined;if(input.id&&!old)throw Error('账号不存在');
       if(store.read().accounts.some(a=>a.id!==input.id&&a.channelId===input.channelId&&a.email.toLowerCase()===input.email.toLowerCase()))throw Error('该渠道已有此邮箱账号');
       const now=new Date().toISOString(),identityChanged=!!old&&(old.channelId!==input.channelId||old.email.toLowerCase()!==input.email.toLowerCase()||old.username!==input.username);
+      if(old?.credentialKind==='api_token'&&(identityChanged||input.password))throw Error('API 作者身份与令牌不可作为普通密码修改，请保留原账号。');
       const repairedCredentials=old?.status==='credentials_invalid'&&!!input.password;
       const status=old?.status==='restricted'&&!identityChanged?'restricted':!old||identityChanged||repairedCredentials?'unknown':old.status;
       const account:Account={...old,id:old?.id||randomUUID(),channelId:input.channelId,email:input.email,username:input.username,createdAt:old?.createdAt||now,updatedAt:now,status,source:old?.source||'imported',hasPassword:!!input.password||old?.hasPassword||false,diagnostic:status==='restricted'?old?.diagnostic:undefined};
