@@ -18,5 +18,5 @@ export function normalizeDomain(input:string):{domain:string;url:string}{
 }
 export function safeMessage(error:unknown):string{
   const raw=error instanceof Error?error.message:String(error);
-  return raw.replace(/(Bearer\s+|(?:api[_-]?key|password|token|secret)\s*[:=]\s*)[^\s,;]+/gi,'$1[已隐藏]').replace(/sk-[\w-]+/g,'[已隐藏]').replace(/https?:\/\/[^\s]+/g,'[网址]').slice(0,240);
+  return raw.replace(/(Bearer\s+|(?:api[_-]?key|password|token|secret)\s*[:=]\s*)[^\s,;]+/gi,'$1[已隐藏]').replace(/(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)/g,'[已隐藏]').replace(/sk-[\w-]+/g,'[已隐藏]').replace(/https?:\/\/[^\s]+/g,'[网址]').slice(0,240);
 }

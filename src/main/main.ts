@@ -73,6 +73,8 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(s.tasks.some(t=>t.siteId===site.id&&t.sourceDomain===channel.domain))throw Error('该来源已有任务，请查看已有记录');
       const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?'可生成材料，按平台规则人工提交':'已加入计划',reason:eligibilityFor(site,channel).reason}));break;
     }
+    case 'site:adopt-gist':{forbidBusy();const d=z.object({id:z.string().uuid(),url:z.string().trim().max(2048)}).parse(p);await controller.adoptGist(d.id,d.url);break;}
+    case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512)}).parse(p);await controller.connectGist(d.token);break;}
     case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
     case 'search:bing':await controller.checkSearch(getId(p));break;
     case 'search:import-gsc':{
@@ -96,6 +98,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'task:verify':await controller.verify(getId(p));break;
     case 'task:set-url':{
       const input=z.object({id:z.string().uuid(),url:z.string().max(2048)}).parse(p),u=publicUrl(input.url);const t=store.read().tasks.find(t=>t.id===input.id);if(!t)throw Error('任务不存在');
+      if(t.channelId==='github-gist'){forbidBusy();await controller.adoptGist(t.siteId,u.href);break;}
       if(u.hostname!==t.sourceDomain&&!u.hostname.endsWith('.'+t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const}: {})});await controller.verify(input.id);break;
     }
     case 'task:open':await controller.manualOpen(getId(p));break;
@@ -128,7 +131,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'settings:test-ai':{const result=await testAi(store.read().settings,vault);controller.runtime.aiReady=result.ok;broadcast();return result;}
     case 'settings:test-mail':{forbidBusy();const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}
     case 'account:save':{
-      forbidBusy();const input=AccountInput.parse(p);if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
+      forbidBusy();const input=AccountInput.parse(p);if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
       const old=input.id?store.read().accounts.find(a=>a.id===input.id):undefined;if(input.id&&!old)throw Error('账号不存在');
       if(store.read().accounts.some(a=>a.id!==input.id&&a.channelId===input.channelId&&a.email.toLowerCase()===input.email.toLowerCase()))throw Error('该渠道已有此邮箱账号');
       const now=new Date().toISOString(),identityChanged=!!old&&(old.channelId!==input.channelId||old.email.toLowerCase()!==input.email.toLowerCase()||old.username!==input.username);
@@ -148,7 +151,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(account.diagnostic&&!account.diagnostic.retryable&&account.status!=='draft')throw Error('该账号异常需要人工处理');
       const now=new Date().toISOString();store.update(s=>{const a=s.accounts.find(a=>a.id===id);if(a){a.updatedAt=now;a.diagnostic=undefined}for(const task of s.tasks){const site=s.sites.find(site=>site.id===task.siteId);if(task.channelId===account.channelId&&site?.email.toLowerCase()===account.email.toLowerCase()&&!task.submittedAt&&['needs_input','failed'].includes(task.status)){task.status='queued';task.scheduledAt=now;task.updatedAt=now;task.message=account.status==='needs_verification'?'准备继续验证账号':'准备重试未提交的注册草稿';}}});void controller.tick();break;
     }
-    case 'account:reveal':{const id=getId(p);await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
+    case 'account:reveal':{const id=getId(p);if(store.read().accounts.find(a=>a.id===id)?.credentialKind==='api_token')throw Error('API 令牌不支持明文显示，请通过连接入口更新');await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
     case 'account:delete':{forbidBusy();const id=getId(p);await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}
     case 'backup:export':{
       const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showSaveDialog(win!,{title:'导出加密备份',defaultPath:'Linkflow-备份.lfb',filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled||!path.filePath)return {ok:false,message:'已取消'};
