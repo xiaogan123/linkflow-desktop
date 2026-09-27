@@ -1,0 +1,24 @@
+appId: com.linkflow.personal
+productName: 外链助手
+directories:
+  output: release
+npmRebuild: false
+nodeGypRebuild: false
+compression: maximum
+publish: null
+win:
+  icon: assets/AppIcon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-windows-${arch}-setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: 外链助手
+  uninstallDisplayName: 外链助手 ${version}
+  deleteAppDataOnUninstall: false

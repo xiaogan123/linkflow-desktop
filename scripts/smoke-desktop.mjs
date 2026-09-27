@@ -1,0 +1,10 @@
+import { spawn } from 'node:child_process';
+import { mkdtemp,mkdir,writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import electron from 'electron';
+await mkdir('.evidence',{recursive:true});
+const dir=await mkdtemp(join(tmpdir(),'linkflow-smoke-'));
+const child=spawn(electron,['scripts/smoke-entry.cjs'],{cwd:process.cwd(),env:{...process.env,LINKFLOW_DATA_DIR:dir,ELECTRON_DISABLE_SECURITY_WARNINGS:'false'},stdio:'inherit'});
+const timeout=setTimeout(()=>{child.kill();process.exitCode=1},90000);
+child.on('exit',code=>{clearTimeout(timeout);process.exitCode=code??1});

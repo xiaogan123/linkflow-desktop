@@ -1,0 +1,15 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import assert from 'node:assert/strict';
+import { resolveCodexLaunch, codexEnvironment } from '../src/integrations/codex-process';
+const configured=process.env.LINKFLOW_TEST_CODEX_PATH;
+assert(configured,'explicit installed CLI test path required');
+const launch=resolveCodexLaunch(configured);
+assert(!launch.command.toLowerCase().endsWith('.cmd'),'a command shell shim must not be executed directly');
+const home=mkdtempSync(join(tmpdir(),'linkflow-codex-version-'));
+const result=spawnSync(launch.command,[...launch.prefixArgs,'--version'],{shell:false,encoding:'utf8',timeout:20000,env:codexEnvironment(process.env,{...launch.envAdditions,CODEX_HOME:home})});
+assert.equal(result.status,0,'official native CLI must launch');
+assert.match(result.stdout,/codex-cli\s+\d+\.\d+\.\d+/,'expected version output');
+console.log('Official native Codex launch passed: '+process.platform+'/'+process.arch+'; '+result.stdout.trim());

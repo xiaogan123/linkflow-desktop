@@ -1,0 +1,62 @@
+const { app,BrowserWindow,safeStorage }=require('electron');
+const { mkdirSync,writeFileSync }=require('node:fs');
+const { join }=require('node:path');
+const assert=require('node:assert/strict');
+const { DatabaseSync }=require('node:sqlite');
+const evidence=join(process.cwd(),'.evidence');
+mkdirSync(evidence,{recursive:true});
+// Prevent external execution during deterministic UI and persistence checks.
+mkdirSync(process.env.LINKFLOW_DATA_DIR,{recursive:true});
+const db=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
+db.exec('CREATE TABLE state (id INTEGER PRIMARY KEY, body TEXT NOT NULL)');
+db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'api',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
+require('../dist-electron/main.cjs');
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const results=[];let win;
+const check=(name,condition)=>{assert(condition,name);results.push({name,passed:true})};
+const evaluate=js=>win.webContents.executeJavaScript(js,true);
+const command=(name,p={})=>evaluate(`window.linkflow.invoke(${JSON.stringify(name)},${JSON.stringify(p)})`);
+const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()===${JSON.stringify(text)});if(!b)return false;b.click();return true})()`);assert(found,'button: '+text);await delay(150)};
+(async()=>{
+  await app.whenReady();
+  for(let i=0;i<150;i++){win=BrowserWindow.getAllWindows().find(w=>w.getTitle().includes('LINKFLOW')||w.webContents.getURL().includes('/dist/index.html'));if(win&&!win.webContents.isLoading()&&await evaluate('!!window.linkflow && !!document.querySelector("h1")').catch(()=>false))break;await delay(100)}
+  check('native app starts with secured IPC bridge',!!win&&await evaluate('!!window.linkflow'));
+  check('renderer cannot access Node',await evaluate('typeof require === "undefined" && typeof process === "undefined"'));
+  let snapshot=await command('snapshot');check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
+  await clickText('添加网站');check('add dialog opens',await evaluate('!!document.querySelector("[role=dialog]")'));await evaluate('document.querySelector("[aria-label=关闭]").click()');await delay(150);
+  await evaluate('document.querySelector(".demo-switch input").click()');await delay(200);
+  check('explicit demo shows sample websites',await evaluate('document.body.innerText.includes("studio.example")'));
+  win.webContents.debugger.attach('1.3');
+  async function capture(name,width=1487,height=1058){
+    await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});await delay(180);
+    const {data}=await win.webContents.debugger.sendCommand('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});writeFileSync(join(evidence,name),Buffer.from(data,'base64'));
+  }
+  await capture('overview-1487x1058.png');
+  await clickText('设置');check('settings page renders',await evaluate('document.body.innerText.includes("AI")'));
+  await capture('settings.png');
+  await clickText('账号');check('accounts page renders',await evaluate('document.body.innerText.includes("账号")'));
+  await clickText('渠道');check('channel directory renders',await evaluate('document.body.innerText.includes("渠道")'));
+  await clickText('总览');await capture('overview-1080x760.png',1080,760);check('compact desktop has no horizontal viewport overflow',await evaluate('document.documentElement.scrollWidth<=window.innerWidth+1'));
+  await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride');win.webContents.debugger.detach();
+  await clickText('演示模式 · 返回真实数据');snapshot=await command('snapshot');check('demo never mutates real state',snapshot.sites.length===0);
+  let denied=false;try{await command('site:add',{domain:'127.0.0.1',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('private-domain input rejected by main process',denied);
+  denied=false;try{await command('settings:save',{dailyAiLimit:0})}catch{denied=true}check('invalid execution budget rejected',denied);
+  await command('settings:save',{dailyAiLimit:12,notify:false});check('settings persist through actual IPC',(await command('snapshot')).settings.dailyAiLimit===12);
+  await command('site:add',{domain:'example.com',email:'hello@example.com',monthlyTarget:2});snapshot=await command('snapshot');check('website can be created through real IPC',snapshot.sites.length===1);const id=snapshot.sites[0].id;
+  denied=false;try{await command('site:add',{domain:'www.example.com',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('normalized duplicate websites rejected',denied);
+  await command('site:update',{id,monthlyTarget:3,name:'Example'});check('website settings update',(await command('snapshot')).sites[0].monthlyTarget===3);
+  await command('site:pause',{id,paused:true});check('website pause persists',(await command('snapshot')).sites[0].status==='paused');
+  await command('site:delete',{id});check('site delete removes associated local tasks',(await command('snapshot')).sites.length===0);
+  const syntheticPassword='Linkflow-Smoke-Only-7!';
+  await command('account:save',{channelId:'github',email:'smoke@example.com',username:'linkflow-smoke',password:syntheticPassword});
+  const account=(await command('snapshot')).accounts.find(a=>a.email==='smoke@example.com');
+  check('account can be saved without exposing password in snapshot',!!account&&!JSON.stringify(await command('snapshot')).includes(syntheticPassword));
+  const vaultDb=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
+  const cipher=vaultDb.prepare('SELECT value FROM secrets WHERE key=?').get('account:'+account.id).value;vaultDb.close();
+  check('system vault encrypts and recovers the synthetic password',!cipher.includes(syntheticPassword)&&safeStorage.decryptString(Buffer.from(cipher,'base64'))===syntheticPassword);
+  await command('account:delete',{id:account.id});check('account delete removes saved account',(await command('snapshot')).accounts.length===0);
+  denied=false;try{await command('external:open',{url:'file:///etc/passwd'})}catch{denied=true}check('external file protocol denied',denied);
+  denied=false;try{await command('unknown:command',{})}catch{denied=true}check('arbitrary IPC command denied',denied);
+  writeFileSync(join(evidence,'desktop-smoke.json'),JSON.stringify({passed:true,checks:results,dataPath:process.env.LINKFLOW_DATA_DIR},null,2));console.log('DESKTOP SMOKE PASSED: '+results.length+' checks');
+  await command('app:quit').catch(()=>{});
+})().catch(error=>{writeFileSync(join(evidence,'desktop-smoke.json'),JSON.stringify({passed:false,error:String(error),checks:results},null,2));console.error(error);app.exit(1)});

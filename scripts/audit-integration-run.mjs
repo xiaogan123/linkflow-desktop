@@ -1,0 +1,11 @@
+import {build} from 'esbuild';
+import {spawn} from 'node:child_process';
+import {mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import electron from 'electron';
+await build({entryPoints:['scripts/audit-integration-entry.ts'],outfile:'.evidence/integration-electron.cjs',bundle:true,platform:'node',format:'cjs',external:['electron']});
+const directory=await mkdtemp(join(tmpdir(),'linkflow-audit-integration-'));
+const child=spawn(electron,['.evidence/integration-electron.cjs'],{env:{...process.env,AUDIT_USER_DATA:directory},stdio:'inherit'});
+const timer=setTimeout(()=>child.kill('SIGTERM'),60000);
+child.on('exit',code=>{clearTimeout(timer);process.exitCode=code??1;});

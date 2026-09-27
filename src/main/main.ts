@@ -1,0 +1,149 @@
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, Tray, nativeImage, systemPreferences } from 'electron';
+import { join } from 'node:path';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { z } from 'zod';
+import { Store, defaultSettings } from './store';
+import { Vault, encryptBackup, decryptBackup } from './vault';
+import { Controller } from './controller';
+import { AddSite, EditSite, SettingsPatch, AccountInput, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
+import { validateBackup } from './backup-validation';
+import { recoverInterrupted } from './planner';
+import { IPC_COMMANDS, type Site, type Account } from '../shared/types';
+import { testAi } from '../integrations/ai';
+import { codexEnvironment, resolveCodexLaunch } from '../integrations/codex-process';
+import { testMail } from '../integrations/mail';
+import { prepareSelfTest, runPackagedSelfTest } from './self-test';
+
+app.setName('外链助手');
+const selfTest=prepareSelfTest();
+if(process.env.LINKFLOW_DATA_DIR&&!app.isPackaged&&!selfTest)app.setPath('userData',process.env.LINKFLOW_DATA_DIR);
+const single=app.requestSingleInstanceLock();
+if(!single)app.quit();
+let win:BrowserWindow|null=null,tray:Tray|null=null,quitting=false,controller:Controller;
+const root=join(__dirname,'..');
+const file=join(root,'dist/index.html');
+const devUrl=!app.isPackaged?process.env.LINKFLOW_DEV_URL:undefined;
+let renderURL=devUrl||pathToFileURL(file).href;
+
+function broadcast(){if(win&&!win.isDestroyed())win.webContents.send('linkflow:changed')}
+function createWindow(){
+  win=new BrowserWindow({width:1487,height:1058,minWidth:1050,minHeight:720,show:false,title:'外链助手 · LINKFLOW',backgroundColor:'#f8faff',titleBarStyle:process.platform==='darwin'?'hiddenInset':'default',trafficLightPosition:{x:16,y:16},webPreferences:{preload:join(root,'dist-electron/preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true,devTools:!app.isPackaged}});
+  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+  win.webContents.on('will-navigate',(event,url)=>{if(url!==renderURL)event.preventDefault()});
+  win.webContents.session.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
+  win.webContents.on('will-attach-webview',event=>event.preventDefault());
+  win.on('close',event=>{if(!quitting&&tray){event.preventDefault();win?.hide()}});
+  win.on('closed',()=>{win=null});
+  void win.loadURL(renderURL);win.once('ready-to-show',()=>win?.show());
+}
+async function confirmSecret(){
+  if(process.platform==='darwin'&&systemPreferences.canPromptTouchID()){await systemPreferences.promptTouchID('查看外链助手保存的密码');return;}
+  const r=await dialog.showMessageBox(win!,{type:'question',title:'显示密码',message:'将在当前屏幕显示保存的密码。',buttons:['取消','显示密码'],defaultId:0,cancelId:0});if(r.response!==1)throw Error('已取消');
+}
+function forbidBusy(){if(controller.runtime.busy||controller.runtime.activeTaskId)throw Error('请先暂停执行，等待当前操作结束后再修改。')}
+function ensureRestoreIdle(){if(controller.store.read().settings.autoRun||controller.hasPendingWork())throw Error('恢复备份前请暂停自动执行，并等待分析或核验完成。')}
+async function detectAi(){
+  const s=controller.store.read().settings;
+  if(s.provider==='api'){controller.runtime.aiReady=s.hasApiKey&&!!s.model;broadcast();return;}
+  // Read only auth status. No inference call or key-file reading on startup.
+  try{const launch=resolveCodexLaunch(s.codexPath);const ok=await new Promise<boolean>(resolve=>{let output='';const p=spawn(launch.command,[...launch.prefixArgs,'login','status'],{stdio:['ignore','pipe','pipe'],shell:false,env:codexEnvironment(process.env,launch.envAdditions)});const timeout=setTimeout(()=>{p.kill();resolve(false)},10000);p.stdout.on('data',d=>{output+=d.toString().slice(0,2000)});p.stderr.on('data',d=>{output+=d.toString().slice(0,2000)});p.on('error',()=>{clearTimeout(timeout);resolve(false)});p.on('close',code=>{clearTimeout(timeout);resolve(code===0&&!/not logged in/i.test(output))})});controller.runtime.aiReady=ok;}catch{controller.runtime.aiReady=false}broadcast();
+}
+async function command(name:string,p:unknown):Promise<unknown>{
+  const {store,vault}=controller;
+  switch(name){
+    case 'snapshot':return controller.snapshot();
+    case 'site:add':{
+      const data=AddSite.parse(p),address=normalizeDomain(data.domain);if(store.read().sites.some(s=>s.domain===address.domain))throw Error('这个网站已经添加');
+      const site:Site={id:randomUUID(),...address,email:data.email,name:address.domain,description:'',category:'general',language:'en',monthlyTarget:data.monthlyTarget,status:'analyzing',createdAt:new Date().toISOString()};
+      store.update(s=>s.sites.push(site));void controller.analyze(site.id);break;
+    }
+    case 'site:update':{const input=EditSite.parse(p);store.update(s=>{const site=s.sites.find(x=>x.id===input.id);if(!site)throw Error('网站不存在');Object.assign(site,input)});controller.plan();break;}
+    case 'site:delete':controller.deleteSite(getId(p));break;
+    case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
+    case 'site:analyze':void controller.analyze(getId(p));break;
+    case 'task:retry':{
+      const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
+      if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
+      if(t.submittedAt||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error('已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if(t.attempts>=store.read().settings.maxAttempts)throw Error('已达重试上限，请检查原因或跳过此渠道。');
+      controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;
+    }
+    case 'task:skip':{const id=getId(p);if(controller.runtime.activeTaskId===id)throw Error('请先暂停当前任务');controller.patch(id,{status:'skipped',message:'已跳过，保留记录避免重复提交'});controller.plan();break;}
+    case 'task:verify':await controller.verify(getId(p));break;
+    case 'task:set-url':{
+      const input=z.object({id:z.string().uuid(),url:z.string().max(2048)}).parse(p),u=publicUrl(input.url);const t=store.read().tasks.find(t=>t.id===input.id);if(!t)throw Error('任务不存在');
+      if(u.hostname!==t.sourceDomain&&!u.hostname.endsWith('.'+t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href});await controller.verify(input.id);break;
+    }
+    case 'task:open':await controller.manualOpen(getId(p));break;
+    case 'task:generate':{forbidBusy();await controller.generateDraft(getId(p));break;}
+    case 'task:update-draft':{
+      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).parse(p);const task=store.read().tasks.find(t=>t.id===d.id);if(!task)throw Error('任务不存在');if(task.status==='running'||task.submittedAt)throw Error('正在执行或已提交的材料不能修改');controller.patch(d.id,{draft:{title:d.title,description:d.description,body:d.body}});break;
+    }
+    case 'plan:run':store.update(s=>{s.settings.autoRun=true});void controller.tick();break;
+    case 'plan:pause':controller.pause();break;
+    case 'settings:save':{
+      const input=SettingsPatch.parse(p);if(input.provider||input.apiKey||input.mailPassword||input.codexPath||input.apiBase||input.model||input.mail)forbidBusy();
+      if(!app.isPackaged&&input.launchAtLogin)throw Error('开机启动请在打包客户端中开启');
+      if(input.apiBase)publicUrl(input.apiBase);if(input.apiKey)await vault.set('apiKey',input.apiKey);if(input.mailPassword)await vault.set('mailPassword',input.mailPassword);
+      const {apiKey,mailPassword,...safe}=input;
+      store.update(s=>{s.settings={...s.settings,...safe,mail:{...s.settings.mail,...safe.mail}};if(apiKey)s.settings.hasApiKey=true;if(mailPassword)s.settings.mail.hasPassword=true;});
+      if(input.launchAtLogin!==undefined)app.setLoginItemSettings({openAtLogin:input.launchAtLogin});
+      await detectAi();controller.plan();break;
+    }
+    case 'settings:test-ai':{const result=await testAi(store.read().settings,vault);controller.runtime.aiReady=result.ok;broadcast();return result;}
+    case 'settings:test-mail':{const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}
+    case 'account:save':{
+      forbidBusy();const input=AccountInput.parse(p);if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
+      const old=input.id?store.read().accounts.find(a=>a.id===input.id):undefined;if(input.id&&!old)throw Error('账号不存在');
+      if(store.read().accounts.some(a=>a.id!==input.id&&a.channelId===input.channelId&&a.email.toLowerCase()===input.email.toLowerCase()))throw Error('该渠道已有此邮箱账号');
+      const account:Account={id:old?.id||randomUUID(),channelId:input.channelId,email:input.email,username:input.username,createdAt:old?.createdAt||new Date().toISOString(),status:old?.status||'saved',hasPassword:!!input.password||old?.hasPassword||false};
+      if(input.password)await vault.set('account:'+account.id,input.password);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==account.id);s.accounts.push(account)});break;
+    }
+    case 'account:reveal':{const id=getId(p);await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
+    case 'account:delete':{forbidBusy();const id=getId(p);await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}
+    case 'backup:export':{
+      const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showSaveDialog(win!,{title:'导出加密备份',defaultPath:'Linkflow-备份.lfb',filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled||!path.filePath)return {ok:false,message:'已取消'};
+      const buffer=encryptBackup({state:store.read(),secrets:await vault.exportSecrets()},passphrase);await writeFile(path.filePath,buffer,{mode:0o600});return {ok:true,message:'加密备份已保存，请妥善保管口令'};
+    }
+    case 'backup:import':{
+      ensureRestoreIdle();const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showOpenDialog(win!,{title:'恢复加密备份',properties:['openFile'],filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled)return {ok:false,message:'已取消'};
+      const data=validateBackup(decryptBackup(await readFile(path.filePaths[0]),passphrase));
+      const confirm=await dialog.showMessageBox(win!,{type:'warning',message:'用备份替换本机数据？',detail:'当前数据会自动保存为同口令的恢复前备份。恢复后自动执行保持暂停。',buttons:['取消','恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return {ok:false,message:'已取消'};
+      ensureRestoreIdle();
+      await writeFile(join(app.getPath('userData'),'恢复前备份.lfb'),encryptBackup({state:store.read(),secrets:await vault.exportSecrets()},passphrase),{mode:0o600});
+      ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';store.restore(data.state,vault.encryptSecrets(data.secrets));app.setLoginItemSettings({openAtLogin:false});await detectAi();return {ok:true,message:'备份已恢复，检查资料后可恢复执行'};
+    }
+    case 'data:export':{
+      const path=await dialog.showSaveDialog(win!,{title:'导出外链记录',defaultPath:'外链记录.csv',filters:[{name:'CSV',extensions:['csv']}]});if(path.canceled||!path.filePath)return {ok:false,message:'已取消'};
+      const s=store.read(),cell=(v:unknown)=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'").replaceAll('"','""')+'"';
+      const rows=[['网站','渠道','状态','公开结果网址','首次生效时间','链接属性','说明'],...s.tasks.map(t=>[s.sites.find(x=>x.id===t.siteId)?.domain,t.sourceDomain,t.status,t.publicUrl,t.firstLiveAt,t.linkRel,t.message])];await writeFile(path.filePath,'\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n'),{mode:0o600});return {ok:true,message:'记录已导出'};
+    }
+    case 'external:open':{const {url}=z.object({url:z.string().max(2048)}).parse(p);const u=publicUrl(url);if(/^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(u.hostname)||u.hostname.includes(':'))throw Error('仅可打开公开网页');await shell.openExternal(u.href);return;}
+    case 'app:quit':quitting=true;app.quit();return;
+    default:throw Error('不支持的操作');
+  }
+  return controller.snapshot();
+}
+
+app.on('second-instance',()=>{if(!win)createWindow();else{win.show();win.focus()}});
+app.whenReady().then(async()=>{
+  if(!single)return;await mkdir(app.getPath('userData'),{recursive:true,mode:0o700});
+  const store=new Store(join(app.getPath('userData'),'linkflow.sqlite'));const vault=new Vault(store);controller=new Controller(store,vault,app.getPath('userData'));store.onChange=broadcast;controller.runtime.version=app.getVersion();
+  if(selfTest)store.update(s=>{s.settings.autoRun=false;s.settings.provider='api';s.settings.hasApiKey=false});
+  controller.onNotice=(title,body)=>{if(Notification.isSupported())new Notification({title,body}).show()};
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'外链助手',submenu:[{role:'about'},{type:'separator'},{label:'显示主窗口',click:()=>win?.show()},{label:'退出',accelerator:'CommandOrControl+Q',click:()=>{quitting=true;app.quit()}}]},{role:'editMenu'},{role:'windowMenu'}]));
+  const iconPath=join(root,'assets/tray.png');if(existsSync(iconPath)){const icon=nativeImage.createFromPath(iconPath).resize({width:18,height:18});tray=new Tray(icon);tray.setToolTip('外链助手');tray.setContextMenu(Menu.buildFromTemplate([{label:'显示外链助手',click:()=>{if(!win)createWindow();win?.show()}},{label:'暂停自动执行',click:()=>controller.pause()},{type:'separator'},{label:'退出',click:()=>{quitting=true;app.quit()}}]));tray.on('click',()=>win?.show());}
+  ipcMain.handle('linkflow:command',async(event,name,payload)=>{
+    try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!IPC_COMMANDS.includes(name)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
+      if(JSON.stringify(payload??{}).length>100000)throw Error('输入内容过大');return {ok:true,value:await command(name,payload)};
+    }catch(e){return {ok:false,error:safeMessage(e)}}
+  });
+  createWindow();if(selfTest){void runPackagedSelfTest(win!,controller);return;}await detectAi();controller.start();
+});
+app.on('activate',()=>{if(!win)createWindow();else win.show()});
+app.on('before-quit',()=>{quitting=true;controller?.stop()});
+app.on('window-all-closed',()=>{if(!tray){quitting=true;app.quit()}});

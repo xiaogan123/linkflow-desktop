@@ -1,0 +1,24 @@
+# Public source uses an explicit root allowlist; all local workspace material stays private.
+/*
+!/.gitignore
+!/README.md
+!/index.html
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/vite.config.ts
+!/electron-builder.yml
+!/src/
+!/tests/
+!/scripts/
+!/.github/
+src/ui/*.jpg
+src/ui/*.png
+src/shared/*.md
+scripts/*audit-core*
+scripts/*private*
+**/.DS_Store
+**/*.sqlite*
+**/*.lfb
+**/.env*
+**/*.log

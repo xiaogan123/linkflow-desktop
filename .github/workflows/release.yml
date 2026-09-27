@@ -1,0 +1,162 @@
+name: Native release builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Native platform to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows-x64
+          - mac-arm64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-release-${{ github.ref }}-${{ inputs.platform }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  windows-x64:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows-x64' }}
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Check out public source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run desktop smoke test
+        run: npm run test:desktop
+
+      - name: Run integration test
+        run: npm run test:integration
+
+      - name: Verify public source allowlist
+        run: npm run privacy:source
+
+      - name: Test official Windows Codex launcher without login
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP 'linkflow-codex-cli'
+          npm install --global --prefix "$prefix" --no-audit --no-fund @openai/codex@0.154.0
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install the fixed official CLI version.' }
+          $env:LINKFLOW_TEST_CODEX_PATH = Join-Path $prefix 'codex.cmd'
+          npx tsx scripts/native-codex-check.ts
+          if ($LASTEXITCODE -ne 0) { throw 'Native Codex launcher verification failed.' }
+
+      - name: Package native Windows x64 installer
+        run: node scripts/package.mjs windows-x64
+
+      - name: Verify packaged distribution privacy
+        run: npm run privacy:dist
+
+      - name: Install and test packaged application
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath release -Filter '*-windows-x64-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Windows installer was not created.' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'linkflow-installed'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)." }
+          $env:LINKFLOW_EXECUTABLE = Join-Path $installDir '外链助手.exe'
+          $env:LINKFLOW_APP_RESOURCES = Join-Path $installDir 'resources'
+          try {
+            if (-not (Test-Path -LiteralPath $env:LINKFLOW_EXECUTABLE)) { throw 'Installed application executable was not found.' }
+            npm run privacy:dist
+            if ($LASTEXITCODE -ne 0) { throw "Installed distribution privacy scan exited with code $LASTEXITCODE." }
+            npm run test:packaged
+            if ($LASTEXITCODE -ne 0) { throw "Packaged self-test exited with code $LASTEXITCODE." }
+          } finally {
+            $uninstaller = Join-Path $installDir 'Uninstall 外链助手.exe'
+            if (Test-Path -LiteralPath $uninstaller) {
+              Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+            }
+          }
+
+      - name: Upload Windows installer and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkflow-windows-x64
+          path: |
+            release/*-windows-x64-setup.exe
+            release/SHA256SUMS-windows-x64.txt
+          if-no-files-found: error
+          retention-days: 3
+
+  mac-arm64:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'mac-arm64' }}
+    runs-on: macos-14
+    timeout-minutes: 35
+    steps:
+      - name: Check out public source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Require native Apple Silicon runner
+        run: test "$(node -p process.arch)" = arm64
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run desktop smoke test
+        run: npm run test:desktop
+
+      - name: Run integration test
+        run: npm run test:integration
+
+      - name: Verify public source allowlist
+        run: npm run privacy:source
+
+      - name: Package native Mac arm64 application
+        run: node scripts/package.mjs mac-arm64
+
+      - name: Verify packaged distribution privacy
+        run: npm run privacy:dist
+
+      - name: Test packaged application
+        run: npm run test:packaged
+
+      - name: Upload Mac archive and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkflow-mac-arm64
+          path: |
+            release/*-mac-arm64.zip
+            release/SHA256SUMS-mac-arm64.txt
+          if-no-files-found: error
+          retention-days: 3
