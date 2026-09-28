@@ -23,11 +23,13 @@ function ports(options:{matches?:string[];writable?:string[];candidateDigest?:st
 
 const input={runningApplicationPath:'/private/var/folders/x/T/AppTranslocation/ABC/d/外链助手.app',runningExecutablePath:'/private/var/folders/x/T/AppTranslocation/ABC/d/外链助手.app/Contents/MacOS/外链助手',runningHelperPath:'/private/var/folders/x/T/AppTranslocation/ABC/d/外链助手.app/Contents/Resources/app.asar/dist-electron/update-helper.cjs',homeDirectory:syntheticHome,currentVersion:'1.2.0'};
 
-test('translocated Mac bundle resolves only the unique identical writable Applications copy',async()=>{
+const macPathTest={skip:process.platform==='win32'?'AppTranslocation uses native POSIX paths; covered on native Mac':false};
+
+test('translocated Mac bundle resolves only the unique identical writable Applications copy',macPathTest,async()=>{
  const target=await resolveMacUpdateTarget(input,ports());assert.deepEqual(target,{applicationPath:'/Applications/外链助手.app',executablePath:'/Applications/外链助手.app/Contents/MacOS/外链助手',helperPath:'/Applications/外链助手.app/Contents/Resources/app.asar/dist-electron/update-helper.cjs'});
 });
 
-test('translocated Mac bundle rejects duplicate, changed, and read-only install targets',async()=>{
+test('translocated Mac bundle rejects duplicate, changed, and read-only install targets',macPathTest,async()=>{
  assert.equal(await resolveMacUpdateTarget(input,ports({matches:['/Applications',userApplications],writable:['/Applications',userApplications]})),undefined);
  assert.equal(await resolveMacUpdateTarget(input,ports({candidateDigest:'changed'})),undefined);
  assert.equal(await resolveMacUpdateTarget(input,ports({writable:[]})),undefined);
