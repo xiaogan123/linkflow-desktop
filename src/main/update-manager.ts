@@ -69,9 +69,10 @@ export class UpdateManager {
   }
   async initialize():Promise<UpdateState>{
     if(!this.supported())return this.status();try{await this.files.mkdir(this.options.updatesDirectory,{recursive:true,mode:0o700});
-    let prepared=false;try{prepared=await this.restorePrepared()}catch{await this.clearPrepared()}
-    const receipt=await this.readOptional<Receipt>('installed.json',16*1024),failure=await this.readOptional<InstallError>('install-error.json',32*1024);
+    const failure=await this.readOptional<InstallError>('install-error.json',32*1024);
     if(failure?.schemaVersion===1&&this.validRecoveryPath(failure.recoveryJobPath)){this.recoveryPending=true;return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion:failure.targetVersion,retryable:false,error:'新版本启动身份未能确认，已保留恢复副本；请重新打开应用，如仍提示失败请联系支持'})}
+    let prepared=false;try{prepared=await this.restorePrepared()}catch{await this.clearPrepared()}
+    const receipt=await this.readOptional<Receipt>('installed.json',16*1024);
     if(failure?.schemaVersion===1&&!failure.recoveryJobPath)await this.cleanupRuntime(failure.cleanupPath);
     if(prepared){if(failure?.schemaVersion===1&&failure.targetVersion===this.verified?.manifest.version)this.set(this.targetState('prepared',{retryable:true,error:'上次安装未完成，已保留经过验证的安装包'}));return this.status()}
     if(receipt?.schemaVersion===1&&receipt.targetVersion===this.options.currentVersion&&!Number.isNaN(Date.parse(receipt.installedAt))){if(await this.cleanupRuntime(receipt.cleanupPath)&&await this.cleanupBackup(receipt.backupCleanupPath))await this.files.rm(join(this.options.updatesDirectory,'installed.json'),{force:true});return this.set({phase:'installed',currentVersion:this.options.currentVersion,targetVersion:receipt.targetVersion})}
