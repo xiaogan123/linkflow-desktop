@@ -2,9 +2,8 @@ import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import type {AiModelDiscovery,AiModelOption,ReasoningEffort,Settings} from '../shared/types';
+import {isReasoningEffort,type AiModelDiscovery,type AiModelOption,type Settings} from '../shared/types';
 import {codexEnvironment,resolveCodexLaunch} from './codex-process';
-const efforts=new Set<ReasoningEffort>(['low','medium','high','xhigh','max','ultra']);
 const NORMAL_EXIT_GRACE_MS=400,FORCE_EXIT_GRACE_MS=1600,TREE_KILL_GRACE_MS=1600;
 async function bounded(wait:Promise<void>,ms:number):Promise<boolean>{return new Promise(resolve=>{let settled=false;const finish=(value:boolean)=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value)},timer=setTimeout(()=>finish(false),ms);wait.then(()=>finish(true),()=>finish(false))})}
 async function terminateWindowsTree(pid:number):Promise<boolean>{return new Promise(resolve=>{
@@ -43,8 +42,8 @@ export function parseCodexModels(rows:unknown[]):AiModelOption[]{
  const models=new Map<string,AiModelOption>();
  for(const raw of rows){if(!raw||typeof raw!=='object')continue;const row=raw as Record<string,unknown>;
   const id=typeof row.model==='string'?row.model:row.id;if(typeof id!=='string'||!id||id.length>120||!/^[a-z0-9._:/-]+$/i.test(id)||row.hidden===true)continue;
-  const supported=Array.isArray(row.supportedReasoningEfforts)?row.supportedReasoningEfforts.flatMap(value=>value&&typeof value==='object'&&efforts.has(value.reasoningEffort)?[value.reasoningEffort as ReasoningEffort]:[]):[];
-  models.set(id,{id,label:typeof row.displayName==='string'?row.displayName.slice(0,120):id,source:'codex',isDefault:row.isDefault===true,supportsReasoning:[...new Set(supported)]});
+  const supported=Array.isArray(row.supportedReasoningEfforts)?row.supportedReasoningEfforts.flatMap(value=>value&&typeof value==='object'&&isReasoningEffort(value.reasoningEffort)?[value.reasoningEffort]:[]):[];
+  models.set(id,{id,label:typeof row.displayName==='string'?row.displayName.slice(0,120):id,source:'codex',isDefault:row.isDefault===true,supportsReasoning:[...new Set(supported)],...(isReasoningEffort(row.defaultReasoningEffort)&&supported.includes(row.defaultReasoningEffort)?{defaultReasoningEffort:row.defaultReasoningEffort}:{})});
  }return [...models.values()].slice(0,500);
 }
 /** Only initialization and model listing are sent. No thread, turn, tools, or inference. */

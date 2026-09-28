@@ -14,8 +14,10 @@ export interface AccountDiagnostic {code:AccountIssueCode;message:string;at:stri
 export interface Account {credentialKind?:'password'|'api_token';id:string;channelId:string;email:string;username:string;mailboxId?:string;createdAt:string;status:AccountStatus;hasPassword:boolean;source?:'generated'|'imported';updatedAt?:string;lastUsedAt?:string;registeredAt?:string;verifiedAt?:string;registrationAttempts?:number;diagnostic?:AccountDiagnostic}
 export interface SiteAccountBinding {id:string;siteId:string;channelId:string;accountId:string;createdAt:string;updatedAt:string}
 export interface Mailbox {id:string;label:string;host:string;port:number;user:string;secure:boolean;hasPassword:boolean;aliases:string[];createdAt:string;updatedAt:string;verifiedAt?:string;lastError?:string}
-export type ReasoningEffort='low'|'medium'|'high'|'xhigh'|'max'|'ultra';
-export interface AiModelOption {id:string;label?:string;source:'api'|'codex';isDefault?:boolean;supportsReasoning?:ReasoningEffort[]}
+// Service-reported identifiers may grow beyond the currently known display labels.
+export type ReasoningEffort=string;
+export function isReasoningEffort(value:unknown):value is ReasoningEffort {return typeof value==='string'&&/^[a-z0-9][a-z0-9._-]{0,63}$/i.test(value)}
+export interface AiModelOption {id:string;label?:string;source:'api'|'codex';isDefault?:boolean;supportsReasoning?:ReasoningEffort[];defaultReasoningEffort?:ReasoningEffort}
 export interface AiModelDiscovery {provider:'codex'|'api';models:AiModelOption[];defaultModel?:string;effectiveModel?:string;source:'remote'|'local-cli'|'configured'|'unavailable';discoveredAt:string;message:string}
 export interface SiteCapacity {siteId:string;currentLive:number;firstVerifiedThisMonth:number;missing:number;eligibleUnused:number;automaticUnused:number;manualUnused:number;monthsAtTarget:number|null;reason?:string}
 export interface Settings {hasBingKey?:boolean;monitorSearch?:boolean;provider:'codex'|'api';codexPath:string;model:string;reasoningEffort?:ReasoningEffort;preferredBrowser?:'system'|'chrome'|'edge';apiBase:string;hasApiKey:boolean;autoRun:boolean;launchAtLogin:boolean;notify:boolean;timezone:string;maxAttempts:number;maxSteps:number;dailyAiLimit:number;channelOverrides:Record<string,boolean>;mail:{host:string;port:number;user:string;secure:boolean;hasPassword:boolean};}

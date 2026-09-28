@@ -1,5 +1,5 @@
 const { app,BrowserWindow,safeStorage }=require('electron');
-const { mkdirSync,writeFileSync }=require('node:fs');
+const { chmodSync,mkdirSync,writeFileSync }=require('node:fs');
 const { join }=require('node:path');
 const assert=require('node:assert/strict');
 const { DatabaseSync }=require('node:sqlite');
@@ -7,9 +7,17 @@ const evidence=join(process.cwd(),'.evidence');
 mkdirSync(evidence,{recursive:true});
 // Prevent external execution during deterministic UI and persistence checks.
 mkdirSync(process.env.LINKFLOW_DATA_DIR,{recursive:true});
+const mockCodex=join(process.env.LINKFLOW_DATA_DIR,'mock-codex.cjs');
+writeFileSync(mockCodex,`#!/usr/bin/env node
+if(process.argv.includes('login')){console.log('Logged in');process.exit(0)}
+const readline=require('node:readline');
+const input=readline.createInterface({input:process.stdin});
+input.on('line',line=>{const message=JSON.parse(line);if(message.method==='initialize')console.log(JSON.stringify({id:message.id,result:{}}));if(message.method==='model/list')console.log(JSON.stringify({id:message.id,result:{data:[{id:'reasoning-wide',displayName:'Reasoning Wide',isDefault:true,defaultReasoningEffort:'low',supportedReasoningEfforts:[{reasoningEffort:'minimal'},{reasoningEffort:'low'},{reasoningEffort:'high'}]},{id:'reasoning-compact',displayName:'Reasoning Compact',defaultReasoningEffort:'minimal',supportedReasoningEfforts:[{reasoningEffort:'none'},{reasoningEffort:'minimal'}]}]}}))});
+input.on('close',()=>process.exit(0));
+`);chmodSync(mockCodex,0o755);
 const db=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
 db.exec('CREATE TABLE state (id INTEGER PRIMARY KEY, body TEXT NOT NULL)');
-db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'api',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
+db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'codex',codexPath:mockCodex,model:'',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
 require('../dist-electron/main.cjs');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const results=[];let win;
@@ -24,6 +32,26 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   check('renderer cannot access Node',await evaluate('typeof require === "undefined" && typeof process === "undefined"'));
   let snapshot=await command('snapshot');check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
   await clickText('添加网站');check('add dialog opens',await evaluate('!!document.querySelector("[role=dialog]")'));await evaluate('document.querySelector("[aria-label=关闭]").click()');await delay(150);
+  await clickText('设置');
+  check('reasoning level is visible before opening advanced settings',await evaluate('!!document.querySelector("[aria-label=填写思考等级]")&&document.querySelector(".reasoning-control")?.offsetParent!==null'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=填写思考等级]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(e,"bad value");e.dispatchEvent(new Event("input",{bubbles:true}))})()');await delay(80);
+  check('unknown model allows manual effort but rejects malformed identifiers before save',await evaluate('document.querySelector("[role=alert]")?.innerText.includes("只能包含")&&[...document.querySelectorAll("button")].find(b=>b.innerText.trim()==="保存设置")?.disabled'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=填写思考等级]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(e,"");e.dispatchEvent(new Event("input",{bubbles:true}))})()');await delay(80);
+  await clickText('刷新可用模型');await delay(250);
+  check('empty model remains explicitly unfixed after refresh',await evaluate('(()=>{const e=document.querySelector("[aria-label=选择模型]");return e?.value===""&&e.selectedOptions[0]?.textContent.includes("未固定模型")})()'));
+  check('reasoning level remains visible with advanced settings closed',await evaluate('document.querySelector(".advanced-settings")?.open===false&&document.querySelector(".reasoning-control")?.offsetParent!==null'));
+  check('discovered model list renders without implicitly applying its capabilities',await evaluate('document.body.innerText.includes("Reasoning Wide")&&document.body.innerText.includes("未明确选择模型，思考能力由连接实际使用的默认模型决定")'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=选择模型]");e.value="reasoning-wide";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(100);
+  check('explicit model uses its dynamic reported reasoning list and suggestion',await evaluate('(()=>{const e=document.querySelector("[aria-label=选择思考等级]");return e&&[...e.options].some(o=>o.value==="minimal")&&[...e.options].some(o=>o.value==="high")&&![...e.options].some(o=>o.value==="none")&&e.parentElement.innerText.includes("建议 低（low）")})()'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=选择思考等级]");e.value="high";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(80);
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=选择模型]");e.value="reasoning-compact";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(100);
+  check('switching to an incompatible model preserves the effort and blocks both saves',await evaluate('(()=>{const e=document.querySelector("[aria-label=选择思考等级]");const buttons=[...document.querySelectorAll("button")];return e?.value==="high"&&document.querySelector("[role=alert]")?.innerText.includes("原值尚未改变")&&buttons.find(b=>b.innerText.trim()==="保存设置")?.disabled&&buttons.find(b=>b.innerText.trim()==="保存并测试")?.disabled})()'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=选择思考等级]");e.value="minimal";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(80);
+  await clickText('保存设置');await delay(250);snapshot=await command('snapshot');
+  check('model and reasoning level persist in the actual settings payload',snapshot.settings.model==='reasoning-compact'&&snapshot.settings.reasoningEffort==='minimal');
+  await clickText('总览');await clickText('设置');await clickText('刷新可用模型');await delay(250);
+  check('saved model and reasoning level reopen without implicit changes',await evaluate('document.querySelector("[aria-label=选择模型]")?.value==="reasoning-compact"&&document.querySelector("[aria-label=选择思考等级]")?.value==="minimal"'));
+  await clickText('总览');
   await evaluate('document.querySelector(".demo-switch").click()');await delay(200);
   check('explicit demo shows sample websites',await evaluate('document.body.innerText.includes("studio.example")'));
   win.webContents.debugger.attach('1.3');

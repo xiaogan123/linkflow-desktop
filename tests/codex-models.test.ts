@@ -4,11 +4,18 @@ import {mkdtemp,readFile,rm,access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {queryCodexModels,parseCodexModels} from '../src/integrations/codex-models';
+import {SettingsPatch} from '../src/main/validation';
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitForExit(pid:number,timeoutMs=2500){const deadline=Date.now()+timeoutMs;while(Date.now()<deadline){try{process.kill(pid,0)}catch{return}await pause(25)}throw Error('synthetic descendant remained alive')}
 test('Codex models use advertised ids and efforts, never an invented availability list',()=>{
  const models=parseCodexModels([{model:'sample-model',displayName:'Sample',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'high'},{reasoningEffort:'xhigh'}]},{model:'hidden-model',hidden:true},{model:'bad id'}]);
  assert.deepEqual(models,[{id:'sample-model',label:'Sample',source:'codex',isDefault:true,supportsReasoning:['high','xhigh']}]);
+});
+test('Codex preserves dynamic advertised efforts and only an advertised suggested default',()=>{
+ const models=parseCodexModels([{model:'dynamic',defaultReasoningEffort:'minimal',supportedReasoningEfforts:[{reasoningEffort:'none'},{reasoningEffort:'minimal'},{reasoningEffort:'adaptive_v2'},{reasoningEffort:'minimal'},{reasoningEffort:'bad id'},{reasoningEffort:'x'.repeat(65)}]},{model:'mismatch',defaultReasoningEffort:'ultra',supportedReasoningEfforts:[{reasoningEffort:'low'}]}]);
+ assert.deepEqual(models[0].supportsReasoning,['none','minimal','adaptive_v2']);assert.equal(models[0].defaultReasoningEffort,'minimal');assert.equal(models[1].defaultReasoningEffort,undefined);
+ for(const reasoningEffort of ['none','minimal','adaptive_v2','high'])assert.equal(SettingsPatch.parse({reasoningEffort}).reasoningEffort,reasoningEffort);
+ for(const reasoningEffort of ['',null,'bad id','x'.repeat(65),'high\nother=true','$(command)'])assert.equal(SettingsPatch.safeParse({reasoningEffort}).success,false);
 });
 test('Codex stdio discovery initializes, pages model/list, and never starts a thread',async()=>{
  const script=`const r=require('node:readline').createInterface({input:process.stdin});let initialized=false;r.on('line',line=>{const m=JSON.parse(line);if(m.method==='initialize')console.log(JSON.stringify({id:m.id,result:{}}));else if(m.method==='initialized')initialized=true;else if(m.method==='model/list'&&initialized){console.log(JSON.stringify({id:m.id,result:{data:[{model:m.params.cursor?'second':'first',supportedReasoningEfforts:[]}],nextCursor:m.params.cursor?null:'page2'}}))}else process.exit(4)});`;
