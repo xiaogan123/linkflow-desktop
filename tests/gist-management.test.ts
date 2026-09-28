@@ -33,11 +33,12 @@ test('old publication is recorded but not credited to current month; competing s
  await assert.rejects(adoptGist(store,id,url,{...deps,read:async()=>({url:url+'aa',login:'octocat',createdAt})}),/已有其他/);assert.equal(store.read().tasks.length,1);
  }finally{store.close()}
 });
-test('connection validates before saving encrypted secret, reuses identity and rejects replacement',async()=>{
+test('connection validates before saving encrypted secret, reuses one identity and keeps multiple identities separate',async()=>{
  const store=fixture(),secrets=new Map<string,string>();const vault={get:async(k:string)=>secrets.get(k),set:async(k:string,v:string)=>{secrets.set(k,v)},delete:async(k:string)=>{secrets.delete(k)}};
  try{await assert.rejects(connectGist(store,vault,'bad',async()=>{throw Error('Invalid')}));assert.equal(secrets.size,0);assert.equal(store.read().accounts.length,0);
  const a=await connectGist(store,vault,'synthetic-token',async()=> 'octocat');const b=await connectGist(store,vault,'replacement-token',async()=> 'octocat');assert.equal(a.id,b.id);assert.equal(secrets.get('account:'+a.id),'replacement-token');assert.equal(a.credentialKind,'api_token');assert.equal(JSON.stringify(store.read()).includes('replacement-token'),false);
- await assert.rejects(connectGist(store,vault,'other-token',async()=> 'another-user'),/原 Gist 连接/);assert.equal(store.read().accounts.length,1);
+ const other=await connectGist(store,vault,'other-token',async()=> 'another-user');assert.notEqual(other.id,a.id);assert.equal(store.read().accounts.length,2);assert.equal(secrets.get('account:'+a.id),'replacement-token');assert.equal(secrets.get('account:'+other.id),'other-token');
+ await assert.rejects(connectGist(store,vault,'wrong-owner',a.id,async()=> 'third-user'),/不会覆盖/);assert.equal(store.read().accounts.length,2);
  }finally{store.close()}
 });
 test('Gist requires a project qualification and always requires draft review; token error text is masked',()=>{

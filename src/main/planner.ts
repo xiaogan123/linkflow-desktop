@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Channel, Site, Task, LinkResult } from '../shared/types';
+import type { Channel, Site, SiteCapacity, Task, LinkResult } from '../shared/types';
 import type { State } from './store';
 
 export function dateKey(value:Date|string,timeZone:string):string{
@@ -10,6 +10,7 @@ export function monthKey(value:Date|string,timeZone:string){return dateKey(value
 export function liveThisMonth(siteId:string,tasks:Task[],now:Date,timeZone:string):number{
   return new Set(tasks.filter(t=>t.siteId===siteId&&t.firstLiveAt&&monthKey(t.firstLiveAt,timeZone)===monthKey(now,timeZone)).map(t=>t.sourceDomain)).size;
 }
+export function currentLive(siteId:string,tasks:Task[]):number{return new Set(tasks.filter(t=>t.siteId===siteId&&t.status==='live'&&t.health==='healthy'&&t.linkCheck==='found').map(t=>t.sourceDomain)).size}
 export function reservesSlot(t:Task,now:Date){return ['queued','running','needs_input','review'].includes(t.status)&&!t.firstLiveAt&&!(t.status==='review'&&t.reviewUntil&&new Date(t.reviewUntil)<=now)}
 export function recoverInterrupted(state:State,now=new Date()){
   for(const t of state.tasks){
@@ -21,7 +22,8 @@ export function recoverInterrupted(state:State,now=new Date()){
     }
   }
 }
-export function expireReviews(state:State,now:Date){for(const t of state.tasks){if(t.status==='review'&&t.reviewUntil&&new Date(t.reviewUntil)<=now){t.status='expired';t.message='审核超时，已释放名额；保留记录并继续低频核验。';t.updatedAt=now.toISOString();}}}
+function history(task:Task,at:string){task.history??=[];const last=task.history.at(-1);if(last?.status===task.status&&last.message===task.message&&last.linkCheck===task.linkCheck)return;task.history.push({at,status:task.status,message:task.message,linkCheck:task.linkCheck});task.history=task.history.slice(-50)}
+export function expireReviews(state:State,now:Date){for(const t of state.tasks){if(t.status==='review'&&t.reviewUntil&&new Date(t.reviewUntil)<=now){t.status='expired';t.health=t.firstLiveAt?(t.linkCheck==='absent'?'missing':'unknown'):'unknown';t.message='审核期限已到，尚未确认公开外链；已释放本月名额，并保留记录供低频复查。';t.nextCheckAt=new Date(now.getTime()+7*86400000).toISOString();t.updatedAt=now.toISOString();history(t,t.updatedAt);}}}
 export type Match={channel:Channel;score:number;reason:string};
 export function makePlan(state:State,site:Site,matches:Match[],now=new Date()):Task[]{
   if(site.status!=='ready')return [];
@@ -55,6 +57,21 @@ export function markVerified(t:Task,now:Date,url:string,rel:string){t.status='li
 
 export function applyLinkResult(task:Task,result:LinkResult,now=new Date()){
  task.lastCheckedAt=now.toISOString();task.linkCheck=result.outcome??(result.found?'found':'unreachable');
- if(result.found){if(task.checkpoint==='existing_link'){task.status='skipped';task.verifiedAt=now.toISOString();task.linkRel=result.rel;task.message='发现已有外链，保留来源记录，不计为本月新增。'}else markVerified(task,now,result.url,result.rel)}
- else{task.message=result.reason||'尚未在公开页面发现目标链接';if(task.status==='live'&&result.outcome==='absent')task.status='needs_input'}
+ if(result.found){task.health='healthy';task.consecutiveMissing=0;task.lostAt=undefined;task.reviewKind=undefined;task.nextCheckAt=new Date(now.getTime()+7*86400000).toISOString();if(task.checkpoint==='existing_link'){task.status='skipped';task.verifiedAt=now.toISOString();task.linkRel=result.rel;task.message='发现已有外链，保留来源记录，不计为本月新增。'}else markVerified(task,now,result.url,result.rel)}
+ else{
+   task.message=result.reason||'尚未在公开页面发现目标链接';
+   task.health=result.outcome==='absent'?'missing':'unknown';
+   if(task.firstLiveAt&&result.outcome==='absent'){
+     task.status='needs_input';task.reviewKind='lost_link';task.lostAt??=now.toISOString();task.consecutiveMissing=(task.consecutiveMissing??0)+1;task.nextCheckAt=new Date(now.getTime()+7*86400000).toISOString();task.message='曾核验生效的外链当前未找到；已保留历史新增记录，并将低频自动复查。';
+   }else task.nextCheckAt=new Date(now.getTime()+86400000).toISOString();
+ }
+ history(task,now.toISOString());
+}
+
+export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Channel[],now=new Date(),timeZone='UTC'):SiteCapacity{
+  const related=tasks.filter(task=>task.siteId===site.id),used=new Set(related.map(task=>task.sourceDomain));
+  const remaining=matches.map(item=>item.channel).filter(channel=>channel.enabled&&channel.free!=='paid'&&channel.free!=='unknown'&&!used.has(channel.domain));
+  const automaticUnused=remaining.filter(channel=>channel.automation!=='manual').length,manualUnused=remaining.length-automaticUnused;
+  const monthsAtTarget=site.monthlyTarget>0?Math.floor(remaining.length/site.monthlyTarget):null;
+  return {siteId:site.id,currentLive:currentLive(site.id,tasks),firstVerifiedThisMonth:liveThisMonth(site.id,tasks,now,timeZone),missing:new Set(related.filter(task=>task.health==='missing').map(task=>task.sourceDomain)).size,eligibleUnused:remaining.length,automaticUnused,manualUnused,monthsAtTarget,reason:remaining.length<site.monthlyTarget?'可用的未用来源不足以支持下一个完整月目标。':undefined};
 }

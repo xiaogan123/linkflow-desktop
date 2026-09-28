@@ -34,6 +34,11 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
     check('diagnostics never start the scheduler',snapshot.settings.autoRun===false&&!controller.runtime.busy);
     check('first render does not access keychain',snapshot.runtime.vaultReady===false);
     check('reported version matches package',snapshot.runtime.version===app.getVersion());
+    check('packaged catalog contains 50 qualified candidates',snapshot.channels.length===50&&snapshot.channels.filter((channel:{automation:string})=>channel.automation==='api').length===2);
+    check('isolated account and mailbox migrations are empty',snapshot.mailboxes.length===0&&snapshot.accountBindings.length===0);
+    const backups=await win.webContents.executeJavaScript('window.linkflow.invoke("backup:auto-status")');
+    check('automatic backups are opt-in without secret access',backups.enabled===false&&backups.backups.length===0&&!controller.runtime.vaultReady);
+
     await win.webContents.executeJavaScript('window.linkflow.invoke("settings:save",{notify:false,dailyAiLimit:8})');
     check('packaged IPC persists settings',controller.store.read().settings.dailyAiLimit===8);
     check('private domains rejected by packaged IPC',await win.webContents.executeJavaScript('window.linkflow.invoke("site:add",{domain:"127.0.0.1",email:"test@example.com",monthlyTarget:2}).then(()=>false,()=>true)'));

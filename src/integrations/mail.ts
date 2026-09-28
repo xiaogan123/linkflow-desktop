@@ -1,6 +1,6 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import type { ExecutionContext, SecretStore, Settings } from '../shared/types';
+import type { ExecutionContext, Mailbox, SecretStore, Settings } from '../shared/types';
 import {inferMailPreset} from '../shared/mail-presets';
 import {safeMessage} from '../main/validation';
 
@@ -29,8 +29,9 @@ export function verificationUrls(text: string, allowedHosts: string[]): string[]
   return [...urls];
 }
 
-function mailboxClient(settings: Settings, password: string): ImapFlow {
-  const { host, port, user, secure } = settings.mail;
+interface MailboxClient {usable:boolean;connect():Promise<unknown>;getMailboxLock(path:string):Promise<{release():void}>;logout():Promise<unknown>}
+function mailboxClient(mail: Pick<Mailbox,'host'|'port'|'user'|'secure'>, password: string): ImapFlow {
+  const { host, port, user, secure } = mail;
   if(inferMailPreset({host})?.support==='oauth-required')throw new Error('此邮箱需要 OAuth 登录，当前版本暂不支持，请选择其他邮箱。');
   if (!host || !user || !Number.isInteger(port) || port < 1 || port > 65535 || !secure) throw new Error('请配置 TLS 邮箱服务器、端口和账号');
   return new ImapFlow({ host, port, secure: true, auth: { user, pass: password }, logger: false, disableAutoIdle: true, connectionTimeout: 10_000, socketTimeout: 20_000, greetingTimeout: 10_000 });
@@ -41,13 +42,20 @@ export async function testMail(settings: Settings, secrets: SecretStore): Promis
   if (!password) return { ok: false, message: '尚未配置邮箱密码' };
   let client: ImapFlow | undefined;
   try {
-    client = mailboxClient(settings, password);
+    client = mailboxClient(settings.mail, password);
     await client.connect();
     const lock = await client.getMailboxLock('INBOX');
     lock.release();
     return { ok: true, message: '邮箱连接成功' };
   } catch (error) { return { ok: false, message: safeMessage(error) }; }
   finally { if (client?.usable) await client.logout().catch(() => {}); }
+}
+
+export async function testMailbox(mailbox:Mailbox,password:string,create:(mailbox:Mailbox,password:string)=>MailboxClient=mailboxClient):Promise<{ok:boolean;message:string}>{
+  if(!password)return {ok:false,message:'尚未配置邮箱密码'};
+  let client:MailboxClient|undefined;
+  try{client=create(mailbox,password);await client.connect();const lock=await client.getMailboxLock('INBOX');lock.release();return {ok:true,message:'邮箱连接成功'}}
+  catch(error){return {ok:false,message:safeMessage(error)}}finally{if(client?.usable)await client.logout().catch(()=>{})}
 }
 
 function addressesMatch(addresses: { address?: string }[] | undefined, expected: string): boolean {
@@ -70,9 +78,10 @@ export function isMatchingVerificationEnvelope(envelope: { from?: { address?: st
 export async function findVerification(context: ExecutionContext): Promise<string | undefined> {
   const { settings, secrets, site, channel, signal } = context;
   if (signal.aborted) throw new Error('任务已取消');
-  const password = await secrets.get('mailPassword');
+  const mail=context.mailbox??{...settings.mail,id:'legacy',label:'legacy',aliases:[],createdAt:'',updatedAt:''};
+  const password = await secrets.get(context.mailbox?`mailbox:${context.mailbox.id}`:'mailPassword');
   if (!password) return undefined;
-  const client = mailboxClient(settings, password);
+  const client = mailboxClient(mail, password);
   const account = context.getAccount();
   const registrationAt = account?.createdAt ? new Date(account.createdAt).getTime() : new Date(context.task.createdAt).getTime();
   const since = new Date(Math.max(Date.now() - LOOKBACK_MS, Number.isFinite(registrationAt) ? registrationAt : 0));
@@ -87,7 +96,7 @@ export async function findVerification(context: ExecutionContext): Promise<strin
         if (signal.aborted) throw new Error('任务已取消');
         for await (const message of client.fetch(String(uid), { envelope: true, source: { start: 0, maxLength: MAX_BYTES + 1 } }, { uid: true })) {
           const envelope = message.envelope;
-          if (!envelope || !isMatchingVerificationEnvelope(envelope, site.email, channel.domain, since)) continue;
+          if (!envelope || !isMatchingVerificationEnvelope(envelope, account?.email||site.publicEmail||site.email, channel.domain, since)) continue;
           const source = message.source;
           if (!source || source.length > MAX_BYTES) continue;
           const parsed = await simpleParser(source);

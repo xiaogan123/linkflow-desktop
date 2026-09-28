@@ -313,7 +313,7 @@ async function createAccount(context: ExecutionContext, transport: TelegraphTran
   const createdAt = now();
   const shortName = plainInline(context.site.name || context.site.domain).slice(0, 32) || 'Linkflow site';
   const account: AccountWithCredential = draft ?? {
-    id: randomUUID(), channelId: context.channel.id, email: context.site.email, username: shortName,
+    id: randomUUID(), channelId: context.channel.id, email: context.site.publicEmail||context.site.email,mailboxId:context.mailbox?.id, username: shortName,
     createdAt, updatedAt: createdAt, status: 'draft', source: 'generated', registrationAttempts: 0,
     hasPassword: false, credentialKind: 'api_token',
   };

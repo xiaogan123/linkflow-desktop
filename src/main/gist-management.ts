@@ -6,20 +6,25 @@ import {verifyLink} from '../integrations/web';
 import {applyLinkResult} from './planner';
 
 type StateStore=Pick<Store,'read'|'update'>;
-export async function connectGist(store:StateStore,vault:SecretStore,token:string,validate=validateGistToken){
+export async function connectGist(store:StateStore,vault:SecretStore,token:string,accountIdOrValidate?:string|typeof validateGistToken,validateArg=validateGistToken){
+  const accountId=typeof accountIdOrValidate==='string'?accountIdOrValidate:undefined,validate=typeof accountIdOrValidate==='function'?accountIdOrValidate:validateArg;
   const login=await validate(token);
-  const old=store.read().accounts.find(a=>a.channelId==='github-gist');
-  if(old&&old.username.toLowerCase()!==login.toLowerCase())throw Error('请先删除原 Gist 连接，再连接其他 GitHub 身份');
+  const state=store.read(),target=accountId?state.accounts.find(a=>a.id===accountId&&a.channelId==='github-gist'):undefined;
+  if(accountId&&!target)throw Error('Gist 账号不存在');
+  if(target&&target.username.toLowerCase()!==login.toLowerCase())throw Error('新令牌属于不同 GitHub 身份，不会覆盖已有账号；请新增连接。');
+  const old=target??state.accounts.find(a=>a.channelId==='github-gist'&&a.username.toLowerCase()===login.toLowerCase());
   const now=new Date().toISOString();
   const account:Account={id:old?.id??randomUUID(),channelId:'github-gist',credentialKind:'api_token',email:login+'@users.noreply.github.com',username:login,createdAt:old?.createdAt??now,updatedAt:now,verifiedAt:now,status:'registered',hasPassword:true,source:'imported'};
   await vault.set('account:'+account.id,token);
-  store.update(s=>{s.accounts=s.accounts.filter(a=>a.channelId!=='github-gist');s.accounts.push(account)});
+  store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==account.id);s.accounts.push(account)});
   return account;
 }
 
 // Metadata alone is insufficient: a public, anonymous HTML anchor must exist.
 // Adoption has no write call to GitHub and never generates an account or article.
-export async function adoptGist(store:StateStore,siteId:string,url:string,deps:{read?:typeof readPublicGist;verify?:typeof verifyLink;now?:()=>Date}={}){
+type AdoptDeps={read?:typeof readPublicGist;verify?:typeof verifyLink;now?:()=>Date};
+export async function adoptGist(store:StateStore,siteId:string,url:string,accountIdOrDeps?:string|AdoptDeps,depsArg:AdoptDeps={}){
+  const accountId=typeof accountIdOrDeps==='string'?accountIdOrDeps:undefined,deps=typeof accountIdOrDeps==='object'?accountIdOrDeps:depsArg;
   const site=store.read().sites.find(s=>s.id===siteId);if(!site)throw Error('网站不存在');
   const info=await (deps.read??readPublicGist)(url);
   const now=deps.now?.()??new Date();
@@ -34,6 +39,7 @@ export async function adoptGist(store:StateStore,siteId:string,url:string,deps:{
     if(old?.publicUrl&&old.publicUrl!==info.url)throw Error('该网站已有其他 Gist 来源，保留原任务以避免重复计数');
     const stamp=now.toISOString();
     const task:Task=old??{id:randomUUID(),siteId,channelId:'github-gist',sourceDomain:'gist.github.com',status:'review',createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:''};
+    if(accountId){const account=s.accounts.find(a=>a.id===accountId&&a.channelId==='github-gist');if(!account)throw Error('Gist 账号不存在');if(account.username.toLowerCase()!==info.login.toLowerCase())throw Error('公开 Gist 的作者与所选 GitHub 身份不一致');if(task.accountId&&task.accountId!==account.id)throw Error('已有 Gist 任务已归属其他 GitHub 身份，不会改写历史归属');task.accountId=account.id;}
     task.publicUrl=info.url;
     task.firstLiveAt??=info.createdAt;
     task.submittedAt??=info.createdAt;

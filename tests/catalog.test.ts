@@ -8,7 +8,7 @@ function site(category: Category, language = 'en'): Site {
 }
 
 test('catalog contains distinct curated channels with source evidence', () => {
-  assert.ok(CHANNELS.length >= 30 && CHANNELS.length <= 40);
+  assert.ok(CHANNELS.length >= 50);
   assert.equal(new Set(CHANNELS.map(channel => channel.id)).size, CHANNELS.length);
   assert.equal(CHANNELS.filter(channel => channel.automation === 'browser').length, 4);
   for (const channel of CHANNELS) {
@@ -16,9 +16,10 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.submitUrl.startsWith('https://'), channel.id);
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
-    assert.equal(channel.checkedAt, '2026-09-27', channel.id);
-    assert.equal(channel.authority, undefined);
-    assert.equal(channel.traffic, undefined);
+    assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
+    assert.equal(channel.evidenceStatus, 'rules_checked');
+    if(channel.authority) assert.ok(channel.authority.source && channel.authority.asOf);
+    if(channel.traffic) assert.ok(channel.traffic.source && channel.traffic.asOf);
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
     assert.match(channel.qualityReason, /[\u3400-\u9fff]/, `${channel.id} qualityReason`);
     assert.match(channel.notes, /[\u3400-\u9fff]/, `${channel.id} notes`);

@@ -1,7 +1,7 @@
 {
   "name": "linkflow",
   "productName": "外链助手",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "个人免费外链计划客户端",
   "private": true,
   "type": "module",
@@ -17,7 +17,8 @@
     "test:integration": "node scripts/audit-integration-run.mjs",
     "test:packaged": "node scripts/smoke-packaged.mjs",
     "privacy:source": "node scripts/privacy-scan.mjs source",
-    "privacy:dist": "node scripts/privacy-scan.mjs dist"
+    "privacy:dist": "node scripts/privacy-scan.mjs dist",
+    "privacy:release": "node scripts/privacy-release.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
