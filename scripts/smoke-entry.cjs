@@ -7,7 +7,12 @@ const evidence=join(process.cwd(),'.evidence');
 mkdirSync(evidence,{recursive:true});
 // Prevent external execution during deterministic UI and persistence checks.
 mkdirSync(process.env.LINKFLOW_DATA_DIR,{recursive:true});
-const mockCodex=join(process.env.LINKFLOW_DATA_DIR,'mock-codex.cjs');
+// Use the npm entry layout understood by the real Windows launcher as well as
+// a shebang on macOS. This synthetic package never leaves the isolated profile.
+const mockPackage=join(process.env.LINKFLOW_DATA_DIR,'mock-cli','node_modules','@openai','codex');
+mkdirSync(join(mockPackage,'bin'),{recursive:true});
+writeFileSync(join(mockPackage,'package.json'),JSON.stringify({name:'@openai/codex',bin:{codex:'bin/codex.js'}}));
+const mockCodex=join(mockPackage,'bin','codex.js');
 writeFileSync(mockCodex,`#!/usr/bin/env node
 if(process.argv.includes('login')){console.log('Logged in');process.exit(0)}
 const readline=require('node:readline');
@@ -24,6 +29,7 @@ const results=[];let win;
 const check=(name,condition)=>{assert(condition,name);results.push({name,passed:true})};
 const evaluate=js=>win.webContents.executeJavaScript(js,true);
 const command=(name,p={})=>evaluate(`window.linkflow.invoke(${JSON.stringify(name)},${JSON.stringify(p)})`);
+const waitForUi=async expression=>{const until=Date.now()+10000;while(Date.now()<until){if(await evaluate(expression))return;await delay(50)}throw Error('UI readiness deadline exceeded')};
 const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()===${JSON.stringify(text)});if(!b)return false;b.click();return true})()`);assert(found,'button: '+text);await delay(150)};
 (async()=>{
   await app.whenReady();
@@ -37,7 +43,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await evaluate('(()=>{const e=document.querySelector("[aria-label=填写思考等级]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(e,"bad value");e.dispatchEvent(new Event("input",{bubbles:true}))})()');await delay(80);
   check('unknown model allows manual effort but rejects malformed identifiers before save',await evaluate('document.querySelector("[role=alert]")?.innerText.includes("只能包含")&&[...document.querySelectorAll("button")].find(b=>b.innerText.trim()==="保存设置")?.disabled'));
   await evaluate('(()=>{const e=document.querySelector("[aria-label=填写思考等级]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(e,"");e.dispatchEvent(new Event("input",{bubbles:true}))})()');await delay(80);
-  await clickText('刷新可用模型');await delay(250);
+  await clickText('刷新可用模型');await waitForUi('!!document.querySelector("[aria-label=选择模型]")');
   check('empty model remains explicitly unfixed after refresh',await evaluate('(()=>{const e=document.querySelector("[aria-label=选择模型]");return e?.value===""&&e.selectedOptions[0]?.textContent.includes("未固定模型")})()'));
   check('reasoning level remains visible with advanced settings closed',await evaluate('document.querySelector(".advanced-settings")?.open===false&&document.querySelector(".reasoning-control")?.offsetParent!==null'));
   check('discovered model list renders without implicitly applying its capabilities',await evaluate('document.body.innerText.includes("Reasoning Wide")&&document.body.innerText.includes("未明确选择模型，思考能力由连接实际使用的默认模型决定")'));
@@ -49,7 +55,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await evaluate('(()=>{const e=document.querySelector("[aria-label=选择思考等级]");e.value="minimal";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(80);
   await clickText('保存设置');await delay(250);snapshot=await command('snapshot');
   check('model and reasoning level persist in the actual settings payload',snapshot.settings.model==='reasoning-compact'&&snapshot.settings.reasoningEffort==='minimal');
-  await clickText('总览');await clickText('设置');await clickText('刷新可用模型');await delay(250);
+  await clickText('总览');await clickText('设置');await clickText('刷新可用模型');await waitForUi('!!document.querySelector("[aria-label=选择模型]")');
   check('saved model and reasoning level reopen without implicit changes',await evaluate('document.querySelector("[aria-label=选择模型]")?.value==="reasoning-compact"&&document.querySelector("[aria-label=选择思考等级]")?.value==="minimal"'));
   await clickText('总览');
   await evaluate('document.querySelector(".demo-switch").click()');await delay(200);
