@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, Tray, nativeImage, safeStorage, systemPreferences } from 'electron';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +24,10 @@ import { prepareSelfTest, runPackagedSelfTest } from './self-test';
 import {bindAccount,unbindAccount} from './account-bindings';
 import {deleteCustomChannel,importChannelMetrics,saveCustomChannel} from '../integrations/channel-library';
 import {openInPreferredBrowser} from './external-browser';
-import {checkForUpdate,LocalBackups} from './maintenance';
+import {LocalBackups} from './maintenance';
+import {UpdateManager} from './update-manager';
+import {macApplicationPath} from './update-install';
+import {UPDATE_PUBLIC_KEY_SPKI_BASE64} from '../shared/update-trust';
 import {importMailboxesAtomic,saveMailboxAtomic} from './mailbox-service';
 import {saveAccountAtomic} from './account-service';
 
@@ -33,7 +36,8 @@ const selfTest=prepareSelfTest();
 if(process.env.LINKFLOW_DATA_DIR&&!app.isPackaged&&!selfTest)app.setPath('userData',process.env.LINKFLOW_DATA_DIR);
 const single=app.requestSingleInstanceLock();
 if(!single)app.quit();
-let win:BrowserWindow|null=null,tray:Tray|null=null,quitting=false,restoring=false,controller:Controller,localBackups:LocalBackups,maintenanceTimer:ReturnType<typeof setInterval>|undefined;
+let win:BrowserWindow|null=null,tray:Tray|null=null,quitting=false,restoring=false,updating=false,runtimeStarted=false,controller:Controller,localBackups:LocalBackups,updater:UpdateManager,maintenanceTimer:ReturnType<typeof setInterval>|undefined;
+const activeCommands=new Set<symbol>();
 const root=join(__dirname,'..');
 const file=join(root,'dist/index.html');
 const devUrl=!app.isPackaged?process.env.LINKFLOW_DEV_URL:undefined;
@@ -49,7 +53,15 @@ function createWindow(){
   win.webContents.on('will-attach-webview',event=>event.preventDefault());
   win.on('close',event=>{if(!quitting&&tray){event.preventDefault();win?.hide()}});
   win.on('closed',()=>{win=null});
-  void win.loadURL(renderURL);win.once('ready-to-show',()=>win?.show());
+  const created=win;
+  created.webContents.once('did-finish-load',()=>{
+    if(!app.isPackaged||selfTest)return;
+    void (async()=>{for(let i=0;i<100&&!created.isDestroyed();i++){
+      if(await created.webContents.executeJavaScript('!!window.linkflow && !!document.querySelector("h1")').catch(()=>false)){await updater.acknowledgeStartup();return}
+      await new Promise(done=>setTimeout(done,100));
+    }})().catch(()=>{/* The updater retains the recovery copy if startup cannot be confirmed. */});
+  });
+  void created.loadURL(renderURL);created.once('ready-to-show',()=>created.show());
 }
 async function confirmSecret(){
   if(process.platform==='darwin'&&systemPreferences.canPromptTouchID()){await systemPreferences.promptTouchID('查看外链助手保存的密码');return;}
@@ -66,6 +78,8 @@ async function detectAi(){
 async function command(name:string,p:unknown):Promise<unknown>{
   const {store,vault}=controller;
   if(restoring)throw Error('正在恢复备份，完成前不能执行其他操作');
+  if(updating&&name!=='app:update-status'&&name!=='snapshot')throw Error('正在准备更新安装，请等待应用重启');
+  if((name.startsWith('app:')&&name.endsWith('update'))||name==='app:update-status')z.object({}).strict().parse(p??{});
   switch(name){
     case 'snapshot':return controller.snapshot();
     case 'site:add':{
@@ -205,7 +219,15 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const data=validateBackup({state:payload.state,secrets}),confirm=await dialog.showMessageBox(win!,{type:'warning',message:'恢复这份本机自动备份？',detail:'当前状态会先另存一份本机恢复点。恢复后自动执行与开机启动都保持关闭。',buttons:['取消','恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return {ok:false,message:'已取消'};
       ensureRestoreIdle();controller.closeTaskBrowsers();await localBackups.run(true);ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';store.restore(data.state,vault.encryptSecrets(data.secrets));app.setLoginItemSettings({openAtLogin:false});await detectAi();return {ok:true,message:'本机备份已恢复，检查后再手动恢复执行'};}finally{restoring=false}
     }
-    case 'app:check-update':return checkForUpdate(app.getVersion());
+    case 'app:update-status':return updater.status();
+    case 'app:check-update':return updater.check();
+    case 'app:download-update':{const state=updater.status();if(!['available','failed'].includes(state.phase)||!state.targetVersion)throw Error('请重新检查可用更新');void updater.download().catch(()=>broadcast());return updater.status();}
+    case 'app:cancel-update':return updater.cancel();
+    case 'app:install-update':{
+      forbidBusy();if(activeCommands.size)throw Error('请等待当前操作完成后再安装更新');updating=true;controller.stop();controller.closeTaskBrowsers();
+      try{await updater.install();setTimeout(()=>{quitting=true;app.quit()},100);return updater.status()}
+      catch(error){updating=false;if(runtimeStarted)controller.start();throw error}
+    }
     case 'data:export':{
       const path=await dialog.showSaveDialog(win!,{title:'导出外链记录',defaultPath:'外链记录.csv',filters:[{name:'CSV',extensions:['csv']}]});if(path.canceled||!path.filePath)return {ok:false,message:'已取消'};
       const s=store.read(),cell=(v:unknown)=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,"'").replaceAll('"','""')+'"';
@@ -223,17 +245,24 @@ app.whenReady().then(async()=>{
   if(!single)return;await mkdir(app.getPath('userData'),{recursive:true,mode:0o700});
   const store=new Store(join(app.getPath('userData'),'linkflow.sqlite'));const vault=new Vault(store);controller=new Controller(store,vault,app.getPath('userData'));store.onChange=broadcast;controller.runtime.version=app.getVersion();
   localBackups=new LocalBackups(join(app.getPath('userData'),'automatic-backups'),{encrypt:clear=>{if(!vault.available())throw Error('系统钥匙串不可用');return safeStorage.encryptString(clear)},decrypt:cipher=>{if(!vault.available())throw Error('系统钥匙串不可用');return safeStorage.decryptString(cipher)},snapshot:()=>({state:store.read(),ciphers:store.allCiphers()})});
+  updater=new UpdateManager({currentVersion:app.getVersion(),platform:process.platform,arch:process.arch,packaged:app.isPackaged&&!selfTest,
+    updatesDirectory:join(app.getPath('userData'),'updates'),applicationPath:process.platform==='darwin'?(macApplicationPath(process.execPath)??''):dirname(process.execPath),
+    executablePath:process.execPath,helperPath:join(root,'dist-electron/update-helper.cjs'),publicKey:Buffer.from(UPDATE_PUBLIC_KEY_SPKI_BASE64,'base64')});
+  await updater.initialize();
   if(selfTest)store.update(s=>{s.settings.autoRun=false;s.settings.provider='api';s.settings.hasApiKey=false});
   controller.onNotice=(title,body)=>{if(Notification.isSupported())new Notification({title,body}).show()};
   Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'外链助手',submenu:[{role:'about'},{type:'separator'},{label:'显示主窗口',click:()=>win?.show()},{label:'退出',accelerator:'CommandOrControl+Q',click:()=>{quitting=true;app.quit()}}]},{role:'editMenu'},{role:'windowMenu'}]));
   const iconPath=join(root,'assets/tray.png');if(existsSync(iconPath)){const icon=nativeImage.createFromPath(iconPath).resize({width:18,height:18});tray=new Tray(icon);tray.setToolTip('外链助手');tray.setContextMenu(Menu.buildFromTemplate([{label:'显示外链助手',click:()=>{if(!win)createWindow();win?.show()}},{label:'暂停自动执行',click:()=>controller.pause()},{type:'separator'},{label:'退出',click:()=>{quitting=true;app.quit()}}]));tray.on('click',()=>win?.show());}
   ipcMain.handle('linkflow:command',async(event,name,payload)=>{
+    const operation=Symbol();let tracked=false;
     try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!IPC_COMMANDS.includes(name)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
-      if(JSON.stringify(payload??{}).length>100000)throw Error('输入内容过大');return {ok:true,value:await command(name,payload)};
-    }catch(e){return {ok:false,error:safeMessage(e)}}
+      if(JSON.stringify(payload??{}).length>100000)throw Error('输入内容过大');
+      if(!['snapshot','app:update-status','app:install-update'].includes(name)){activeCommands.add(operation);tracked=true}
+      return {ok:true,value:await command(name,payload)};
+    }catch(e){return {ok:false,error:safeMessage(e)}}finally{if(tracked)activeCommands.delete(operation)}
   });
-  createWindow();if(selfTest){void runPackagedSelfTest(win!,controller);return;}await detectAi();controller.start();maintenanceTimer=setInterval(()=>{if(!controller.hasPendingWork())void localBackups.run().catch(()=>broadcast())},10*60_000);maintenanceTimer.unref();
+  createWindow();if(selfTest){void runPackagedSelfTest(win!,controller);return;}await detectAi();runtimeStarted=true;if(!updating&&!quitting)controller.start();maintenanceTimer=setInterval(()=>{if(!updating&&!controller.hasPendingWork())void localBackups.run().catch(()=>broadcast())},10*60_000);maintenanceTimer.unref();
 });
 app.on('activate',()=>{if(!win)createWindow();else win.show()});
-app.on('before-quit',()=>{quitting=true;if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop()});
+app.on('before-quit',()=>{quitting=true;if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();updater?.dispose()});
 app.on('window-all-closed',()=>{if(!tray){quitting=true;app.quit()}});

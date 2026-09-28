@@ -54,6 +54,9 @@ jobs:
       - name: Run desktop smoke test
         run: npm run test:desktop
 
+      - name: Run update center UI checks
+        run: npm run test:update-ui
+
       - name: Run integration test
         run: npm run test:integration
 
@@ -99,6 +102,9 @@ jobs:
             }
           }
 
+      - name: Validate native update installer and recovery
+        run: npm run test:update-native
+
       - name: Upload Windows installer and checksum
         uses: actions/upload-artifact@v4
         with:
@@ -139,6 +145,9 @@ jobs:
 
       - name: Run desktop smoke test
         run: npm run test:desktop
+
+      - name: Run update center UI checks
+        run: npm run test:update-ui
 
       - name: Run integration test
         run: npm run test:integration

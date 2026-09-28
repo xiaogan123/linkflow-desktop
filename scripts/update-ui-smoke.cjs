@@ -1,0 +1,28 @@
+const {join,resolve}=require('node:path');
+const {mkdtempSync,writeFileSync,mkdirSync}=require('node:fs');
+const {tmpdir}=require('node:os');
+const assert=require('node:assert/strict');
+if(!process.versions.electron){
+ (async()=>{const dir=mkdtempSync(join(tmpdir(),'linkflow-update-ui-'));const root=process.cwd();
+  await require('esbuild').build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import {UpdateCenter} from ${JSON.stringify(join(root,'src/ui/pages/UpdateCenter.tsx'))};import ${JSON.stringify(join(root,'src/ui/styles.css'))};let root=createRoot(document.getElementById('root'));window.mountFixture=(props)=>root.render(<UpdateCenter demo={false} platform="darwin-arm64" currentVersion="1.1.0" taskBusy={false} onResult={(ok,message)=>window.lastNotice={ok,message}} {...props}/>);window.unmountFixture=()=>root.render(null);window.mountFixture({});`,resolveDir:root,loader:'tsx'},outfile:join(dir,'ui.js'),bundle:true,platform:'browser',jsx:'automatic'});
+  writeFileSync(join(dir,'index.html'),'<html><head><link rel="stylesheet" href="ui.css"></head><body><div id="root"></div><script src="ui.js"></script></body></html>');
+  writeFileSync(join(dir,'preload.cjs'),`const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('linkflow',{invoke:(name)=>ipcRenderer.invoke('fixture',name)});`);
+  const child=require('node:child_process').spawn(require('electron'),[__filename,dir],{stdio:'inherit',env:{...process.env,ELECTRON_RUN_AS_NODE:undefined}});const deadline=setTimeout(()=>child.kill(),60000);child.once('exit',code=>{clearTimeout(deadline);process.exitCode=code??1});
+ })().catch(()=>{console.error('Update UI test setup failed');process.exitCode=1});
+}else{
+ const {app,BrowserWindow,ipcMain}=require('electron');const dir=process.argv[2];app.setPath('userData',join(dir,'profile'));let win,state={phase:'idle',currentVersion:'1.1.0'},reads=0,actions=[],installBlocked=false;const checks=[];const delay=ms=>new Promise(r=>setTimeout(r,ms));
+ const evaluate=js=>win.webContents.executeJavaScript(js,true);const check=(label,ok)=>{assert(ok,label);checks.push(label)};
+ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.innerText.trim()===${JSON.stringify(text)});if(!b||b.disabled)return false;b.click();return true})()`),'click '+text);await delay(100)};
+ const target={targetVersion:'1.2.0',releaseNotes:'<img src=x onerror="window.injected=true">\n安全更新',publishedAt:'2026-09-28T00:00:00.000Z'};
+ ipcMain.handle('fixture',(_event,name)=>{if(name==='app:update-status'){reads++;return state}actions.push(name);if(name==='app:check-update')state={...state,...target,phase:'available'};if(name==='app:download-update')state={...state,phase:'downloading',progress:{receivedBytes:524288,totalBytes:1048576,percent:50}};if(name==='app:cancel-update')state={...state,phase:'available',error:'下载已取消'};if(name==='app:install-update'){if(installBlocked)throw Error('fixture pending task');state={...state,phase:'installing'}}return state});
+ app.whenReady().then(async()=>{try{
+  win=new BrowserWindow({width:1100,height:820,show:false,webPreferences:{preload:join(dir,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});await win.loadFile(join(dir,'index.html'));await delay(200);
+  check('mount reads status but never checks network',reads===1&&actions.length===0);await click('检查更新');check('release notes are rendered as plain text',await evaluate('document.body.innerText.includes("<img src=x")&&!document.querySelector(".update-notes img")&&!window.injected'));
+  await click('下载更新');check('download reports real byte and percent state',await evaluate('document.querySelector("[role=progressbar]").getAttribute("aria-valuenow")==="50"&&document.body.innerText.includes("0.5 MB / 1.0 MB")'));await delay(800);check('active download polls',reads>=2);await click('取消下载');check('cancel immediately usable during download',actions.includes('app:cancel-update'));
+  state={...state,phase:'prepared',error:undefined};await evaluate('window.unmountFixture()');await delay(50);await evaluate('window.mountFixture({taskBusy:true})');await delay(100);check('busy task disables install',await evaluate('[...document.querySelectorAll("button")].find(b=>b.innerText==="安装并重启").disabled'));
+  await evaluate('window.mountFixture({taskBusy:false})');await delay(100);installBlocked=true;await click('安装并重启');check('IPC rejection reloads authoritative prepared state',await evaluate('document.body.innerText.includes("更新已下载并验证")'));
+  state={...state,phase:'failed',retryable:true,error:'synthetic failure'};await evaluate('window.unmountFixture()');await delay(50);await evaluate('window.mountFixture({})');await delay(100);check('failed state always provides fresh check recovery',await evaluate('[...document.querySelectorAll("button")].some(b=>b.innerText==="重新检查")'));await click('重新检查');
+  await click('下载更新');await evaluate('window.unmountFixture()');await delay(50);const before=reads;await delay(900);check('unmount stops polling',reads===before);const actionBefore=actions.length;await evaluate('window.mountFixture({demo:true})');await delay(900);check('demo has no IPC and disables update',reads===before&&actions.length===actionBefore&&await evaluate('[...document.querySelectorAll("button")].every(b=>b.disabled)'));
+  mkdirSync(join(process.cwd(),'.evidence/release-1.2.0'),{recursive:true});writeFileSync(join(process.cwd(),'.evidence/release-1.2.0/update-ui.json'),JSON.stringify({passed:true,checks},null,2));console.log('Update UI checks: '+checks.length);app.exit(0);
+ }catch(error){console.error(error.message);app.exit(1)}});
+}

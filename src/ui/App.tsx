@@ -5,7 +5,7 @@ import {
   CheckCircle, Clock, Copy, DownloadSimple, DotsThree, Eye, FileText, Funnel,
   Gear, House, Info, Leaf, LinkSimple, MagnifyingGlass, Pause, PencilSimple,
   Play, Plus, ShieldCheck, SlidersHorizontal, Trash, UploadSimple, UserCircle,
-  WarningCircle, X
+  WarningCircle, X, ArrowsClockwise
 } from '@phosphor-icons/react';
 import type {Account, Category, Channel, Settings, Site, Snapshot, Task, TaskStatus} from '../shared/types';
 import {demoSnapshot} from './demo';
@@ -15,9 +15,10 @@ import {AccountsPage} from './pages/AccountsPage';
 import {SiteTools} from './pages/SiteTools';
 import {SettingsPage} from './pages/SettingsPage';
 import {TaskCenter} from './pages/TaskCenter';
+import {UpdateCenter} from './pages/UpdateCenter';
 import {matchChannels} from '../integrations/catalog';
 
-type Page = 'overview'|'tasks'|'channels'|'accounts'|'settings'|'site';
+type Page = 'overview'|'tasks'|'channels'|'accounts'|'settings'|'updates'|'site';
 type Modal = 'add'|'editSite'|'account'|'draft'|'url'|'backupExport'|'backupImport'|'deleteSite'|'deleteAccount'|null;
 type IconType = typeof House;
 const categoryText:Record<Category,string>={software:'软件',ai:'人工智能',developer:'开发工具',design:'设计',business:'商业',content:'内容',education:'教育',finance:'金融',general:'综合'};
@@ -103,7 +104,7 @@ export default function App(){
   return <div className="app-shell">
     <aside className="sidebar"><div className="traffic" aria-hidden="true"/><div className="brand"><span className="brand-mark"><LinkSimple size={38} weight="bold"/></span><div><strong>外链助手</strong><small>LINKFLOW</small></div></div>
       <nav aria-label="主导航" className="nav"><NavButton icon={House} active={page==='overview'||page==='site'} onClick={()=>nav('overview')}>总览</NavButton><NavButton icon={FileText} active={page==='tasks'} onClick={()=>nav('tasks')}>任务</NavButton><NavButton icon={Funnel} active={page==='channels'} onClick={()=>nav('channels')}>渠道</NavButton><NavButton icon={UserCircle} active={page==='accounts'} onClick={()=>nav('accounts')}>账号</NavButton></nav>
-      <div className="sidebar-bottom"><NavButton icon={Gear} active={page==='settings'} onClick={()=>nav('settings')}>设置</NavButton><div className="runtime-indicator"><span className={`dot ${demo?'blue':data?.runtime.busy?'green':data?.settings.autoRun?'green':'gray'}`}/><div><strong>{demo?'演示模式':data?.runtime.busy?'正在执行':data?.settings.autoRun?(data.runtime.aiReady?'按计划待命':'等待 AI 连接'):'自动执行已暂停'}</strong><small>{demo?'仅供预览':data?'系统按计划运行':'等待桌面服务'}</small></div></div></div>
+      <div className="sidebar-bottom"><NavButton icon={ArrowsClockwise} active={page==='updates'} onClick={()=>nav('updates')}>更新中心</NavButton><NavButton icon={Gear} active={page==='settings'} onClick={()=>nav('settings')}>设置</NavButton><div className="runtime-indicator"><span className={`dot ${demo?'blue':data?.runtime.busy?'green':data?.settings.autoRun?'green':'gray'}`}/><div><strong>{demo?'演示模式':data?.runtime.busy?'正在执行':data?.settings.autoRun?(data.runtime.aiReady?'按计划待命':'等待 AI 连接'):'自动执行已暂停'}</strong><small>{demo?'仅供预览':data?'系统按计划运行':'等待桌面服务'}</small></div></div></div>
     </aside>
     <main className="main"><div className="topline"><span><i className="workspace-dot"/>个人工作空间</span><span>{fullDate}</span></div>
       {!api&&!demo&&<div className="banner warning"><WarningCircle size={20}/> 桌面服务未连接。可在浏览器中开启演示模式预览界面。<Button variant="text" onClick={()=>setDemo(true)}>开启演示模式</Button></div>}
@@ -125,7 +126,8 @@ export default function App(){
       :page==='tasks'?<TaskCenter data={data} disabled={demo||pending} onAction={act} onEditDraft={openDraft} onSetUrl={openUrl} onSite={selectSite}/>
       :page==='channels'?<ChannelsPage channels={data?.channels??[]} sites={data?.sites??[]} demo={false} onAction={act} onOpen={url=>void act('external:open',{url})}/>
       :page==='accounts'?<AccountsPage data={data} disabled={pending} onImport={()=>openAccount()} onEdit={openAccount} onDelete={a=>{setSelectedAccount(a.id);setModal('deleteAccount')}} onAction={act} onSetup={()=>nav('settings')}/>
-      :<SettingsPage settings={settings} setSettings={next=>{settingsDirty.current=true;setSettings(next)}} snapshot={data} apiKey={apiKey} setApiKey={setApiKey} mailPassword={mailPassword} setMailPassword={setMailPassword} disabled={pending} onSave={saveSettings} onAction={act} onResult={(ok,message)=>(ok?setNotice:setError)(message)} onBackup={kind=>setModal(kind==='export'?'backupExport':'backupImport')}/>}
+      :page==='updates'?<UpdateCenter demo={demo} platform={data?.runtime.platform} currentVersion={data?.runtime.version} taskBusy={!!data?.runtime.busy} onResult={(ok,message)=>(ok?setNotice:setError)(message)}/>
+      :<SettingsPage settings={settings} setSettings={next=>{settingsDirty.current=true;setSettings(next)}} snapshot={data} apiKey={apiKey} setApiKey={setApiKey} mailPassword={mailPassword} setMailPassword={setMailPassword} disabled={pending} onSave={saveSettings} onAction={act} onResult={(ok,message)=>(ok?setNotice:setError)(message)} onBackup={kind=>setModal(kind==='export'?'backupExport':'backupImport')} onOpenUpdate={()=>nav('updates')}/>}
     </main>
 
     {modal==='add'&&<Dialog title="添加网站" onClose={close}><form onSubmit={saveAdd} className="dialog-form"><p className="dialog-intro">输入网站域名和联系邮箱，系统将分析公开页面并建立计划。</p><Field label="网站域名"><input required autoFocus value={domain} onChange={e=>setDomain(e.target.value)} placeholder="example.com" autoCapitalize="off"/></Field><Field label="联系邮箱"><input required type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="hello@example.com"/></Field><Field label="每月目标" hint="默认每月 2 个合格来源，可随时调整。"><input required type="number" min="1" max="20" value={target} onChange={e=>setTarget(Number(e.target.value))}/></Field><div className="dialog-actions"><Button onClick={close}>取消</Button><Button variant="primary" type="submit" disabled={pending||demo}>分析并开始</Button></div></form></Dialog>}

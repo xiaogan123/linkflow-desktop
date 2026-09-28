@@ -37,6 +37,12 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   check('native app starts with secured IPC bridge',!!win&&await evaluate('!!window.linkflow'));
   check('renderer cannot access Node',await evaluate('typeof require === "undefined" && typeof process === "undefined"'));
   let snapshot=await command('snapshot');check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
+  await clickText('更新中心');
+  await waitForUi('document.body.innerText.includes("此平台无法自动更新")');
+  check('update center reads real service without checking external network in development', (await command('app:update-status')).phase==='unsupported');
+  check('update IPC rejects renderer-controlled download addresses',await evaluate('window.linkflow.invoke("app:download-update",{url:"https://untrusted.example/update.exe"}).then(()=>false,()=>true)'));
+  check('install without prepared artifact fails without quitting or changing settings',await evaluate('window.linkflow.invoke("app:install-update").then(()=>false,()=>true)')&&(await command('snapshot')).settings.autoRun===false);
+  await clickText('总览');
   await clickText('添加网站');check('add dialog opens',await evaluate('!!document.querySelector("[role=dialog]")'));await evaluate('document.querySelector("[aria-label=关闭]").click()');await delay(150);
   await clickText('设置');
   check('reasoning level is visible before opening advanced settings',await evaluate('!!document.querySelector("[aria-label=填写思考等级]")&&document.querySelector(".reasoning-control")?.offsetParent!==null'));

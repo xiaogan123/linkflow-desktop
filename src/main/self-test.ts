@@ -36,6 +36,8 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
     check('reported version matches package',snapshot.runtime.version===app.getVersion());
     check('packaged catalog contains 50 qualified candidates',snapshot.channels.length===50&&snapshot.channels.filter((channel:{automation:string})=>channel.automation==='api').length===2);
     check('isolated account and mailbox migrations are empty',snapshot.mailboxes.length===0&&snapshot.accountBindings.length===0);
+    const update=await win.webContents.executeJavaScript('window.linkflow.invoke("app:update-status")');
+    check('packaged update status remains passive during diagnostics',update.phase==='unsupported'&&update.currentVersion===app.getVersion());
     const backups=await win.webContents.executeJavaScript('window.linkflow.invoke("backup:auto-status")');
     check('automatic backups are opt-in without secret access',backups.enabled===false&&backups.backups.length===0&&!controller.runtime.vaultReady);
 
@@ -53,7 +55,7 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
     }
     const nonce=process.env.LINKFLOW_SELF_TEST_NONCE;
     assert(nonce&&/^[a-f0-9]{32}$/.test(nonce),'test invocation nonce required');
-    const result={passed:true,nonce,platform:process.platform,arch:process.arch,version:app.getVersion(),checks};
+    const result={passed:true,nonce,pid:process.pid,platform:process.platform,arch:process.arch,version:app.getVersion(),checks};
     const destination=process.env.LINKFLOW_SELF_TEST_REPORT;
     if(destination)writeFileSync(destination,JSON.stringify(result,null,2),{mode:0o600});
     console.log('PACKAGED_SELF_TEST_PASSED '+checks.length);
