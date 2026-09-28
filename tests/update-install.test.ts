@@ -29,9 +29,16 @@ test('mac helper restores the old app and preserves the quarantined candidate wh
  }finally{await rm(directory,{recursive:true,force:true})}
 });
 
-test('canonical application tree binds exact executable permissions and rejects external links',async()=>{
+test('canonical application tree binds content and rejects external links on each platform',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'linkflow-tree-')),app=join(directory,'candidate.app'),outside=join(directory,'outside');try{
-  await mkdir(join(app,'Contents','MacOS'),{recursive:true});const executable=join(app,'Contents','MacOS','candidate');await writeFile(executable,'candidate',{mode:0o755});const first=await hashUpdateTree(app);await chmod(executable,0o744);assert.notEqual(await hashUpdateTree(app),first);await symlink(outside,join(app,'external-link'));await assert.rejects(hashUpdateTree(app),/越界符号链接/);
+  await mkdir(join(app,'Contents','MacOS'),{recursive:true});await mkdir(outside);const executable=join(app,'Contents','MacOS','candidate');await writeFile(executable,'candidate');const first=await hashUpdateTree(app);await writeFile(executable,'different');assert.notEqual(await hashUpdateTree(app),first);
+  await symlink(outside,join(app,'external-link'),process.platform==='win32'?'junction':'dir');await assert.rejects(hashUpdateTree(app),/越界符号链接/);
+ }finally{await rm(directory,{recursive:true,force:true})}
+});
+
+test('Mac bundle tree binds exact POSIX executable permissions',{skip:process.platform==='win32'?'Windows does not implement POSIX execute bits; covered on native Mac':false},async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-tree-mode-'));try{
+  const executable=join(directory,'candidate');await writeFile(executable,'candidate',{mode:0o755});const first=await hashUpdateTree(directory);await chmod(executable,0o744);assert.notEqual(await hashUpdateTree(directory),first);
  }finally{await rm(directory,{recursive:true,force:true})}
 });
 
