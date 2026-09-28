@@ -101,11 +101,13 @@ if(mode==='source'){
  for(const path of asars){
   const entries=listPackage(path);let files=0;archives++;
   for(const entry of entries){
-   const name=entry.replace(/^[/\\]/,'').replaceAll('\\','/');let data;
-   const info=statFile(path,name,false);
+   // ASAR's lookup uses native path separators, including nested directories.
+   const internalPath=entry.replace(/^[/\\]/,'');
+   const name=internalPath.replaceAll('\\','/');let data;
+   const info=statFile(path,internalPath,false);
    if('files' in info)continue;
    if('link' in info){fail(name,'unexpected-asar-link');continue}
-   try{data=extractFile(path,name)}catch{fail(name,'unreadable-asar-file');continue}files++;
+   try{data=extractFile(path,internalPath)}catch{fail(name,'unreadable-asar-file');continue}files++;
    if(!/^(?:dist\/|dist-electron\/|assets\/|package\.json$|THIRD_PARTY_NOTICES\.txt$)/.test(name))fail(name,'outside-package-allowlist');
    inspect(name,data);
   }

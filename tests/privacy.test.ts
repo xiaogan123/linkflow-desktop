@@ -64,6 +64,20 @@ test('distribution scan catches data outside the allowlisted application archive
  }finally{rmSync(dir,{recursive:true,force:true})}
 });
 
+test('distribution scan inspects nested ASAR paths using native separators',async()=>{
+ const dir=fixture();try{
+  for(const path of ['dist','dist-electron','release/resources','staging/dist/assets'])mkdirSync(join(dir,path),{recursive:true});
+  const nested=join(dir,'staging/dist/assets/application.js');
+  writeFileSync(nested,'public application');
+  await createPackage(join(dir,'staging'),join(dir,'release/resources/app.asar'));
+  const run=()=>spawnSync(process.execPath,[scanner,'dist'],{cwd:dir,encoding:'utf8',env:{...process.env,LINKFLOW_PRIVACY_POLICY:'',LINKFLOW_REQUIRE_PRIVATE_POLICY:'',LINKFLOW_APP_RESOURCES:''}});
+  const clean=run();assert.equal(clean.status,0,clean.stderr);assert.equal(JSON.parse(clean.stdout).archives,1);
+  writeFileSync(nested,['','Users','nested-synthetic-person','private'].join('/'));
+  await createPackage(join(dir,'staging'),join(dir,'release/resources/app.asar'));
+  const blocked=run();assert.equal(blocked.status,1);assert.match(blocked.stderr,/personal-mac-path/);assert(!blocked.stderr.includes('nested-synthetic-person'));
+ }finally{rmSync(dir,{recursive:true,force:true})}
+});
+
 
 test('private filenames and deleted historical paths cannot bypass content deduplication',()=>{
  const dir=fixture();try{
