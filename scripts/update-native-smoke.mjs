@@ -22,7 +22,7 @@ await build({entryPoints:['scripts/update-native-entry.ts'],outfile:join(directo
 const child=spawn(electron,[join(directory,'entry.cjs'),join(directory,'config.json')],{stdio:'inherit',env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},shell:false});
 const deadline=setTimeout(()=>child.kill(),240000);
 const code=await new Promise(done=>child.once('exit',done));clearTimeout(deadline);
-if(code!==0)throw Error('Native updater probe failed');
+if(code!==0){try{const report=JSON.parse(await readFile(join(directory,'result.json'),'utf8'));if(report?.diagnostic)console.error('NATIVE_UPDATE_DIAGNOSTIC '+JSON.stringify(report.diagnostic))}catch{}throw Error('Native updater probe failed')}
 await mkdir('.evidence/release-1.2.0',{recursive:true});await copyFile(join(directory,'result.json'),`.evidence/release-1.2.0/native-update-${process.platform}.json`);
 const report=JSON.parse(await readFile(join(directory,'result.json'),'utf8'));console.log('NATIVE_UPDATE_RESULT '+JSON.stringify(report));
 if(process.platform==='win32')await run(join(application,'Uninstall 外链助手.exe'),['/S']);
