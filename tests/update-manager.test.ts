@@ -76,6 +76,24 @@ test('only the running target version can acknowledge a GUI startup request',asy
  }finally{await rm(directory,{recursive:true,force:true})}
 });
 
+test('a late startup cannot claim an uncertain preserved Mac transaction was installed',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-update-')),data=fixture('1.3.0',Buffer.from('installer')),config={...options(directory,data),currentVersion:'1.2.0',platform:'darwin' as const,arch:'arm64'},token='00000000-0000-4000-8000-000000000001';try{
+  await mkdir(config.updatesDirectory,{recursive:true});await writeFile(join(config.updatesDirectory,'startup-request.json'),JSON.stringify({schemaVersion:1,targetVersion:'1.2.0',token}));await writeFile(join(config.updatesDirectory,'install-error.json'),JSON.stringify({schemaVersion:1,targetVersion:'1.2.0',failedAt:new Date().toISOString(),message:'preserved',recoveryJobPath:join(config.updatesDirectory,'install-job.json')}));const manager=new UpdateManager(config);assert.equal(await manager.acknowledgeStartup(),false);await assert.rejects(readFile(join(config.updatesDirectory,'startup-ack')));
+ }finally{await rm(directory,{recursive:true,force:true})}
+});
+
+test('an unresolved recovery transaction stays visible and blocks the normal update flow',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-update-')),data=fixture('1.2.0',Buffer.from('installer')),config={...options(directory,data),platform:'darwin' as const,arch:'arm64'},recoveryJobPath=join(directory,'updates','install-recovery.json');try{
+  await mkdir(config.updatesDirectory,{recursive:true});await writeFile(recoveryJobPath,'{}');await writeFile(join(config.updatesDirectory,'install-error.json'),JSON.stringify({schemaVersion:1,targetVersion:'1.2.0',failedAt:new Date().toISOString(),message:'preserved',recoveryJobPath}));const manager=new UpdateManager(config),state=await manager.initialize();assert.equal(state.phase,'failed');assert.equal(state.retryable,false);assert.match(state.error!,/恢复副本/);assert.deepEqual(await manager.check(),state);await assert.rejects(manager.download(),/恢复副本/);await assert.rejects(manager.install(),/恢复副本/);assert.deepEqual(manager.status(),state);
+ }finally{await rm(directory,{recursive:true,force:true})}
+});
+
+test('Mac startup acknowledgement carries the live runtime identity',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-update-')),data=fixture('1.3.0',Buffer.from('installer')),runtimeApplicationPath=join(directory,'AppTranslocation','id','d','外链助手.app'),runtimeExecutablePath=join(runtimeApplicationPath,'Contents','MacOS','外链助手'),config={...options(directory,data),currentVersion:'1.2.0',platform:'darwin' as const,arch:'arm64',runtimeApplicationPath,runtimeExecutablePath,pid:456},token='00000000-0000-4000-8000-000000000001';try{
+  await mkdir(config.updatesDirectory,{recursive:true});await writeFile(join(config.updatesDirectory,'startup-request.json'),JSON.stringify({schemaVersion:1,targetVersion:'1.2.0',token}));const manager=new UpdateManager(config);assert.equal(await manager.acknowledgeStartup(),true);assert.deepEqual(JSON.parse(await readFile(join(config.updatesDirectory,'startup-ack'),'utf8')),{schemaVersion:2,targetVersion:'1.2.0',token,pid:456,applicationPath:runtimeApplicationPath,executablePath:runtimeExecutablePath});
+ }finally{await rm(directory,{recursive:true,force:true})}
+});
+
 test('a signed release without this platform is unsupported instead of becoming downloadable',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'linkflow-update-')),data=fixture('1.2.0',Buffer.from('installer'));try{const manager=new UpdateManager({...options(directory,data),platform:'darwin',arch:'arm64'});assert.equal((await manager.check()).phase,'unsupported');assert.equal(manager.status().targetVersion,'1.2.0');await assert.rejects(manager.download())}finally{await rm(directory,{recursive:true,force:true})}
 });

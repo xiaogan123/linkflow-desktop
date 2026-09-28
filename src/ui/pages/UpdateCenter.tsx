@@ -59,7 +59,9 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
     finally{setCommand(null)}
   };
 
-  const copy=phaseCopy[state.phase];
+  const copy=state.phase==='failed'&&state.retryable===false
+    ?{...phaseCopy.failed,title:'更新需要进一步确认',body:'已保留恢复副本。请按下方提示处理，其他功能可以继续使用。'}
+    :phaseCopy[state.phase];
   const progress=Math.max(0,Math.min(100,state.progress?.percent??0));
   const busy=command!==null||activePhases.has(state.phase);
   const retry=()=>run(lastCommand==='app:install-update'?'app:install-update':state.targetVersion?'app:download-update':'app:check-update');

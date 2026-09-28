@@ -27,6 +27,7 @@ import {openInPreferredBrowser} from './external-browser';
 import {LocalBackups} from './maintenance';
 import {UpdateManager} from './update-manager';
 import {macApplicationPath} from './update-install';
+import {resolveMacUpdateTarget} from './update-mac-target';
 import {UPDATE_PUBLIC_KEY_SPKI_BASE64} from '../shared/update-trust';
 import {importMailboxesAtomic,saveMailboxAtomic} from './mailbox-service';
 import {saveAccountAtomic} from './account-service';
@@ -245,9 +246,13 @@ app.whenReady().then(async()=>{
   if(!single)return;await mkdir(app.getPath('userData'),{recursive:true,mode:0o700});
   const store=new Store(join(app.getPath('userData'),'linkflow.sqlite'));const vault=new Vault(store);controller=new Controller(store,vault,app.getPath('userData'));store.onChange=broadcast;controller.runtime.version=app.getVersion();
   localBackups=new LocalBackups(join(app.getPath('userData'),'automatic-backups'),{encrypt:clear=>{if(!vault.available())throw Error('系统钥匙串不可用');return safeStorage.encryptString(clear)},decrypt:cipher=>{if(!vault.available())throw Error('系统钥匙串不可用');return safeStorage.decryptString(cipher)},snapshot:()=>({state:store.read(),ciphers:store.allCiphers()})});
+  const runtimeApplicationPath=process.platform==='darwin'?(macApplicationPath(process.execPath)??''):dirname(process.execPath),runtimeHelperPath=join(root,'dist-electron/update-helper.cjs');
+  const macTarget=process.platform==='darwin'&&app.isPackaged&&!selfTest?await resolveMacUpdateTarget({runningApplicationPath:runtimeApplicationPath,runningExecutablePath:process.execPath,runningHelperPath:runtimeHelperPath,homeDirectory:app.getPath('home'),currentVersion:app.getVersion()}):undefined;
+  const updateApplicationPath=process.platform==='darwin'?(macTarget?.applicationPath??runtimeApplicationPath):dirname(process.execPath),updateExecutablePath=process.platform==='darwin'?(macTarget?.executablePath??process.execPath):process.execPath,updateHelperPath=process.platform==='darwin'?(macTarget?.helperPath??runtimeHelperPath):runtimeHelperPath;
   updater=new UpdateManager({currentVersion:app.getVersion(),platform:process.platform,arch:process.arch,packaged:app.isPackaged&&!selfTest,
-    updatesDirectory:join(app.getPath('userData'),'updates'),applicationPath:process.platform==='darwin'?(macApplicationPath(process.execPath)??''):dirname(process.execPath),
-    executablePath:process.execPath,helperPath:join(root,'dist-electron/update-helper.cjs'),publicKey:Buffer.from(UPDATE_PUBLIC_KEY_SPKI_BASE64,'base64')});
+    unsupportedReason:process.platform==='darwin'&&app.isPackaged&&!selfTest&&!macTarget?'请先将应用移到“应用程序”文件夹并重新打开，再使用应用内更新':undefined,
+    updatesDirectory:join(app.getPath('userData'),'updates'),applicationPath:updateApplicationPath,executablePath:updateExecutablePath,runtimeApplicationPath,runtimeExecutablePath:process.execPath,
+    helperPath:updateHelperPath,publicKey:Buffer.from(UPDATE_PUBLIC_KEY_SPKI_BASE64,'base64')});
   await updater.initialize();
   if(selfTest)store.update(s=>{s.settings.autoRun=false;s.settings.provider='api';s.settings.hasApiKey=false});
   controller.onNotice=(title,body)=>{if(Notification.isSupported())new Notification({title,body}).show()};

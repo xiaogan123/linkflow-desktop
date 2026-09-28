@@ -1,5 +1,5 @@
 import { app, BrowserWindow, safeStorage } from 'electron';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
@@ -55,11 +55,13 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
     }
     const nonce=process.env.LINKFLOW_SELF_TEST_NONCE;
     assert(nonce&&/^[a-f0-9]{32}$/.test(nonce),'test invocation nonce required');
-    const result={passed:true,nonce,pid:process.pid,platform:process.platform,arch:process.arch,version:app.getVersion(),checks};
+    const executablePath=process.execPath,marker='.app/Contents/MacOS/',markerIndex=executablePath.lastIndexOf(marker),applicationPath=markerIndex>=0?executablePath.slice(0,markerIndex+4):undefined;
+    const result={passed:true,nonce,pid:process.pid,platform:process.platform,arch:process.arch,version:app.getVersion(),applicationPath,executablePath,checks};
     const destination=process.env.LINKFLOW_SELF_TEST_REPORT;
     if(destination)writeFileSync(destination,JSON.stringify(result,null,2),{mode:0o600});
     console.log('PACKAGED_SELF_TEST_PASSED '+checks.length);
-    clearTimeout(deadline);controller.stop();app.exit(0);
+    clearTimeout(deadline);const release=process.env.LINKFLOW_SELF_TEST_RELEASE;if(release){assert(destination&&release.startsWith(destination+'.'),'diagnostic release marker must be bound to its report');const holdDeadline=Date.now()+120_000;while(!existsSync(release)&&Date.now()<holdDeadline)await new Promise(done=>setTimeout(done,100));check('diagnostic GUI hold released within bound',existsSync(release))}
+    controller.stop();app.exit(0);
   }catch{
     clearTimeout(deadline);console.error('PACKAGED_SELF_TEST_FAILED after '+checks.length+' checks');controller.stop();app.exit(1);
   }
