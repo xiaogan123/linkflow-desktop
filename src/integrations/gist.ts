@@ -370,6 +370,7 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
   if (!identity) return { status: 'needs_input', message: 'GitHub 已响应创建请求，但结果身份、公开性或 README.md 无法确认；不会重复创建', checkpoint: 'submitting', submittedAt };
   try { context.checkpoint({ checkpoint: 'gist_published', submittedAt, publicUrl: identity.url }); }
   catch { return { status: 'review', message: '公开 Gist 已创建，等待匿名页面外链核验', publicUrl: identity.url, checkpoint: 'gist_published', submittedAt }; }
+  if(context.signal.aborted)return {status:'review',message:'公开 Gist 已创建；已保留返回网址，暂停后不会继续回读或重复创建',publicUrl:identity.url,checkpoint:'gist_published',submittedAt};
 
   let confirmed = false;
   try {

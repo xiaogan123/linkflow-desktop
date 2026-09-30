@@ -1,3 +1,4 @@
+import {unusedSources} from '../shared/source-capacity';
 import { randomUUID } from 'node:crypto';
 import type { Channel, Site, SiteCapacity, Task, LinkResult } from '../shared/types';
 import type { State } from './store';
@@ -69,9 +70,9 @@ export function applyLinkResult(task:Task,result:LinkResult,now=new Date()){
 }
 
 export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Channel[],now=new Date(),timeZone='UTC'):SiteCapacity{
-  const related=tasks.filter(task=>task.siteId===site.id),used=new Set(related.map(task=>task.sourceDomain));
-  const remaining=matches.map(item=>item.channel).filter(channel=>channel.enabled&&channel.free!=='paid'&&channel.free!=='unknown'&&!used.has(channel.domain));
-  const automaticUnused=remaining.filter(channel=>channel.automation!=='manual').length,manualUnused=remaining.length-automaticUnused;
-  const monthsAtTarget=site.monthlyTarget>0?Math.floor(remaining.length/site.monthlyTarget):null;
-  return {siteId:site.id,currentLive:currentLive(site.id,tasks),firstVerifiedThisMonth:liveThisMonth(site.id,tasks,now,timeZone),missing:new Set(related.filter(task=>task.health==='missing').map(task=>task.sourceDomain)).size,eligibleUnused:remaining.length,automaticUnused,manualUnused,monthsAtTarget,reason:remaining.length<site.monthlyTarget?'可用的未用来源不足以支持下一个完整月目标。':undefined};
+  const related=tasks.filter(task=>task.siteId===site.id);
+  const remaining=unusedSources(site.id,tasks,matches.map(item=>item.channel));
+  const automaticUnused=remaining.automatic,manualUnused=remaining.manual;
+  const monthsAtTarget=site.monthlyTarget>0?Math.floor(remaining.total/site.monthlyTarget):null;
+  return {siteId:site.id,currentLive:currentLive(site.id,tasks),firstVerifiedThisMonth:liveThisMonth(site.id,tasks,now,timeZone),missing:new Set(related.filter(task=>task.health==='missing').map(task=>task.sourceDomain)).size,eligibleUnused:remaining.total,automaticUnused,manualUnused,monthsAtTarget,reason:remaining.total<site.monthlyTarget?'可用的未用来源不足以支持下一个完整月目标。':undefined};
 }

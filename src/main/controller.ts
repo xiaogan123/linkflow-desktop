@@ -19,6 +19,23 @@ import {articleContentHash,articleContextHash,articleReviewStillValid,collectArt
 
 export interface ControllerServices {reviewArticle?:typeof reviewArticleDraft;executeTask?:(context:ExecutionContext)=>Promise<ExecutionResult>}
 
+function isPausedPublicationReceipt(current:Task|undefined,partial:Partial<Task>,channel:Channel):boolean{
+  if(!current||current.status!=='running'||!current.submittedAt||partial.submittedAt!==current.submittedAt||typeof partial.publicUrl!=='string')return false;
+  if(Object.keys(partial).some(key=>!['checkpoint','submittedAt','publicUrl'].includes(key)))return false;
+  const transition=channel.id==='telegraph'
+    ? current.checkpoint==='telegraph_publish_submitting'&&partial.checkpoint==='telegraph_published'
+    : channel.id==='github-gist'
+      ? current.checkpoint==='submitting'&&partial.checkpoint==='gist_published'
+      : false;
+  if(!transition)return false;
+  try{const url=new URL(partial.publicUrl),hosts=new Set([channel.domain,...channel.allowedHosts].map(host=>host.toLowerCase()));return url.protocol==='https:'&&!url.username&&!url.password&&!url.search&&!url.hash&&url.pathname!=='/'&&hosts.has(url.hostname.toLowerCase())}catch{return false}
+}
+
+function registrationStartedAt(state:ReturnType<Store['read']>,task:Task):number{
+  const account=boundAccount(state,task),stamp=account?.lastUsedAt??account?.createdAt??task.createdAt,value=Date.parse(stamp);
+  return Number.isFinite(value)?value:0;
+}
+
 export class Controller {
   runtime:Runtime;
   private active?:AbortController;
@@ -103,7 +120,7 @@ export class Controller {
       if(signal.aborted&&!password)throw Error('任务已暂停');if(account.channelId!==channel.id)throw Error('账号与当前任务不匹配');
       const now=new Date().toISOString(),apply=(d:ReturnType<Store['read']>)=>{const i=d.accounts.findIndex(a=>a.id===account.id),saved={...account,mailboxId:account.mailboxId??mailbox?.id,hasPassword:password?true:account.hasPassword,updatedAt:now};if(i>=0)d.accounts[i]=saved;else d.accounts.push(saved);bindAccount(d,saved.id,site.id,channel);const current=d.tasks.find(item=>item.id===task.id);if(current)current.accountId=saved.id};
       apply(this.store.read());const ciphers=password?this.vault.encryptSecrets({['account:'+account.id]:password}):{},deletes=!password&&!account.hasPassword?['account:'+account.id]:[];this.store.updateWithCiphers(apply,ciphers,deletes);
-    },checkpoint:partial=>{if(signal.aborted)throw Error('任务已暂停');const current=this.store.read().tasks.find(item=>item.id===task.id);if(partial.submittedAt&&!current?.submittedAt)assertSubmissionAllowed();this.patch(task.id,partial)},log:message=>this.store.log(safeMessage(message),{siteId:site.id,taskId:task.id})};
+    },checkpoint:partial=>{const current=this.store.read().tasks.find(item=>item.id===task.id);if(signal.aborted&&!isPausedPublicationReceipt(current,partial,channel))throw Error('任务已暂停');if(partial.submittedAt&&!current?.submittedAt)assertSubmissionAllowed();this.patch(task.id,partial)},log:message=>this.store.log(safeMessage(message),{siteId:site.id,taskId:task.id})};
   }
   async connectGist(token:string,accountId?:string){if(this.hasPendingWork())throw Error('请等待当前操作完成');this.drafting.add('gist-connection');try{return await connectGist(this.store,this.vault,token,accountId)}finally{this.drafting.delete('gist-connection')}}
   async adoptGist(siteId:string,url:string,accountId?:string){if(this.hasPendingWork())throw Error('请等待当前操作完成');this.drafting.add('gist-adoption');try{await adoptGist(this.store,siteId,url,accountId);if(accountId){const channel=this.channels().find(item=>item.id==='github-gist');if(channel)this.store.update(state=>bindAccount(state,accountId,siteId,channel));}this.plan()}finally{this.drafting.delete('gist-adoption')}}
@@ -117,6 +134,7 @@ export class Controller {
     const t=this.store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.submittedAt)throw Error('已提交任务不能重新生成材料');
     const site=this.store.read().sites.find(s=>s.id===t.siteId),c=this.channels().find(c=>c.id===t.channelId);
     if(!site||!c)throw Error('任务关联的网站或渠道已不存在');
+    if(c.id==='vocus'||c.id==='publish0x')throw Error('该渠道要求本人纯人工原创，不能由 AI 生成整篇稿件；请先由本人完成原创内容，再使用草稿编辑入口保存。');
     if(!c.enabled)throw Error('渠道已停用，不能生成投稿材料');
     if(!eligibilityFor(site,c).eligible)throw Error(eligibilityFor(site,c).reason);
     let publicEvidence:unknown[]=[];
@@ -163,7 +181,7 @@ export class Controller {
       s=this.store.read();
       if(s.settings.monitorSearch&&s.settings.hasBingKey){const site=s.sites.find(x=>x.status==='ready'&&(!x.searchReports?.bing?.checkedAt||Date.now()-Date.parse(x.searchReports.bing.checkedAt)>86400000));if(site)await this.checkSearch(site.id)}
       if(s.mailboxes.some(mailbox=>mailbox.hasPassword&&mailbox.host)){
-        const pendingMail=s.tasks.filter(t=>t.status==='needs_input'&&this.channels().some(c=>c.id===t.channelId&&c.automation==='browser'&&c.emailRequired)&&t.checkpoint==='account_registration_submitted'&&Date.now()-new Date(t.updatedAt).getTime()<48*3600000&&(!t.lastCheckedAt||Date.now()-new Date(t.lastCheckedAt).getTime()>5*60000)&&s.sites.some(x=>x.id===t.siteId&&x.status==='ready')).slice(0,1);
+        const pendingMail=s.tasks.filter(t=>t.status==='needs_input'&&this.channels().some(c=>c.id===t.channelId&&c.automation==='browser'&&c.emailRequired)&&t.checkpoint==='account_registration_submitted'&&Date.now()-registrationStartedAt(s,t)<48*3600000&&(!t.lastCheckedAt||Date.now()-new Date(t.lastCheckedAt).getTime()>5*60000)&&s.sites.some(x=>x.id===t.siteId&&x.status==='ready')).slice(0,1);
         for(const t of pendingMail)this.patch(t.id,{status:'queued',scheduledAt:new Date().toISOString(),lastCheckedAt:new Date().toISOString(),message:'自动检查注册验证邮件'});
       }
       s=this.store.read();
@@ -209,8 +227,8 @@ export class Controller {
       }catch(e){
         const latest=this.store.read().tasks.find(t=>t.id===task.id);if(!latest)return;
         if(safeMessage(e).includes('今日 AI 调用已达上限')&&!latest.submittedAt){this.patch(task.id,{status:'queued',attempts:task.attempts,scheduledAt:new Date(Date.now()+60*60000).toISOString(),message:'今日 AI 调用已达上限，明日自动继续。'});return;}
-        const aborted=this.active.signal.aborted,uncertain=!!latest.submittedAt||latest.checkpoint==='submitting';
-        this.patch(task.id,{status:uncertain?'needs_input':aborted?'queued':latest.attempts<s.settings.maxAttempts?'queued':'failed',attempts:aborted&&!uncertain?task.attempts:latest.attempts,...(aborted?{articleReview:undefined}:{}),scheduledAt:new Date(Date.now()+Math.min(60,5*2**latest.attempts)*60000).toISOString(),message:uncertain?'提交结果待确认，请先检查平台记录。':aborted?'已暂停，恢复后继续。':safeMessage(e)});
+        const aborted=this.active.signal.aborted,uncertain=!!latest.submittedAt||latest.checkpoint==='submitting',receiptRetained=aborted&&!!latest.publicUrl&&!!latest.submittedAt;
+        this.patch(task.id,{status:uncertain?'needs_input':aborted?'queued':latest.attempts<s.settings.maxAttempts?'queued':'failed',attempts:aborted&&!uncertain?task.attempts:latest.attempts,...(aborted?{articleReview:undefined}:{}),scheduledAt:new Date(Date.now()+Math.min(60,5*2**latest.attempts)*60000).toISOString(),message:receiptRetained?'已保留平台返回的公开网址；任务已暂停，恢复后只会核验该结果，不会重复发布。':uncertain?'提交结果待确认，请先检查平台记录。':aborted?'已暂停，恢复后继续。':safeMessage(e)});
       }
     }catch(e){this.runtime.error=safeMessage(e);this.store.log(this.runtime.error,{level:'error'})}
     finally{this.runtime.busy=false;this.runtime.activeTaskId=undefined;this.active=undefined;this.store.onChange?.()}

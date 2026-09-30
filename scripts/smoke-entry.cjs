@@ -36,7 +36,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   for(let i=0;i<150;i++){win=BrowserWindow.getAllWindows().find(w=>w.getTitle().includes('LINKFLOW')||w.webContents.getURL().includes('/dist/index.html'));if(win&&!win.webContents.isLoading()&&await evaluate('!!window.linkflow && !!document.querySelector("h1")').catch(()=>false))break;await delay(100)}
   check('native app starts with secured IPC bridge',!!win&&await evaluate('!!window.linkflow'));
   check('renderer cannot access Node',await evaluate('typeof require === "undefined" && typeof process === "undefined"'));
-  let snapshot=await command('snapshot');check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
+  let snapshot=await command('snapshot');const builtinChannelCount=snapshot.channels.length;check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
   check('legacy profile does not gain automatic publication permission',snapshot.settings.articleReviewMode==='manual');
   await clickText('更新中心');
   await waitForUi('document.body.innerText.includes("此平台无法自动更新")');
@@ -96,7 +96,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await clickText('账号');check('accounts page renders',await evaluate('document.body.innerText.includes("账号与绑定")'));await capture('accounts.png');check('accounts list is primary and import remains available',await evaluate('document.body.innerText.includes("先看账号")&&document.body.innerText.includes("导入账号")'));
   await clickText('连接 GitHub');check('Gist connection UI uses a masked token and honest identity reuse',await evaluate('document.body.innerText.includes("连接新的 Gist 身份")&&document.body.innerText.includes("不会自动注册账号")&&!!document.querySelector(".side-drawer input[type=password]")'));await evaluate('document.querySelector(".side-drawer [aria-label=关闭]").click()');await delay(100);
   await clickText('渠道');check('channel directory renders',await evaluate('document.body.innerText.includes("渠道")'));
-  check('channel directory is a complete list with 58 entries',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===58'));
+  check('channel directory displays every built-in entry',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length')===builtinChannelCount);
   await clickText('API');check('API filter only shows API-backed channels',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===2&&document.body.innerText.includes("GitHub Gist")&&document.body.innerText.includes("Telegraph")'));
   await clickText('资料页');check('profile filter does not claim article automation',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===4&&document.body.innerText.includes("仅资料页操作")'));
   await clickText('全部');await delay(100);await capture('channels.png');
@@ -123,7 +123,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await command('mailbox:delete',{id:mailbox.id});check('unused mailbox can be removed',(await command('snapshot')).mailboxes.length===0);
   await command('channel:save',{channel:{name:'Synthetic channel',domain:'directory.example.com',submitUrl:'https://directory.example.com/submit',categories:['software'],languages:['en'],kind:'directory',free:'unknown',freeNote:'Needs review',rulesUrl:'https://directory.example.com/rules',notes:'Synthetic local entry'}});
   const custom=(await command('snapshot')).channels.find(item=>item.name==='Synthetic channel');check('custom channel stays manual in actual IPC',!!custom&&custom.automation==='manual'&&custom.evidenceStatus==='user_added');
-  await command('channel:delete',{id:custom.id});check('unused custom channel can be removed',(await command('snapshot')).channels.length===58);
+  await command('channel:delete',{id:custom.id});check('unused custom channel can be removed',(await command('snapshot')).channels.length===builtinChannelCount);
   let denied=false;try{await command('account:save',{channelId:'github-gist',email:'smoke@example.com',username:'smoke',password:'synthetic'})}catch{denied=true}check('Gist credentials cannot bypass verified connection through password import',denied);
   denied=false;try{await command('site:add',{domain:'127.0.0.1',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('private-domain input rejected by main process',denied);
   denied=false;try{await command('settings:save',{dailyAiLimit:0})}catch{denied=true}check('invalid execution budget rejected',denied);

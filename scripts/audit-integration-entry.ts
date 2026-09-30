@@ -78,6 +78,16 @@ app.whenReady().then(async()=>{
  '/start':'<form method="post" action="/dashboard"><label>Email<input name="email" type="email"></label><label>Password<input name="password" type="password"></label><button type="submit">Log in</button></form>',
  '/dashboard':'<nav><a href="/logout">Log out</a></nav><p>Account dashboard</p>'
  },d=>filling(d)??(d.page.controls.some((c:any)=>c.tag==='button')?action('click',d.page.controls.find((c:any)=>c.tag==='button').id,'none','login'):action('done')),(r,c,req)=>{assert.equal(r.status,'needs_input');assert.equal(c.getAccount().id,'11111111-1111-4111-8111-111111111111');assert.equal(c.getAccount().status,'registered');assert(c.getAccount().lastUsedAt);assert.equal(new Set((c as any).accountHistory.map((a:Account)=>a.id)).size,1);const writes=req.filter(x=>x.method==='POST');assert.equal(writes.length,1);assert.equal(writes[0].savedAccountId,c.getAccount().id);assert.equal(writes[0].passwordSavedAtWrite,true);},importedAccount());
+ await scenario('github-imported-account-cannot-submit-registration',{
+ '/start':'<form method="post" action="/register"><label>Email<input name="email" type="email" value="audit@owner.example"></label><label>Password<input name="password" type="password"></label><button type="submit">Create account</button></form>',
+ '/register':'<p>Must never register</p>'
+ },d=>action('click',d.page.controls.find((c:any)=>c.tag==='button').id,'none','register'),(r,c,req)=>{assert.equal(r.status,'needs_input');assert.match(r.message,/本人创建/);assert.equal(req.filter(x=>x.method==='POST').length,0);assert.equal(c.task.checkpoint,undefined);},{...importedAccount(),channelId:'github'});
+ for(const [name,label,href,handler,purpose] of [
+  ['purpose','Continue','/registered',"fetch('/write',{method:'POST'})",'register'],
+  ['label','Create account','/registered',"fetch('/write',{method:'POST'})",'navigation'],
+  ['encoded-path','Continue','/%72egister',"fetch('/write',{method:'POST'})",'navigation'],
+  ['handler','Continue','/registered',"fetch('/signup',{method:'POST'})",'navigation'],
+ ])await scenario('github-registration-anchor-'+name,{'/start':`<a href="${href}" onclick="${handler}">${label}</a>`},d=>action('click',d.page.controls[0].id,'none',purpose),(r,c,req)=>{assert.equal(r.status,'needs_input');assert.match(r.message,/本人创建/);assert.equal(req.filter(x=>x.method==='POST').length,0);assert.equal(req.length,1);},{...importedAccount(),channelId:'github'});
  let registrationWrites=0;
  await scenario('generated-draft-retries-explicit-username-conflict-once',{
  '/start':'<form method="post" action="/register"><label>Email<input name="email" type="email"></label><label>Username<input name="username"></label><label>Password<input name="password" type="password"></label><button type="submit">Create account</button></form>',

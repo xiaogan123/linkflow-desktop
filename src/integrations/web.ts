@@ -395,12 +395,14 @@ function normalizedHost(input: string): string {
   return normalizePublicUrl(input).hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
 }
 
-function belongsToSource(actualUrl: string, expectedDomain: string): boolean {
+export function belongsToSource(actualUrl: string, expectedDomain: string): boolean {
   const actual = normalizedHost(actualUrl);
   const expected = normalizedHost(expectedDomain);
   if (actual === expected) return true;
-  if (expected === 'substack.com' && actual.endsWith('.substack.com')) return true;
-  if (expected === 'artstation.com' && actual.endsWith('.artstation.com')) return true;
+  // Only vetted hosted-publishing services accept publication subdomains.
+  // Other channel domains retain exact-host matching, including after redirects.
+  const hostedSources = new Set(['substack.com','artstation.com','beehiiv.com','kit.com','wordpress.com','ghost.io','tumblr.com','blogspot.com']);
+  if (hostedSources.has(expected) && actual.endsWith('.'+expected)) return true;
   if (expected === 'hashnode.com' && actual.endsWith('.hashnode.dev')) return true;
   return false;
 }

@@ -1,7 +1,7 @@
 const {readFile,stat,writeFile}=require('node:fs/promises');
 const {basename,dirname,join}=require('node:path');
 const {execFile,spawn}=require('node:child_process');
-const {randomBytes}=require('node:crypto');
+const {createHash,randomBytes}=require('node:crypto');
 
 const allowedErrorCodes=new Set(['EACCES','EBUSY','EEXIST','EINVAL','EIO','ENOENT','EPERM','ETIMEDOUT']);
 function safeFailure(error,stage,startedAt){
@@ -11,7 +11,9 @@ function safeFailure(error,stage,startedAt){
 }
 
 (async()=>{
- const config=JSON.parse(await readFile(process.argv[2],'utf8')),job=JSON.parse(await readFile(config.jobPath,'utf8')),helper=require(config.helperPath),checks=[];
+ const config=JSON.parse(await readFile(process.argv[2],'utf8')),job=JSON.parse(await readFile(config.jobPath,'utf8')),sourcePackage=JSON.parse(await readFile(config.runtimePackagePath,'utf8'));
+ if(sourcePackage.version!==config.sourceVersion||createHash('sha256').update(await readFile(config.helperPath)).digest('hex')!==config.sourceHelperSha256)throw Error('Copied source helper runtime identity mismatch');
+ const helper=require(config.helperPath),checks=[`packaged ${config.sourceVersion} helper hash matched the copied source runtime`];
  const environment={...process.env};delete environment.ELECTRON_RUN_AS_NODE;delete environment.LINKFLOW_UPDATE_HELPER;
  let reportPid,hadReport=false,releasePath,reportPromise,probeError,diagnostic,stage='helper_start',stageStarted=Date.now();
  const mark=value=>{stage=value;stageStarted=Date.now()};
@@ -25,9 +27,9 @@ function safeFailure(error,stage,startedAt){
  async function openMac(path){mark('mac_gui_launch');const {reportPath,nonce}=diagnosticPaths('gui-mac');reportPromise=pollReport(reportPath,nonce);await run('/usr/bin/open',['-n','--env','LINKFLOW_SELF_TEST_REPORT='+reportPath,'--env','LINKFLOW_SELF_TEST_NONCE='+nonce,'--env','LINKFLOW_SELF_TEST_RELEASE='+releasePath,path,'--args','--linkflow-self-test'])}
  let failure=false;try{const ports={launch,openMac,startupTimeoutMs:60_000};if(process.platform==='win32')ports.executeInstaller=executeInstaller;await helper.runUpdateHelper(config.jobPath,ports)}catch(error){failure=true;diagnostic??=safeFailure(error,stage,stageStarted)}
  if(releasePath)await writeFile(releasePath,'release',{mode:0o600}).catch(()=>{});if(reportPromise)await reportPromise.catch(()=>{});if(reportPid){const exitDeadline=Date.now()+10_000;while(Date.now()<exitDeadline){try{process.kill(reportPid,0);await new Promise(done=>setTimeout(done,100))}catch{reportPid=undefined;break}}if(reportPid){try{process.kill(reportPid,'SIGTERM')}catch{}}}
- let outcome='installed',limitations='Same-version replacement/reinstall exercises native installer/helper and a path with spaces; this does not prove prior-version migration. The isolated diagnostic GUI remains alive only until the helper validates the test-side acknowledgement. No production profile or live service is used.';
+ let outcome='installed',limitations=process.platform==='win32'?'Published 1.2.1-to-1.2.2 replacement exercises the native installer, copied old helper and candidate GUI. The marker is a synthetic sidecar in an isolated test user-data directory; it proves path preservation only and does not prove SQLite contents or schema migration. The diagnostic GUI remains alive only until the helper validates the test-side acknowledgement. No production profile or live service is used.':'Same-version replacement exercises the native installer/helper and a path with spaces; this does not prove prior-version migration. The isolated diagnostic GUI remains alive only until the helper validates the test-side acknowledgement. No production profile or live service is used.';
  if(process.platform==='darwin'&&failure&&!hadReport){try{const error=JSON.parse(await readFile(job.errorPath,'utf8'));if(error.recoveryJobPath!==config.jobPath)throw Error();await Promise.all([stat(config.jobPath),stat(job.startupRequestPath),stat(job.applicationPath),stat(job.backupPath)]);outcome='unconfirmed_launch_preserved';probeError=undefined;checks.push('unconfirmed Mac launch preserves replacement, rollback copy, job and startup request');limitations='The quarantined Mac candidate did not produce an authenticated live GUI acknowledgement in the bounded probe. The helper preserved both application copies and transaction evidence without claiming rollback or installation. No production profile or live service is used.'}catch{}}
  if(probeError||failure&&outcome==='installed'){await writeFile(config.reportPath,JSON.stringify({passed:false,platform:process.platform,arch:process.arch,version:config.version,diagnostic:{...diagnostic,probeError:probeError?true:undefined}},null,2));throw Error('Native helper or GUI probe failed')}
  if(outcome==='installed'){const receipt=JSON.parse(await readFile(job.receiptPath,'utf8'));if(receipt.targetVersion!==config.version)throw Error('Installation receipt mismatch');checks.push('real NSIS or Mac replacement completes with launch proof')}
- await writeFile(config.reportPath,JSON.stringify({passed:true,platform:process.platform,arch:process.arch,version:config.version,outcome,checks,limitations},null,2));
+ await writeFile(config.reportPath,JSON.stringify({passed:true,platform:process.platform,arch:process.arch,version:config.version,outcome,checks,helperRuntime:{sourceVersion:config.sourceVersion,sourceHelperSha256:config.sourceHelperSha256},limitations},null,2));
 })().then(()=>process.exit(0),()=>{console.error('Native helper validation failed');process.exit(1)});

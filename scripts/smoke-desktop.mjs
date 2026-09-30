@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import electron from 'electron';
 await mkdir('.evidence',{recursive:true});
-const dir=await mkdtemp(join(tmpdir(),'linkflow-smoke-'));
-const child=spawn(electron,['scripts/smoke-entry.cjs'],{cwd:process.cwd(),env:{...process.env,LINKFLOW_DATA_DIR:dir,ELECTRON_DISABLE_SECURITY_WARNINGS:'false'},stdio:'inherit'});
-const timeout=setTimeout(()=>{child.kill();process.exitCode=1},90000);
-child.on('exit',code=>{clearTimeout(timeout);process.exitCode=code??1});
+for(const entry of ['scripts/smoke-entry.cjs','scripts/smoke-manual-channel.cjs']){
+  const dir=await mkdtemp(join(tmpdir(),'linkflow-smoke-'));
+  const child=spawn(electron,[entry],{cwd:process.cwd(),env:{...process.env,LINKFLOW_DATA_DIR:dir,ELECTRON_DISABLE_SECURITY_WARNINGS:'false'},stdio:'inherit'});
+  const code=await new Promise(resolve=>{let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;child.kill()},90000);child.on('error',()=>{clearTimeout(timeout);resolve(1)});child.on('exit',code=>{clearTimeout(timeout);resolve(timedOut?1:code??1)})});
+  if(code!==0){process.exitCode=code;break}
+}

@@ -75,13 +75,15 @@ export class Store {
     this.persist(this.state);
   }
   read():State{return structuredClone(this.state)}
+  private notify(){try{this.onChange?.()}catch{/* A renderer notification cannot undo a committed write. */}}
   update(fn:(draft:State)=>void):void{
-    const draft=this.read();fn(draft);draft.events=draft.events.slice(-500);this.persist(draft);this.state=draft;this.onChange?.();
+    const draft=this.read();fn(draft);draft.events=draft.events.slice(-500);this.persist(draft);this.state=draft;this.notify();
   }
   updateWithCiphers(fn:(draft:State)=>void,ciphers:Record<string,string>,deleteKeys:string[]=[]):void{
     const draft=this.read();fn(draft);draft.events=draft.events.slice(-500);
     this.db.exec('BEGIN IMMEDIATE');
-    try{this.persist(draft);for(const key of deleteKeys)this.deleteCipher(key);for(const [key,value] of Object.entries(ciphers))this.setCipher(key,value);this.db.exec('COMMIT');this.state=draft;this.onChange?.()}catch(error){this.db.exec('ROLLBACK');throw error}
+    try{this.persist(draft);for(const key of deleteKeys)this.deleteCipher(key);for(const [key,value] of Object.entries(ciphers))this.setCipher(key,value);this.db.exec('COMMIT')}catch(error){this.db.exec('ROLLBACK');throw error}
+    this.state=draft;this.notify();
   }
   private persist(state:State){this.db.prepare('INSERT INTO state(id,body) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(JSON.stringify(state))}
   log(message:string,options:Partial<Omit<Event,'message'|'id'|'at'>>={}){
@@ -92,9 +94,10 @@ export class Store {
   deleteCipher(key:string){this.db.prepare('DELETE FROM secrets WHERE key=?').run(key)}
   allCiphers():Record<string,string>{return Object.fromEntries((this.db.prepare('SELECT key,value FROM secrets').all() as {key:string,value:string}[]).map(x=>[x.key,x.value]))}
   restore(state:State,ciphers:Record<string,string>){
-    state=migrateState(state);
+    state=structuredClone(migrateState(state));
     this.db.exec('BEGIN IMMEDIATE');
-    try{this.persist(state);this.db.exec('DELETE FROM secrets');for(const [k,v]of Object.entries(ciphers))this.setCipher(k,v);this.db.exec('COMMIT');this.state=structuredClone(state);this.onChange?.();}catch(e){this.db.exec('ROLLBACK');throw e;}
+    try{this.persist(state);this.db.exec('DELETE FROM secrets');for(const [k,v]of Object.entries(ciphers))this.setCipher(k,v);this.db.exec('COMMIT');}catch(e){this.db.exec('ROLLBACK');throw e;}
+    this.state=state;this.notify();
   }
   close(){this.db.close()}
 }

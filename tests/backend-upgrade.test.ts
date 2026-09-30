@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {emptyState,migrateState,Store} from '../src/main/store';
 import {applyLinkResult,currentLive,expireReviews,liveThisMonth} from '../src/main/planner';
-import {bindAccount,boundAccount} from '../src/main/account-bindings';
+import {attachTaskAccount,bindAccount,boundAccount} from '../src/main/account-bindings';
 import {prepareMailboxTest,saveMailbox} from '../src/main/mail-settings';
 import {createAi,discoverApiModels,discoverCodexModels,scopedApiSecrets} from '../src/integrations/ai';
 import {testMailbox} from '../src/integrations/mail';
@@ -43,6 +43,13 @@ test('a never-confirmed manual result expires as review timeout rather than a lo
 test('profile binding blocks overwriting another site while article identities can be shared',()=>{
  const state=emptyState();state.sites=[site(),site(otherSiteId,'other@example.com')];state.accounts=[{id:accountId,channelId:'profile',email:'owner@example.com',username:'owner',createdAt:'2026-09-01T00:00:00.000Z',status:'registered',hasPassword:true}];state.tasks=[{...task(),accountId}];bindAccount(state,accountId,siteId,channel());
  assert.throws(()=>bindAccount(state,accountId,otherSiteId,channel()),/避免覆盖/);assert.doesNotThrow(()=>bindAccount(state,accountId,otherSiteId,channel('article')));
+});
+
+test('single-profile account stays reserved while another site submission outcome is uncertain',()=>{
+ const state=emptyState(),other=site(otherSiteId,'owner@example.com'),profile=channel(),uncertain={...task(),status:'needs_input' as const,publicUrl:undefined,firstLiveAt:undefined,linkCheck:undefined,accountId,submittedAt:'2026-09-30T00:00:00.000Z',checkpoint:'submitting'};
+ state.sites=[site(),other];state.accounts=[{id:accountId,channelId:'profile',email:'owner@example.com',username:'owner',createdAt:'2026-09-01T00:00:00.000Z',status:'registered',hasPassword:true}];state.tasks=[uncertain,{...task(),id:'55555555-5555-4555-8555-555555555555',siteId:otherSiteId,status:'queued',publicUrl:undefined,firstLiveAt:undefined,linkCheck:undefined,accountId:undefined}];bindAccount(state,accountId,siteId,profile);
+ assert.throws(()=>attachTaskAccount(state,state.tasks[1].id,profile),/待确认结果/);assert.equal(state.accountBindings.length,1);
+ assert.doesNotThrow(()=>bindAccount(state,accountId,otherSiteId,channel('article')));
 });
 
 test('mailboxes keep independent password metadata and never persist a supplied secret',()=>{

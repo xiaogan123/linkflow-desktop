@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 import type { Controller } from './controller';
+import { CHANNELS } from '../integrations/catalog';
 
 // Explicit command-line diagnostics use fresh disposable data, never the user's profile.
 export function prepareSelfTest():boolean {
@@ -34,7 +35,7 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
     check('diagnostics never start the scheduler',snapshot.settings.autoRun===false&&!controller.runtime.busy);
     check('first render does not access keychain',snapshot.runtime.vaultReady===false);
     check('reported version matches package',snapshot.runtime.version===app.getVersion());
-    check('packaged catalog contains 58 documented candidates',snapshot.channels.length===58&&snapshot.channels.filter((channel:{automation:string})=>channel.automation==='api').length===2);
+    check('packaged catalog matches documented candidates',snapshot.channels.length===CHANNELS.length&&new Set(snapshot.channels.map((channel:{id:string})=>channel.id)).size===CHANNELS.length&&snapshot.channels.every((channel:{id:string;domain:string;automation:string})=>CHANNELS.some(expected=>expected.id===channel.id&&expected.domain===channel.domain&&expected.automation===channel.automation)));
     check('isolated account and mailbox migrations are empty',snapshot.mailboxes.length===0&&snapshot.accountBindings.length===0);
     const update=await win.webContents.executeJavaScript('window.linkflow.invoke("app:update-status")');
     check('packaged update status remains passive during diagnostics',update.phase==='unsupported'&&update.currentVersion===app.getVersion());
@@ -52,11 +53,23 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
       check('Windows encrypted secret roundtrip',await controller.vault.get('self-test')===synthetic);
       check('Windows encrypted secret absent from state',!JSON.stringify(controller.store.read()).includes(synthetic));
       await controller.vault.delete('self-test');
+      if(process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'){
+        const before=app.getLoginItemSettings();
+        check('Windows disposable startup fixture begins disabled',!before.openAtLogin&&!before.executableWillLaunchAtLogin);
+        try{
+          await win.webContents.executeJavaScript('window.linkflow.invoke("settings:save",{launchAtLogin:true})');
+          const enabled=app.getLoginItemSettings();
+          check('Windows login startup is confirmed by OS and stored settings',enabled.openAtLogin&&enabled.executableWillLaunchAtLogin&&controller.store.read().settings.launchAtLogin);
+          await win.webContents.executeJavaScript('window.linkflow.invoke("settings:save",{launchAtLogin:false})');
+          const disabled=app.getLoginItemSettings();
+          check('Windows login startup is disabled again after diagnostics',!disabled.openAtLogin&&!disabled.executableWillLaunchAtLogin&&!controller.store.read().settings.launchAtLogin);
+        }finally{app.setLoginItemSettings({openAtLogin:false})}
+      }
     }
     const nonce=process.env.LINKFLOW_SELF_TEST_NONCE;
     assert(nonce&&/^[a-f0-9]{32}$/.test(nonce),'test invocation nonce required');
     const executablePath=process.execPath,marker='.app/Contents/MacOS/',markerIndex=executablePath.lastIndexOf(marker),applicationPath=markerIndex>=0?executablePath.slice(0,markerIndex+4):undefined;
-    const result={passed:true,nonce,pid:process.pid,platform:process.platform,arch:process.arch,version:app.getVersion(),applicationPath,executablePath,checks};
+    const result={passed:true,nonce,pid:process.pid,platform:process.platform,arch:process.arch,version:app.getVersion(),catalogCount:snapshot.channels.length,applicationPath,executablePath,checks};
     const destination=process.env.LINKFLOW_SELF_TEST_REPORT;
     if(destination)writeFileSync(destination,JSON.stringify(result,null,2),{mode:0o600});
     console.log('PACKAGED_SELF_TEST_PASSED '+checks.length);

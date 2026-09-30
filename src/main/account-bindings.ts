@@ -3,6 +3,12 @@ import type {Account,Channel,SiteAccountBinding,Task} from '../shared/types';
 import type {State} from './store';
 
 function lower(value:string){return value.trim().toLowerCase()}
+function reservesSingleProfile(task:Task):boolean{
+  return !!task.publicUrl||!!task.submittedAt||[
+    'submitting','submitted','submission_uncertain','account_registration_submitted',
+    'telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published',
+  ].includes(task.checkpoint??'');
+}
 
 export function boundAccount(state:State,task:Task):Account|undefined{
   if(task.accountId)return state.accounts.find(account=>account.id===task.accountId&&account.channelId===task.channelId);
@@ -19,9 +25,9 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(!account||!site)throw Error('账号或网站不存在');
   if(account.channelId!==channel.id)throw Error('账号与渠道不匹配');
   if(channel.kind==='profile'){
-    const historicalConflict=state.tasks.some(task=>task.accountId===accountId&&task.channelId===channel.id&&task.siteId!==siteId&&!!task.publicUrl);
-    const conflict=historicalConflict||state.accountBindings.some(binding=>binding.accountId===accountId&&binding.channelId===channel.id&&binding.siteId!==siteId&&state.tasks.some(task=>task.siteId===binding.siteId&&task.channelId===channel.id&&!!task.publicUrl));
-    if(conflict)throw Error('该资料页账号已绑定其他网站的公开结果；为避免覆盖原链接，请选择其他账号。');
+    const historicalConflict=state.tasks.some(task=>task.accountId===accountId&&task.channelId===channel.id&&task.siteId!==siteId&&reservesSingleProfile(task));
+    const conflict=historicalConflict||state.accountBindings.some(binding=>binding.accountId===accountId&&binding.channelId===channel.id&&binding.siteId!==siteId&&state.tasks.some(task=>task.siteId===binding.siteId&&task.channelId===channel.id&&reservesSingleProfile(task)));
+    if(conflict)throw Error('该资料页账号已绑定其他网站的公开或待确认结果；为避免覆盖原链接，请先核实原提交或选择其他账号。');
   }
   const stamp=now.toISOString();
   const existing=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);

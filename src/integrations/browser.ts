@@ -209,9 +209,24 @@ async function requireExistingAccount(context:ExecutionContext):Promise<{account
   const account={...existing,lastUsedAt:new Date().toISOString()};await context.saveAccount(account);return {account,password};
 }
 
+export function isRegistrationAction(control:Pick<Control,'label'|'name'|'href'|'formAction'|'handlerHint'>,purpose:string):boolean {
+  if(purpose==='register')return true;
+  let text=[control.label,control.name,control.href,control.formAction,control.handlerHint].filter(Boolean).join(' ');
+  try{text=decodeURIComponent(text)}catch{/* Keep original text for malformed encodings. */}
+  return /sign[\s_/-]?up|register|registration|create[\s_-]?(?:account|user)|join|注册|创建账[号户]/i.test(text);
+}
+
+export function browserRegistrationBlock(channelId:string):string|undefined {
+  if(channelId==='github')return 'GitHub 要求账号由本人创建。请先创建并导入已有账号；软件可继续登录与资料维护，不会自动注册。';
+  const name:Record<string,string>={gitlab:'GitLab',behance:'Behance',artstation:'ArtStation'};
+  if(name[channelId])return `${name[channelId]} 的自动注册尚未完成规则与流程验收，请由本人创建并导入已有账号；软件可继续登录与资料维护。`;
+  return undefined;
+}
+
 async function ensureAccount(context: ExecutionContext): Promise<{ account: Account; password: string }> {
   const existing = context.getAccount();
   if (existing)return requireExistingAccount(context);
+  const registrationBlock=browserRegistrationBlock(context.channel.id);if(registrationBlock)throw new Error(registrationBlock);
   const slug = context.site.domain.replace(/^www\./i, '').split('.')[0].replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 16) || 'site';
   const createdAt=new Date().toISOString();
   const account: Account = { id: randomUUID(), channelId: context.channel.id, email: context.site.publicEmail||context.site.email,mailboxId:context.mailbox?.id, username: `${slug}${randomBytes(3).toString('hex')}`, createdAt, updatedAt:createdAt, status: 'draft', source:'generated', registrationAttempts:0, hasPassword: true };
@@ -302,6 +317,9 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
   if (context.task.checkpoint === 'existing_link') return { status: 'skipped', message: '发现既有公开链接，不计为本次新增', publicUrl: context.task.publicUrl, checkpoint: 'existing_link' };
   if (context.task.submittedAt || ['submitting','submission_uncertain','submitted'].includes(context.task.checkpoint ?? '')) return { status: 'review', message: '此前已经提交，等待公开结果核验', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt };
   if (context.channel.articleRequired && !context.task.draft?.body) return { status: 'needs_input', message: '该渠道需要先准备文章内容' };
+  const registrationBlock=browserRegistrationBlock(context.channel.id);
+  const initialAccount=context.getAccount();
+  if(registrationBlock&&(!initialAccount||initialAccount.status==='draft'))return {status:'needs_input',message:registrationBlock,checkpoint:context.task.checkpoint};
   const initialBlock=accountStateBlock(context.getAccount());if(initialBlock)return {...initialBlock,checkpoint:context.task.checkpoint};
   let window: BrowserWindow;
   let lastCheckpoint = context.task.checkpoint;
@@ -366,6 +384,8 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
         if (!await applyAction(window, control, action, context.channel.allowedHosts)) throw new Error('页面控件已变化或表单目标被阻止');
       } else {
         const classification = classifyControl(control);
+        const registrationPolicy=browserRegistrationBlock(context.channel.id);
+        if(registrationPolicy&&isRegistrationAction(control,action.purpose)){window.show();return {status:'needs_input',message:registrationPolicy,checkpoint:lastCheckpoint};}
         if (control.type === 'checkbox' && /terms|agreement|privacy.policy|服务条款|用户协议|隐私政策/i.test(`${control.label} ${control.name}`)) { window.show(); return { status: 'needs_input', message: '协议勾选需要人工决定', checkpoint: lastCheckpoint }; }
         if (classification === 'destructive') { window.show(); return { status: 'needs_input', message: '页面操作可能修改账号、账单或其他数据，请人工处理', checkpoint: lastCheckpoint }; }
         if (classification === 'navigation' && control.tag === 'a') {
@@ -377,6 +397,7 @@ export async function runBrowserTask(context: ExecutionContext): Promise<Executi
         if (control.formHasPassword && action.purpose === 'final_submit') { window.show(); return { status: 'needs_input', message: '密码表单用途不明确，请人工处理' }; }
         if (classification === 'submission' && action.purpose === 'register') { window.show(); return { status: 'needs_input', message: '注册和投稿按钮用途冲突，请人工处理' }; }
         if (control.tag !== 'a' && control.formHasInput && (classification === 'registration' || (classification === 'uncertain' && action.purpose === 'register' && control.formHasPassword))) {
+          const blockedRegistration=browserRegistrationBlock(context.channel.id);if(blockedRegistration){window.show();return {status:'needs_input',message:blockedRegistration,checkpoint:lastCheckpoint};}
           const { account } = await ensureAccount(context);
           if(account.status!=='draft'||account.source!=='generated'){
             window.show();return {status:'needs_input',message:'已有账号记录需要先登录核验；不会重复提交注册',checkpoint:lastCheckpoint};

@@ -102,7 +102,7 @@ jobs:
             }
           }
 
-      - name: Validate native update installer and recovery
+      - name: Validate published Windows v1.2.1 to candidate v1.2.2 native upgrade
         run: npm run test:update-native
 
       - name: Upload Windows installer and checksum

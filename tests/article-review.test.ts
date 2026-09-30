@@ -26,10 +26,10 @@ test('pass requires separately fetched site facts and channel rules with exact c
   assert.equal(articleReviewStillValid({...task,articleReview:review},site,channel,settings),true);
 });
 
-test('affiliate facts plus a generic rewards disclaimer cannot pass',async()=>{
-  let calls=0;const generic={...task,draft:{...task.draft!,body:'We operate and maintain the Example Product website. Readers should check referral rewards and terms before using an offer. Trading can lose money.'}};
-  const review=await reviewArticleDraft(generic,site,channel,settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml:fetcher()});
-  assert.equal(review.status,'failed');assert.match(review.reason,/没有明确披露/);assert.equal(calls,0);
+test('affiliate disclosure semantics are decided by the independent review and still fail closed',async()=>{
+  let calls=0;const generic={...task,draft:{...task.draft!,body:'We operate and maintain the Example Product website. Readers should check referral rewards and terms before using an offer. Trading can lose money.'}},semantic=aiResult({verdict:'reject',reason:'The operator did not disclose its own affiliate relationship.',checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'fail',independentValue:'pass',financialSafety:'pass',channelRules:'pass'}});
+  const review=await reviewArticleDraft(generic,site,channel,settings,{json:async(...args)=>{calls++;return semantic.json(...args)}},undefined,{fetchHtml:fetcher()});
+  assert.equal(review.status,'failed');assert.match(review.reason,/did not disclose/);assert.equal(calls,1);
 });
 
 test('affiliate disclosure must bind the operator relationship in the same statement',()=>{
@@ -78,4 +78,23 @@ test('evidence collector follows only bounded same-origin disclosure links',asyn
   const calls:string[]=[];const evidence=await collectArticleEvidence(site,channel,undefined,{fetchHtml:async url=>{calls.push(url);if(url===site.url)return {url,html:'<a href="/terms">Terms</a><a href="/about">About</a><a href="/disclaimer.html">Disclaimer</a><a href="/">About home</a><a href="https://evil.example/affiliate">Affiliate</a><p>Public product facts long enough.</p>'};if(url==='https://product.example.org/disclaimer.html')return {url,html:'<p>The operator discloses an affiliate relationship and commission.</p>'};if(url==='https://product.example.org/about')return {url,html:'<p>The operator maintains this public product and its documentation.</p>'};if(url==='https://product.example.org/terms')return {url,html:'<p>Public terms for using the comparison tool.</p>'};if(url==='https://product.example.org/project')return {url,html:'<p>A maintained public project with useful source material.</p>'};if(url===channel.rulesUrl)return {url,html:'<p>Original useful articles with relationship disclosure are required.</p>'};throw Error('unexpected')}});
   assert.equal(calls.includes('https://evil.example/affiliate'),false);assert(evidence.some(item=>item.kind==='rules'));assert(evidence.some(item=>item.kind==='site_detail'));
   assert(calls.indexOf('https://product.example.org/disclaimer.html')<calls.indexOf('https://product.example.org/about'));assert.equal(calls.filter(url=>url===site.url).length,1);
+});
+
+test('a full near-limit saved draft reaches review without truncating its tail',async()=>{
+  const marker=' FINAL-REVIEW-TAIL',body=('We operate the Example Product website. '+'.'.repeat(29_900)).slice(0,30_000-marker.length)+marker,longTask={...task,draft:{...task.draft!,body}};
+  let observed='';const semantic=aiResult();
+  const review=await reviewArticleDraft(longTask,site,channel,settings,{json:async(...args)=>{observed=((args[1] as {draft:{body:string}}).draft.body);return semantic.json(...args)}},undefined,{fetchHtml:fetcher()});
+  assert.equal(review.status,'passed');assert.equal(observed,body);assert.equal(observed.endsWith(marker),true);assert.ok(body.length<=30_000);
+});
+
+test('non-English author and commercial disclosures reach semantic review',async()=>{
+  const spanish={...task,draft:{...task.draft!,body:'Somos los propietarios y operadores de este sitio web. Mantenemos el proyecto y participamos en su programa de afiliados, por lo que podemos recibir una comisión. Esta guía explica un proceso reproducible.'}},spanishSite={...site,language:'es'};
+  let calls=0;const semantic=aiResult();const review=await reviewArticleDraft(spanish,spanishSite,channel,settings,{json:async(...args)=>{calls++;return semantic.json(...args)}},undefined,{fetchHtml:fetcher()});
+  assert.equal(calls,1);assert.equal(review.status,'passed');
+});
+
+test('review input overflow is explicit and never causes a partial-tail review',async()=>{
+  const oversized={...task,draft:{...task.draft!,body:'x'.repeat(70_000)}};let calls=0;
+  const review=await reviewArticleDraft(oversized,site,channel,settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml:fetcher()});
+  assert.equal(calls,0);assert.equal(review.status,'failed');assert.match(review.reason,/完整稿件与有界证据/);assert.match(review.reason,/稿件未被截断或部分送审/);
 });

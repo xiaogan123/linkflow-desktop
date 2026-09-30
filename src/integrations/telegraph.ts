@@ -426,6 +426,7 @@ async function runWithTransport(context: ExecutionContext, transport: TelegraphT
     return { status: 'needs_input', message: 'Telegraph 已接收发布，但未返回可信的公开网址；不会重复发文', checkpoint: 'telegraph_publish_uncertain', submittedAt };
   }
   context.checkpoint({ checkpoint: 'telegraph_published', submittedAt, publicUrl: identity.url });
+  if(context.signal.aborted)return {status:'review',message:'Telegraph 公开文章已发布；已保留返回网址，暂停后不会继续回读或重复发文',publicUrl:identity.url,checkpoint:'telegraph_published',submittedAt};
   const verified = await verifyPage(context, identity.path, identity.url, target, transport);
   return {
     status: 'review',

@@ -1,39 +1,58 @@
 import {build} from 'esbuild';
+import {extractFile,uncache} from '@electron/asar';
+import {createWriteStream} from 'node:fs';
 import {copyFile,mkdtemp,mkdir,readFile,stat,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {execFile,spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {Readable} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
+const windowsUpgrade={sourceVersion:'1.2.1',candidateVersion:'1.2.2',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.1/Linkflow-1.2.1-windows-x64-setup.exe',sha256:'ca4e1d0dc1d415520c61ef0123dcacaee0c4b18642147ae311d553e3d85b2b30'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
 const alive=pid=>{try{process.kill(pid,0);return true}catch{return false}};
+const asarVersion=path=>{uncache(path);const version=JSON.parse(extractFile(path,'package.json').toString('utf8')).version;if(typeof version!=='string')throw Error('Packaged ASAR version is invalid');return version};
+const probePlan=(platform,arch,candidateVersion)=>{
+ if(!((platform==='darwin'&&arch==='arm64')||(platform==='win32'&&arch==='x64')))throw Error('Native supported platform required');
+ if(platform==='win32'){if(candidateVersion!==windowsUpgrade.candidateVersion)throw Error(`Windows upgrade fixture is frozen for candidate ${windowsUpgrade.candidateVersion}`);return {...windowsUpgrade,platform,arch,sourceArtifact:'published-release',evidenceDirectory:`.evidence/release-${candidateVersion}/native-probe`}}
+ return {platform,arch,sourceVersion:candidateVersion,candidateVersion,sourceArtifact:'candidate',evidenceDirectory:`.evidence/release-${candidateVersion}/native-probe`};
+};
+const download=async(url,path)=>{const response=await fetch(url,{redirect:'follow',signal:AbortSignal.timeout(300000),headers:{'user-agent':'linkflow-native-upgrade-probe'}});if(!response.ok||!response.body)throw Error(`Published installer download failed with HTTP ${response.status}`);await pipeline(Readable.fromWeb(response.body),createWriteStream(path,{flags:'wx',mode:0o600}))};
 
-if(!((process.platform==='darwin'&&process.arch==='arm64')||(process.platform==='win32'&&process.arch==='x64')))throw Error('Native supported platform required');
+async function main(){
+const packageMetadata=JSON.parse(await readFile('package.json','utf8')),version=packageMetadata.version,plan=probePlan(process.platform,process.arch,version);
 if(process.platform==='win32'){
  if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted')throw Error('Windows installer probe requires a disposable hosted CI runner');
  const existing=await new Promise((done,reject)=>execFile('reg',['query','HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall','/s','/f','外链助手','/d'],{encoding:'utf8'},error=>{if(!error)done(true);else if(error.code===1)done(false);else reject(Error('Unable to establish clean Windows registry'))}));
  if(existing)throw Error('A pre-existing Linkflow registration prevents the isolated installer probe');
 }
 
-const version=JSON.parse(await readFile('package.json','utf8')).version;
 const directory=await mkdtemp(join(tmpdir(),'linkflow-update-native-')),installParent=join(directory,'Install Path With Spaces');await mkdir(installParent);
 const application=join(installParent,process.platform==='darwin'?'外链助手.app':'Linkflow');
 const executable=process.platform==='darwin'?join(application,'Contents','MacOS','外链助手'):join(application,'外链助手.exe');
 const resources=process.platform==='darwin'?join(application,'Contents','Resources'):join(application,'resources');
 const releaseArtifact=resolve('release',`Linkflow-${version}-${process.platform==='darwin'?'mac-arm64.zip':'windows-x64-setup.exe'}`);
-if(process.platform==='darwin')await run('/usr/bin/ditto',['-x','-k',releaseArtifact,installParent]);else await run(releaseArtifact,['/S',`/D=${application}`],{windowsVerbatimArguments:true});
+let sourceArtifact=releaseArtifact,candidateAsarSha256;
+if(process.platform==='win32'){
+ const candidateAsar=resolve('release',`${packageMetadata.productName}-win32-x64`,'resources','app.asar');
+ assert.equal(asarVersion(candidateAsar),version);candidateAsarSha256=sha256(await readFile(candidateAsar));
+ sourceArtifact=join(directory,'Linkflow-1.2.1-windows-x64-setup.exe');await download(plan.url,sourceArtifact);
+ assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Published Windows v1.2.1 installer SHA-256 mismatch');
+}
+if(process.platform==='darwin')await run('/usr/bin/ditto',['-x','-k',sourceArtifact,installParent]);else await run(sourceArtifact,['/S',`/D=${application}`],{windowsVerbatimArguments:true});
 
 const updates=join(directory,'user data','updates');await mkdir(updates,{recursive:true});
 const marker=join(directory,'user data','preservation-marker'),markerBytes=Buffer.from('synthetic-update-data-fixture');await writeFile(marker,markerBytes);
 const artifact=join(updates,process.platform==='darwin'?'candidate.zip':'candidate.exe');await copyFile(releaseArtifact,artifact);
-const priorHash=sha256(await readFile(join(resources,'app.asar')));
+const installedAsar=join(resources,'app.asar'),sourceAsarSha256=sha256(await readFile(installedAsar)),sourceVersion=asarVersion(installedAsar);assert.equal(sourceVersion,plan.sourceVersion,'Installed source ASAR version mismatch');
 let repairedFile,repairHash;
-if(process.platform==='win32'){repairedFile=join(application,'LICENSES.chromium.html');repairHash=sha256(await readFile(repairedFile));await writeFile(repairedFile,'Synthetic old-install marker; replacement must restore the packaged resource.')}
+if(process.platform==='win32'){repairedFile=join(application,'LICENSES.chromium.html');repairHash=sha256(await readFile(resolve('release',`${packageMetadata.productName}-win32-x64`,'LICENSES.chromium.html')));await writeFile(repairedFile,'Synthetic old-install marker; replacement must restore the packaged resource.')}
 
-const configuration={directory,application,artifact,updates,version,wrapper:resolve('scripts/update-native-wrapper.cjs')};
+const configuration={directory,application,artifact,updates,version,sourceVersion,wrapper:resolve('scripts/update-native-wrapper.cjs')};
 const configPath=join(directory,'config.json');await writeFile(configPath,JSON.stringify(configuration),{mode:0o600});
 const entryPath=join(directory,'entry.cjs');await build({entryPoints:['scripts/update-native-entry.ts'],outfile:entryPath,platform:'node',format:'cjs',bundle:true,target:'node24',external:['original-fs']});
 const preparer=spawn(executable,[entryPath,configPath],{cwd:process.platform==='darwin'?join(application,'Contents','MacOS'):application,stdio:'ignore',env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},shell:false});
@@ -51,9 +70,17 @@ const workerExitDeadline=Date.now()+10_000;while(alive(handoff.workerPid)&&Date.
 if(!report.passed){if(report.diagnostic)console.error('NATIVE_UPDATE_DIAGNOSTIC '+JSON.stringify(report.diagnostic));throw Error('Native updater probe failed')}
 assert.deepEqual(await readFile(marker),markerBytes);assert((await stat(executable)).isFile());
 if(repairedFile){assert.equal(sha256(await readFile(repairedFile)),repairHash);report.checks.push('NSIS actually replaced the resource at the exact existing path')}
-report.checks.push('installed preparer exited before installer authorization','real helper runtime runs outside install directory','same target path contains spaces','user data marker preserved');
-if(report.outcome==='rollback_system_policy')assert.equal(sha256(await readFile(join(resources,'app.asar'))),priorHash);
+report.checks.push('installed preparer exited before installer authorization','real helper runtime runs outside install directory','same target path contains spaces','synthetic sidecar marker outside the application preserved (not a SQLite migration proof)');
+if(process.platform==='win32'){
+ const installedAsarSha256=sha256(await readFile(installedAsar)),installedVersion=asarVersion(installedAsar);assert.equal(report.outcome,'installed');assert.equal(installedVersion,version);assert.equal(installedAsarSha256,candidateAsarSha256);assert.notEqual(installedAsarSha256,sourceAsarSha256);
+ report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256};report.checks.push('published Windows v1.2.1 ASAR upgraded to the exact candidate v1.2.2 ASAR');
+}else if(report.outcome==='rollback_system_policy')assert.equal(sha256(await readFile(installedAsar)),sourceAsarSha256);
 await writeFile(resultPath,JSON.stringify(report,null,2));
-await mkdir('.evidence/release-1.2.0',{recursive:true});await copyFile(resultPath,`.evidence/release-1.2.0/native-update-${process.platform}.json`);
+await mkdir(plan.evidenceDirectory,{recursive:true});await copyFile(resultPath,join(plan.evidenceDirectory,`native-update-${process.platform}.json`));
 console.log('NATIVE_UPDATE_RESULT '+JSON.stringify(report));
 if(process.platform==='win32')await run(join(application,'Uninstall 外链助手.exe'),['/S']);
+}
+
+if(process.argv[2]==='--describe-plan')console.log(JSON.stringify(probePlan(process.argv[3],process.argv[4],process.argv[5])));
+else if(process.argv[2]==='--verify-asar-replacement'){const before=asarVersion(process.argv[3]);await copyFile(process.argv[4],process.argv[3]);console.log(JSON.stringify({before,after:asarVersion(process.argv[3])}))}
+else await main();
