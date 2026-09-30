@@ -8,7 +8,7 @@ function site(category: Category, language = 'en'): Site {
 }
 
 test('catalog contains distinct curated channels with source evidence', () => {
-  assert.ok(CHANNELS.length >= 50);
+  assert.ok(CHANNELS.length >= 58);
   assert.equal(new Set(CHANNELS.map(channel => channel.id)).size, CHANNELS.length);
   assert.equal(CHANNELS.filter(channel => channel.automation === 'browser').length, 4);
   for (const channel of CHANNELS) {
@@ -59,3 +59,27 @@ test('matches a relevant audience and does not grant general links a high score'
 
  test('AI financial content never gets developer or portfolio channels from category alone',()=>{const s=site('ai','zh');s.description='AI crypto education and referral disclosures';const matches=matchChannels(s,CHANNELS);for(const id of ['github','gitlab','behance','artstation','product-hunt'])assert.equal(matches.some(m=>m.channel.id===id),false,id);assert(matches.some(m=>m.channel.id==='telegraph'));assert.equal(CHANNELS.find(c=>c.id==='telegraph')?.automation,'api')});
  test('declared real developer evidence opens developer profiles without forging category',()=>{const s=site('developer');assert(!matchChannels(s,CHANNELS).some(m=>m.channel.id==='github'));s.qualifications={developer:'https://github.com/example/project'};assert(matchChannels(s,CHANNELS).some(m=>m.channel.id==='github'))});
+
+
+test('financial publication candidates require ownership and never gain automatic execution',()=>{
+  const ids=['wordpress-com','ghost-pro','tumblr','linkedin-articles','youtube-channel','x-profile'];
+  const s=site('finance','zh-hans');
+  assert(!matchChannels(s,CHANNELS).some(m=>ids.includes(m.channel.id)));
+  s.qualifications={publication:'https://example.com/about'};
+  const matched=matchChannels(s,CHANNELS).map(m=>m.channel.id);
+  for(const id of ids){const c=CHANNELS.find(c=>c.id===id)!;assert(matched.includes(id),id);assert.equal(c.automation,'manual');assert.equal(c.checkedAt,'2026-09-30');assert.equal(c.authority,undefined);assert.equal(c.traffic,undefined)}
+  assert.equal(CHANNELS.find(c=>c.id==='ghost-pro')?.free,'paid');
+});
+test('prohibited AI authorship and unverified financial permissions remain excluded',()=>{
+  const s=site('finance');s.qualifications={publication:'https://example.com/about'};
+  const matched=matchChannels(s,CHANNELS).map(m=>m.channel.id);
+  for(const id of ['publish0x','pinterest']){const c=CHANNELS.find(c=>c.id===id)!;assert.equal(c.enabled,false);assert.equal(c.automation,'manual');assert(!matched.includes(id))}
+  assert.match(CHANNELS.find(c=>c.id==='publish0x')!.notes,/禁止 AI 写稿/);
+  assert.match(CHANNELS.find(c=>c.id==='pinterest')!.notes,/预批准/);
+});
+
+test('hosted publication results use their public article host rather than the vendor marketing domain',()=>{
+ const c=CHANNELS.find(c=>c.id==='ghost-pro')!;assert.equal(c.domain,'ghost.io');
+ const result=new URL('https://journal.ghost.io/checklist/');assert(result.hostname.endsWith('.'+c.domain));
+ assert(c.allowedHosts.includes(new URL(c.submitUrl).hostname));
+});

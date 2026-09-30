@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Account, Channel, Event, Mailbox, Settings, Site, SiteAccountBinding, Task } from '../shared/types';
 
 export interface State {schemaVersion?:number;sites:Site[];tasks:Task[];accounts:Account[];mailboxes:Mailbox[];accountBindings:SiteAccountBinding[];settings:Settings;events:Event[];usage:Record<string,number>;customChannels?:Channel[];channelMetrics?:Record<string,{authority?:Channel['authority'];traffic?:Channel['traffic']} >}
-export function defaultSettings():Settings{return {provider:'codex',codexPath:'codex',model:'',reasoningEffort:undefined,preferredBrowser:'system',apiBase:'https://api.openai.com/v1',hasApiKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},mail:{host:'imap.gmail.com',port:993,user:'',secure:true,hasPassword:false}}}
+export function defaultSettings():Settings{return {provider:'codex',codexPath:'codex',model:'',reasoningEffort:undefined,articleReviewMode:'manual',preferredBrowser:'system',apiBase:'https://api.openai.com/v1',hasApiKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},mail:{host:'imap.gmail.com',port:993,user:'',secure:true,hasPassword:false}}}
 export function emptyState():State{return {schemaVersion:2,sites:[],tasks:[],accounts:[],mailboxes:[],accountBindings:[],settings:defaultSettings(),events:[],usage:{},customChannels:[],channelMetrics:{}}}
 
 function email(value:string|undefined){return (value??'').trim().toLowerCase()}

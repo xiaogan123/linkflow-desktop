@@ -37,6 +37,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   check('native app starts with secured IPC bridge',!!win&&await evaluate('!!window.linkflow'));
   check('renderer cannot access Node',await evaluate('typeof require === "undefined" && typeof process === "undefined"'));
   let snapshot=await command('snapshot');check('new profile has zero fake websites',snapshot.sites.length===0);check('initial snapshot does not unlock keychain',snapshot.runtime.vaultReady===false);check('isolated test execution remains paused',snapshot.settings.autoRun===false);
+  check('legacy profile does not gain automatic publication permission',snapshot.settings.articleReviewMode==='manual');
   await clickText('更新中心');
   await waitForUi('document.body.innerText.includes("此平台无法自动更新")');
   check('update center reads real service without checking external network in development', (await command('app:update-status')).phase==='unsupported');
@@ -63,6 +64,16 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   check('model and reasoning level persist in the actual settings payload',snapshot.settings.model==='reasoning-compact'&&snapshot.settings.reasoningEffort==='minimal');
   await clickText('总览');await clickText('设置');await clickText('刷新可用模型');await waitForUi('!!document.querySelector("[aria-label=选择模型]")');
   check('saved model and reasoning level reopen without implicit changes',await evaluate('document.querySelector("[aria-label=选择模型]")?.value==="reasoning-compact"&&document.querySelector("[aria-label=选择思考等级]")?.value==="minimal"'));
+  await clickText('运行偏好');
+  check('manual publication is selected by default in the real settings UI',await evaluate('document.querySelectorAll("input[name=article-review-mode]")[0]?.checked===true'));
+  await evaluate('document.querySelectorAll("input[name=article-review-mode]")[1].click()');await delay(80);
+  check('selecting AI review does not grant publication permission before save',(await command('snapshot')).settings.articleReviewMode==='manual');
+  await clickText('保存设置');await waitForUi('document.querySelectorAll("input[name=article-review-mode]")[1]?.checked===true');snapshot=await command('snapshot');
+  check('explicit saved AI review permission preserves the paused plan',snapshot.settings.articleReviewMode==='ai'&&snapshot.settings.autoRun===false);
+  await clickText('总览');await clickText('设置');await clickText('运行偏好');
+  check('AI review permission persists when reopening settings',await evaluate('document.querySelectorAll("input[name=article-review-mode]")[1]?.checked===true'));
+  await evaluate('document.querySelectorAll("input[name=article-review-mode]")[0].click()');await delay(80);await clickText('保存设置');
+  check('manual publication can be restored without starting task execution',(await command('snapshot')).settings.articleReviewMode==='manual'&&(await command('snapshot')).settings.autoRun===false);
   await clickText('总览');
   await evaluate('document.querySelector(".demo-switch").click()');await delay(200);
   check('explicit demo shows sample websites',await evaluate('document.body.innerText.includes("studio.example")'));
@@ -85,13 +96,22 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await clickText('账号');check('accounts page renders',await evaluate('document.body.innerText.includes("账号与绑定")'));await capture('accounts.png');check('accounts list is primary and import remains available',await evaluate('document.body.innerText.includes("先看账号")&&document.body.innerText.includes("导入账号")'));
   await clickText('连接 GitHub');check('Gist connection UI uses a masked token and honest identity reuse',await evaluate('document.body.innerText.includes("连接新的 Gist 身份")&&document.body.innerText.includes("不会自动注册账号")&&!!document.querySelector(".side-drawer input[type=password]")'));await evaluate('document.querySelector(".side-drawer [aria-label=关闭]").click()');await delay(100);
   await clickText('渠道');check('channel directory renders',await evaluate('document.body.innerText.includes("渠道")'));
-  check('channel directory is a complete list with 50 entries',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===50'));
+  check('channel directory is a complete list with 58 entries',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===58'));
   await clickText('API');check('API filter only shows API-backed channels',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===2&&document.body.innerText.includes("GitHub Gist")&&document.body.innerText.includes("Telegraph")'));
   await clickText('资料页');check('profile filter does not claim article automation',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===4&&document.body.innerText.includes("仅资料页操作")'));
   await clickText('全部');await delay(100);await capture('channels.png');
   await evaluate(`document.querySelector('[aria-label="查看 GitHub 详情"]').click()`);await delay(150);
   check('list rows disclose capability boundaries and honest unknown metrics',await evaluate('document.body.innerText.includes("资格与执行边界")&&document.body.innerText.includes("权威未知")&&document.body.innerText.includes("不会以 0 代替")'));
 
+  await clickText('金融 / 加密内容');await delay(100);
+  check('finance filter shows conditional financial candidates and keeps restrictions visible',await evaluate('document.body.innerText.includes("WordPress.com")&&document.body.innerText.includes("Publish0x（仅人工原创）")&&!document.body.innerText.includes("Product Hunt")&&document.body.innerText.includes("不表示可以自动发布")&&document.body.innerText.includes("当前停用")'));
+  await clickText('金融 / 加密内容');
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=按网站筛选相关渠道]");e.value="demo-studio";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(100);
+  await clickText('查看未匹配原因');
+  check('unmatched candidates explain missing real qualifications instead of disappearing',await evaluate('document.body.innerText.includes("GitHub")&&document.body.innerText.includes("需要确认本人维护的开发项目")&&document.body.innerText.includes("该渠道目前停用")'));
+  await evaluate(`(()=>{const b=document.querySelector('[aria-label="查看 GitHub 详情"]');if(b.closest('tr').nextElementSibling.hidden)b.click()})()`);await delay(80);
+  check('expanded catalog details render inherited qualification requirements',await evaluate('document.querySelector(".channel-details-row:not([hidden])")?.innerText.includes("本人维护的开发项目")'));
+  await evaluate('(()=>{const e=document.querySelector("[aria-label=按网站筛选相关渠道]");e.value="all";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(80);
   await clickText('任务');check('task center separates public result and continuation actions',await evaluate('document.body.innerText.includes("从待办到公开成果")&&document.querySelectorAll(".work-table tbody tr").length>0'));await capture('tasks.png');
   await clickText('总览');await evaluate('document.querySelector(".site-name").click()');await delay(200);check('site details expose eligibility and separate search reports',await evaluate('document.body.innerText.includes("这个网站适合哪些渠道")&&document.body.innerText.includes("GSC 导入样本")&&document.body.innerText.includes("Bing API 样本")'));await evaluate('document.querySelector(".site-tools").scrollIntoView()');await capture('site-tools.png');await clickText('总览');await capture('overview-1080x760.png',1080,760);check('compact desktop has no horizontal viewport overflow',await evaluate('document.documentElement.scrollWidth<=document.documentElement.clientWidth+1'));
   await win.webContents.debugger.sendCommand('Emulation.clearDeviceMetricsOverride');win.webContents.debugger.detach();
@@ -103,7 +123,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await command('mailbox:delete',{id:mailbox.id});check('unused mailbox can be removed',(await command('snapshot')).mailboxes.length===0);
   await command('channel:save',{channel:{name:'Synthetic channel',domain:'directory.example.com',submitUrl:'https://directory.example.com/submit',categories:['software'],languages:['en'],kind:'directory',free:'unknown',freeNote:'Needs review',rulesUrl:'https://directory.example.com/rules',notes:'Synthetic local entry'}});
   const custom=(await command('snapshot')).channels.find(item=>item.name==='Synthetic channel');check('custom channel stays manual in actual IPC',!!custom&&custom.automation==='manual'&&custom.evidenceStatus==='user_added');
-  await command('channel:delete',{id:custom.id});check('unused custom channel can be removed',(await command('snapshot')).channels.length===50);
+  await command('channel:delete',{id:custom.id});check('unused custom channel can be removed',(await command('snapshot')).channels.length===58);
   let denied=false;try{await command('account:save',{channelId:'github-gist',email:'smoke@example.com',username:'smoke',password:'synthetic'})}catch{denied=true}check('Gist credentials cannot bypass verified connection through password import',denied);
   denied=false;try{await command('site:add',{domain:'127.0.0.1',email:'hello@example.com',monthlyTarget:2})}catch{denied=true}check('private-domain input rejected by main process',denied);
   denied=false;try{await command('settings:save',{dailyAiLimit:0})}catch{denied=true}check('invalid execution budget rejected',denied);

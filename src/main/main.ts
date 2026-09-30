@@ -88,13 +88,13 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const site:Site={id:randomUUID(),...address,email:data.email,publicEmail:data.email,name:address.domain,description:'',category:'general',language:'en',monthlyTarget:data.monthlyTarget,status:'analyzing',createdAt:new Date().toISOString()};
       store.update(s=>s.sites.push(site));void controller.analyze(site.id);break;
     }
-    case 'site:update':{forbidBusy();const input=EditSite.parse(p);store.update(s=>{const site=s.sites.find(x=>x.id===input.id);if(!site)throw Error('网站不存在');if(input.mailboxId&&!s.mailboxes.some(mailbox=>mailbox.id===input.mailboxId))throw Error('收件箱不存在');const update={...input,...(input.publicEmail?{email:input.publicEmail}:{}),mailboxId:input.mailboxId===null?undefined:input.mailboxId};Object.assign(site,update);for(const task of s.tasks.filter(t=>t.siteId===site.id&&!t.submittedAt)){task.articleApprovedAt=undefined;if(['name','description','category','language','email','publicEmail'].some(k=>k in input))task.draft=undefined}});controller.plan();break;}
+    case 'site:update':{forbidBusy();const input=EditSite.parse(p);store.update(s=>{const site=s.sites.find(x=>x.id===input.id);if(!site)throw Error('网站不存在');if(input.mailboxId&&!s.mailboxes.some(mailbox=>mailbox.id===input.mailboxId))throw Error('收件箱不存在');const update={...input,...(input.publicEmail?{email:input.publicEmail}:{}),mailboxId:input.mailboxId===null?undefined:input.mailboxId};Object.assign(site,update);for(const task of s.tasks.filter(t=>t.siteId===site.id&&!t.submittedAt)){task.articleApprovedAt=undefined;task.articleReview=undefined;if(['name','description','category','language','email','publicEmail'].some(k=>k in input))task.draft=undefined}});controller.plan();break;}
     case 'site:queue-channel':{
       forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).parse(p);const s=store.read(),site=s.sites.find(x=>x.id===d.id),channel=controller.channels().find(c=>c.id===d.channelId);
       if(!site||!channel)throw Error('网站或渠道不存在');if(site.status!=='ready')throw Error('请先完成网站分析并恢复计划');
       const fit=eligibilityFor(site,channel);if(!fit.eligible)throw Error(fit.reason);if(channel.automation!=='manual'&&(channel.free==='unknown'||channel.free==='paid'))throw Error('该渠道不符合自动免费计划条件');
       if(s.tasks.some(t=>t.siteId===site.id&&t.sourceDomain===channel.domain))throw Error('该来源已有任务，请查看已有记录');
-      const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));break;
+      const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));void controller.tick();break;
     }
     case 'site:adopt-gist':{forbidBusy();const d=z.object({id:z.string().uuid(),url:z.string().trim().max(2048),accountId:z.string().uuid().optional()}).parse(p);await controller.adoptGist(d.id,d.url,d.accountId);break;}
     case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512),accountId:z.string().uuid().optional()}).parse(p);return await controller.connectGist(d.token,d.accountId);}
@@ -109,7 +109,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),task=store.read().tasks.find(t=>t.id===id);if(!task?.draft?.body||task.submittedAt||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');controller.patch(id,{articleApprovedAt:new Date().toISOString(),status:'queued',scheduledAt:new Date().toISOString(),message:'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),task=store.read().tasks.find(t=>t.id===id);if(!task?.draft?.body||task.submittedAt||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=store.read().settings.articleReviewMode==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
@@ -128,12 +128,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'task:open-result':{const id=getId(p),task=store.read().tasks.find(item=>item.id===id);if(!task?.publicUrl)throw Error('任务还没有公开结果网址');const url=publicUrl(task.publicUrl);await openInPreferredBrowser(url.href,store.read().settings.preferredBrowser,value=>shell.openExternal(value));return;}
     case 'task:generate':{forbidBusy();await controller.generateDraft(getId(p));break;}
     case 'task:update-draft':{
-      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).parse(p);const task=store.read().tasks.find(t=>t.id===d.id);if(!task)throw Error('任务不存在');if(task.status==='running'||task.submittedAt)throw Error('正在执行或已提交的材料不能修改');controller.patch(d.id,{articleApprovedAt:undefined,draft:{title:d.title,description:d.description,body:d.body},draftRevision:(task.draftRevision??0)+1,draftUpdatedAt:new Date().toISOString()});break;
+      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).parse(p);const task=store.read().tasks.find(t=>t.id===d.id);if(!task)throw Error('任务不存在');if(task.status==='running'||task.submittedAt)throw Error('正在执行或已提交的材料不能修改');controller.patch(d.id,{articleApprovedAt:undefined,articleReview:undefined,draft:{title:d.title,description:d.description,body:d.body},draftRevision:(task.draftRevision??0)+1,draftUpdatedAt:new Date().toISOString()});break;
     }
     case 'plan:run':store.update(s=>{s.settings.autoRun=true});void controller.tick();break;
     case 'plan:pause':controller.pause();break;
     case 'settings:save':{
-      const input=SettingsPatch.parse(p);if(input.provider||input.apiKey||input.mailPassword||input.codexPath||input.apiBase||input.model||input.reasoningEffort||input.mail)forbidBusy();if(input.apiBase)input.apiBase=normalizeApiBase(input.apiBase);
+      const input=SettingsPatch.parse(p);controller.assertSettingsWritable();if(input.apiBase)input.apiBase=normalizeApiBase(input.apiBase);
       if(!app.isPackaged&&input.launchAtLogin)throw Error('开机启动请在打包客户端中开启');
       const previous=store.read().settings;
       const nextMail={...previous.mail,...input.mail};
@@ -150,7 +150,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(mailChanged||mailPassword)controller.runtime.mailReady=false;
       store.update(s=>{s.settings={...s.settings,...safe,hasBingKey:previous.hasBingKey,hasApiKey:!!apiKey||(!apiChanged&&previous.hasApiKey),mail:{...nextMail,hasPassword:!!mailPassword||(!mailChanged&&previous.mail.hasPassword)}};});
       if(input.launchAtLogin!==undefined)app.setLoginItemSettings({openAtLogin:input.launchAtLogin});
-      await detectAi();controller.plan();break;
+      await detectAi();controller.plan();if(input.articleReviewMode==='ai'){controller.resumeArticleReviews();void controller.tick()}break;
     }
     case 'settings:test-ai':{const result=await testAi(store.read().settings,vault);controller.runtime.aiReady=result.ok;broadcast();return result;}
     case 'settings:test-mail':{forbidBusy();const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}

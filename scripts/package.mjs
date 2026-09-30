@@ -13,7 +13,15 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  finishMacArtifact,
+  macSignOptions,
+  resolveMacBuildConfig,
+  runPrivateMacStage,
+  validateDeveloperIdIdentity
+} from './lib/mac-signing.mjs';
 
+async function main(){
 const projectRoot=dirname(dirname(fileURLToPath(import.meta.url)));
 const releaseDir=join(projectRoot,'release');
 const assetsDir=join(projectRoot,'assets');
@@ -30,6 +38,13 @@ if(!targetSettings){
 }
 if(process.platform!==targetSettings.host||process.arch!==targetSettings.arch){
   throw new Error(`${target} must be packaged natively on ${targetSettings.host}/${targetSettings.arch}; current host is ${process.platform}/${process.arch}`);
+}
+
+const macConfig=target==='mac-arm64'?resolveMacBuildConfig(process.argv.slice(3)):null;
+if(macConfig?.mode==='release'){
+  macConfig.signingIdentityHash=await validateDeveloperIdIdentity(macConfig.identity);
+  macConfig.mainAppName=`${rootPackage.productName}.app`;
+  macConfig.mainEntitlementsPath=join(projectRoot,'scripts','entitlements.mac.plist');
 }
 
 await import('./assets.mjs');
@@ -70,13 +85,7 @@ try{
     execFileSync('/usr/bin/iconutil',['-c','icns',join(assetsDir,'AppIcon.iconset'),'-o',icon],{stdio:'inherit'});
     platformOptions={
       appBundleId:'com.linkflow.personal',
-      osxSign:{
-        identity:'-',
-        identityValidation:false,
-        preAutoEntitlements:false,
-        preEmbedProvisioningProfile:false,
-        optionsForFile:()=>({hardenedRuntime:false})
-      },
+      osxSign:macSignOptions(macConfig),
       extendInfo:{LSMinimumSystemVersion:'14.0',NSHumanReadableCopyright:'个人使用 · Linkflow'}
     };
   }else{
@@ -95,10 +104,10 @@ try{
   // Build and verify macOS bundles outside synced Desktop folders. File providers
   // can add Finder metadata while signing, invalidating an otherwise clean bundle.
   const outputRoot=target==='mac-arm64'?join(stageRoot,'native'):releaseDir;
-  const publishedBundle=join(releaseDir,`${rootPackage.productName}-${targetSettings.platform}-${targetSettings.arch}`);
+  const publishedBundle=join(releaseDir,`${rootPackage.productName}-${targetSettings.platform}-${targetSettings.arch}${macConfig?.mode==='local'?'-local-adhoc':''}`);
   const expectedBundle=join(outputRoot,`${rootPackage.productName}-${targetSettings.platform}-${targetSettings.arch}`);
   await rm(expectedBundle,{recursive:true,force:true});
-  const outputs=await packager({
+  const packageApplication=()=>packager({
     dir:stageDir,
     out:outputRoot,
     name:rootPackage.productName,
@@ -113,22 +122,37 @@ try{
     prune:false,
     ...platformOptions
   });
-  if(outputs.length!==1||outputs[0]!==expectedBundle){
-    throw new Error(`Unexpected packager output: ${outputs.join(', ')}`);
-  }
+  const outputs=target==='mac-arm64'
+    ? await runPrivateMacStage('electron-packager-signing',async()=>{
+      const result=await packageApplication();
+      if(result.length!==1||result[0]!==expectedBundle)throw new Error(`Unexpected packager output: ${result.join(', ')}`);
+      return result;
+    })
+    : await packageApplication();
+  if(target!=='mac-arm64'&&(outputs.length!==1||outputs[0]!==expectedBundle))throw new Error(`Unexpected packager output: ${outputs.join(', ')}`);
 
   if(target==='mac-arm64'){
     const appPath=join(expectedBundle,`${rootPackage.productName}.app`);
-    execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',appPath],{stdio:'inherit'});
-    const zipPath=join(releaseDir,`Linkflow-${rootPackage.version}-mac-arm64.zip`);
+    const zipPath=join(releaseDir,`Linkflow-${rootPackage.version}-${macConfig.artifactSuffix}.zip`);
+    const finalZipTempPath=join(releaseDir,`.${basename(zipPath)}.${process.pid}.tmp`);
+    const temporaryZipPath=join(stageRoot,'notary-upload.zip');
     await rm(zipPath,{force:true});
-    execFileSync('/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',appPath,zipPath],{stdio:'inherit'});
-    const checksumPath=join(releaseDir,'SHA256SUMS-mac-arm64.txt');
-    await writeFile(checksumPath,await sha256File(zipPath),'utf8');
-    // Only copy the local app after the strictly verified archive is complete.
+    const checksumPath=join(releaseDir,`SHA256SUMS-${macConfig.artifactSuffix}.txt`);
+    await rm(checksumPath,{force:true});
+    await finishMacArtifact({
+      appPath,
+      mode:macConfig.mode,
+      notaryProfile:macConfig.notaryProfile,
+      temporaryZipPath,
+      finalZipTempPath,
+      finalZipPath:zipPath,
+      checksumPath,
+      sha256Line:sha256File
+    });
+    // Only publish the unpacked app after the corresponding archive is complete.
     await rm(publishedBundle,{recursive:true,force:true});
     await cp(expectedBundle,publishedBundle,{recursive:true,verbatimSymlinks:true});
-    console.log([join(publishedBundle,`${rootPackage.productName}.app`),zipPath,checksumPath].join('\n'));
+    console.log([`${basename(publishedBundle)}/${rootPackage.productName}.app`,basename(zipPath),basename(checksumPath)].join('\n'));
   }else{
     const builderCli=join(projectRoot,'node_modules','electron-builder','out','cli','cli.js');
     execFileSync(process.execPath,[builderCli,'--config',join(projectRoot,'electron-builder.yml'),'--win','nsis','--x64','--prepackaged',expectedBundle],{
@@ -139,8 +163,14 @@ try{
     const installerPath=join(releaseDir,`Linkflow-${rootPackage.version}-windows-x64-setup.exe`);
     const checksumPath=join(releaseDir,'SHA256SUMS-windows-x64.txt');
     await writeFile(checksumPath,await sha256File(installerPath),'utf8');
-    console.log([join(expectedBundle,`${rootPackage.productName}.exe`),installerPath,checksumPath].join('\n'));
+    console.log([`${basename(expectedBundle)}/${rootPackage.productName}.exe`,basename(installerPath),basename(checksumPath)].join('\n'));
   }
 }finally{
   await rm(stageRoot,{recursive:true,force:true});
 }
+}
+
+main().catch(()=>{
+  console.error('Packaging failed. Verify native packaging prerequisites. Formal macOS releases require LINKFLOW_MAC_SIGNING_IDENTITY and LINKFLOW_MAC_NOTARY_PROFILE; raw failure details are kept private.');
+  process.exitCode=1;
+});

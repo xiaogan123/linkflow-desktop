@@ -25,4 +25,4 @@ export function eligibilityFor(site:Site,channel:Channel):{eligible:boolean;reas
  if(missing)return {eligible:false,reason:`需要确认${qualificationLabels[missing]}并提供资料网址；一般软件或网站网址不能替代对应资格`,requirement:missing};
  return {eligible:true,reason:required.length?`已声明${required.map(q=>qualificationLabels[q]).join('、')}；资料内容及平台资格仍须核对`:'可准备独立有用的原创文章；不能承诺平台接受或搜索收录',requirement:required[0]};
 }
-export function requiresArticleReview(site:Site,channel:Channel){return channel.articleRequired&&(channel.id==='github-gist'||channel.automation==='manual'||site.category==='finance'||/加密|返佣|交易|投资|币安|crypto|binance|trading|investment|affiliate/i.test(site.name+' '+site.description))}
+export function requiresArticleReview(_site:Site,channel:Channel){return channel.articleRequired}

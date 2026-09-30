@@ -34,7 +34,7 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
     check('diagnostics never start the scheduler',snapshot.settings.autoRun===false&&!controller.runtime.busy);
     check('first render does not access keychain',snapshot.runtime.vaultReady===false);
     check('reported version matches package',snapshot.runtime.version===app.getVersion());
-    check('packaged catalog contains 50 qualified candidates',snapshot.channels.length===50&&snapshot.channels.filter((channel:{automation:string})=>channel.automation==='api').length===2);
+    check('packaged catalog contains 58 documented candidates',snapshot.channels.length===58&&snapshot.channels.filter((channel:{automation:string})=>channel.automation==='api').length===2);
     check('isolated account and mailbox migrations are empty',snapshot.mailboxes.length===0&&snapshot.accountBindings.length===0);
     const update=await win.webContents.executeJavaScript('window.linkflow.invoke("app:update-status")');
     check('packaged update status remains passive during diagnostics',update.phase==='unsupported'&&update.currentVersion===app.getVersion());
