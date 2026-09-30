@@ -33,7 +33,7 @@ import {UPDATE_PUBLIC_KEY_SPKI_BASE64} from '../shared/update-trust';
 import {importMailboxesAtomic,saveMailboxAtomic} from './mailbox-service';
 import {saveAccountAtomic} from './account-service';
 import {saveSettingsAtomic} from './settings-service';
-import {withLoginItemPreference} from './login-item';
+import {loginItemReadOptions,withLoginItemPreference} from './login-item';
 
 app.setName('外链助手');
 const selfTest=prepareSelfTest();
@@ -139,7 +139,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const input=SettingsPatch.parse(p);controller.assertSettingsWritable();if(input.apiBase)input.apiBase=normalizeApiBase(input.apiBase);
       if(!app.isPackaged&&input.launchAtLogin)throw Error('开机启动请在打包客户端中开启');
       if(input.apiBase)publicUrl(input.apiBase);
-      const result=withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},input.launchAtLogin,()=>saveSettingsAtomic(store,vault,input));
+      const result=withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath)),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},input.launchAtLogin,()=>saveSettingsAtomic(store,vault,input));
       if(result.mailSecretChanged)controller.runtime.mailReady=false;
       await detectAi();controller.plan();if(input.articleReviewMode==='ai'){controller.resumeArticleReviews();void controller.tick()}break;
     }
@@ -200,7 +200,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const confirm=await dialog.showMessageBox(win!,{type:'warning',message:'用备份替换本机数据？',detail:'当前数据会自动保存为同口令的恢复前备份。恢复后自动执行保持暂停。',buttons:['取消','恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return {ok:false,message:'已取消'};
       ensureRestoreIdle();controller.closeTaskBrowsers();
       await writeFile(join(app.getPath('userData'),'恢复前备份.lfb'),encryptBackup({state:store.read(),secrets:await vault.exportSecrets()},passphrase),{mode:0o600});
-      ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},false,()=>store.restore(data.state,vault.encryptSecrets(data.secrets)));await detectAi();return {ok:true,message:'备份已恢复，检查资料后可恢复执行'};}finally{restoring=false}
+      ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath)),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},false,()=>store.restore(data.state,vault.encryptSecrets(data.secrets)));await detectAi();return {ok:true,message:'备份已恢复，检查资料后可恢复执行'};}finally{restoring=false}
     }
     case 'backup:auto-status':return localBackups.status();
     case 'backup:auto-configure':{const d=z.object({enabled:z.boolean(),keep:z.number().int().min(3).max(30).default(7)}).parse(p);const status=await localBackups.configure(d.enabled,d.keep);return d.enabled&&!controller.hasPendingWork()?localBackups.run(true):status;}
@@ -209,7 +209,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       ensureRestoreIdle();restoring=true;try{const {id}=z.object({id:z.string().max(200)}).parse(p),payload=await localBackups.read(id) as {state?:unknown;ciphers?:unknown};if(!payload||typeof payload!=='object'||!payload.state||!payload.ciphers||typeof payload.ciphers!=='object'||Array.isArray(payload.ciphers))throw Error('本机备份结构无效');
       if(!vault.available())throw Error('系统钥匙串不可用，无法恢复本机备份');const secrets:Record<string,string>={};for(const [key,cipher]of Object.entries(payload.ciphers)){if(typeof cipher!=='string'||cipher.length>10000)throw Error('本机备份凭据结构无效');try{secrets[key]=safeStorage.decryptString(Buffer.from(cipher,'base64'))}catch{throw Error('本机备份与当前系统账号不匹配')}}
       const data=validateBackup({state:payload.state,secrets}),confirm=await dialog.showMessageBox(win!,{type:'warning',message:'恢复这份本机自动备份？',detail:'当前状态会先另存一份本机恢复点。恢复后自动执行与开机启动都保持关闭。',buttons:['取消','恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return {ok:false,message:'已取消'};
-      ensureRestoreIdle();controller.closeTaskBrowsers();await localBackups.run(true);ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},false,()=>store.restore(data.state,vault.encryptSecrets(data.secrets)));await detectAi();return {ok:true,message:'本机备份已恢复，检查后再手动恢复执行'};}finally{restoring=false}
+      ensureRestoreIdle();controller.closeTaskBrowsers();await localBackups.run(true);ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath)),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},false,()=>store.restore(data.state,vault.encryptSecrets(data.secrets)));await detectAi();return {ok:true,message:'本机备份已恢复，检查后再手动恢复执行'};}finally{restoring=false}
     }
     case 'app:update-status':return updater.status();
     case 'app:check-update':return updater.check();

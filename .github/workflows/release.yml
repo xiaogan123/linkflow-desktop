@@ -103,9 +103,11 @@ jobs:
           }
 
       - name: Validate published Windows v1.2.1 to candidate v1.2.2 native upgrade
+        id: native_upgrade
         run: npm run test:update-native
 
       - name: Upload Windows installer and checksum
+        if: ${{ !cancelled() && (success() || (failure() && steps.native_upgrade.outcome == 'failure')) }}
         uses: actions/upload-artifact@v4
         with:
           name: linkflow-windows-x64

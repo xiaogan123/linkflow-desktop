@@ -52,7 +52,7 @@ const installedAsar=join(resources,'app.asar'),sourceAsarSha256=sha256(await rea
 let repairedFile,repairHash;
 if(process.platform==='win32'){repairedFile=join(application,'LICENSES.chromium.html');repairHash=sha256(await readFile(resolve('release',`${packageMetadata.productName}-win32-x64`,'LICENSES.chromium.html')));await writeFile(repairedFile,'Synthetic old-install marker; replacement must restore the packaged resource.')}
 
-const configuration={directory,application,artifact,updates,version,sourceVersion,wrapper:resolve('scripts/update-native-wrapper.cjs')};
+const configuration={directory,application,artifact,updates,version,sourceVersion,candidateAsarSha256,wrapper:resolve('scripts/update-native-wrapper.cjs')};
 const configPath=join(directory,'config.json');await writeFile(configPath,JSON.stringify(configuration),{mode:0o600});
 const entryPath=join(directory,'entry.cjs');await build({entryPoints:['scripts/update-native-entry.ts'],outfile:entryPath,platform:'node',format:'cjs',bundle:true,target:'node24',external:['original-fs']});
 const preparer=spawn(executable,[entryPath,configPath],{cwd:process.platform==='darwin'?join(application,'Contents','MacOS'):application,stdio:'ignore',env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},shell:false});

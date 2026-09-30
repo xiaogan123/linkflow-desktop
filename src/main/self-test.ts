@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 import type { Controller } from './controller';
 import { CHANNELS } from '../integrations/catalog';
+import { loginItemReadOptions } from './login-item';
 
 // Explicit command-line diagnostics use fresh disposable data, never the user's profile.
 export function prepareSelfTest():boolean {
@@ -54,14 +55,14 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
       check('Windows encrypted secret absent from state',!JSON.stringify(controller.store.read()).includes(synthetic));
       await controller.vault.delete('self-test');
       if(process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'){
-        const before=app.getLoginItemSettings();
+        const before=app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath));
         check('Windows disposable startup fixture begins disabled',!before.openAtLogin&&!before.executableWillLaunchAtLogin);
         try{
           await win.webContents.executeJavaScript('window.linkflow.invoke("settings:save",{launchAtLogin:true})');
-          const enabled=app.getLoginItemSettings();
+          const enabled=app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath));
           check('Windows login startup is confirmed by OS and stored settings',enabled.openAtLogin&&enabled.executableWillLaunchAtLogin&&controller.store.read().settings.launchAtLogin);
           await win.webContents.executeJavaScript('window.linkflow.invoke("settings:save",{launchAtLogin:false})');
-          const disabled=app.getLoginItemSettings();
+          const disabled=app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath));
           check('Windows login startup is disabled again after diagnostics',!disabled.openAtLogin&&!disabled.executableWillLaunchAtLogin&&!controller.store.read().settings.launchAtLogin);
         }finally{app.setLoginItemSettings({openAtLogin:false})}
       }

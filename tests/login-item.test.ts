@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {withLoginItemPreference,type LoginItemState} from '../src/main/login-item';
+import {loginItemReadOptions,withLoginItemPreference,type LoginItemState} from '../src/main/login-item';
 import {Store,emptyState} from '../src/main/store';
 
 function fixture(platform='win32'){
@@ -9,6 +9,36 @@ function fixture(platform='win32'){
  const port={packaged:true,platform,read:()=>({...state}),write:(openAtLogin:boolean,enabled?:boolean)=>{writes.push(openAtLogin);state={openAtLogin,status:openAtLogin?'enabled':'not-registered',executableWillLaunchAtLogin:openAtLogin&&enabled!==false}}};
  return {port,writes,get:()=>state,set:(value:LoginItemState)=>{state=value}};
 }
+
+test('Windows login lookup preserves spaces under Electron 44 command-line parsing',()=>{
+ const executable=String.raw`C:\Program Files\Linkflow\Linkflow.exe`;
+ let registered=false,approved=true;
+ // Model the two different lookup paths in Electron 44 browser_win.cc: the
+ // Run value comparison formats a command, but launchItems parses options.path.
+ const read=(options:{path?:string;args?:string[]})=>{
+  const input=options.path??executable;
+  const formatted=input.replace(/^"|"$/g,'');
+  const parsed=input.startsWith('"')?input.slice(1,input.indexOf('"',1)):input.split(/\s/)[0];
+  return {openAtLogin:registered&&formatted===executable,executableWillLaunchAtLogin:registered&&approved&&parsed===executable};
+ };
+ const write=(openAtLogin:boolean,enabled?:boolean)=>{registered=openAtLogin;approved=enabled!==false};
+ const oldPort={packaged:true,platform:'win32',read:()=>read({}),write};
+ assert.throws(()=>withLoginItemPreference(oldPort,true,()=>assert.fail('unconfirmed state committed')),/未保存/);
+ assert.equal(registered,false);
+ const options=loginItemReadOptions('win32',executable);
+ const port={...oldPort,read:()=>read(options)};
+ assert.equal(withLoginItemPreference(port,true,()=>17),17);
+ assert.deepEqual(read(options),{openAtLogin:true,executableWillLaunchAtLogin:true});
+ approved=false;
+ assert.deepEqual(read(options),{openAtLogin:true,executableWillLaunchAtLogin:false});
+ withLoginItemPreference(port,false,()=>{});
+ assert.equal(registered,false);
+});
+
+test('login lookup quoting is confined to Windows and keeps an empty launch-argument list',()=>{
+ assert.deepEqual(loginItemReadOptions('darwin','/Applications/Example App.app/Contents/MacOS/Example'),{});
+ assert.deepEqual(loginItemReadOptions('win32',String.raw`C:\Apps\Linkflow.exe`),{path:'"C:\\Apps\\Linkflow.exe"',args:[]});
+});
 test('confirmed OS state precedes local commit',()=>{const f=fixture();let calls=0;assert.equal(withLoginItemPreference(f.port,true,()=>{calls++;assert.equal(f.get().executableWillLaunchAtLogin,true);return 12}),12);assert.equal(calls,1)});
 test('silent refusal and thrown setter never commit a false enabled setting',()=>{for(const throws of [false,true]){const f=fixture();f.port.write=(value)=>{f.writes.push(value);if(value&&throws)throw Error('synthetic OS refusal')};let calls=0;assert.throws(()=>withLoginItemPreference(f.port,true,()=>calls++),/未保存/);assert.equal(calls,0);assert.equal(f.get().openAtLogin,false)}});
 test('macOS pending approval is not reported as enabled',()=>{const f=fixture('darwin');f.port.write=value=>f.set({openAtLogin:value,status:value?'requires-approval':'not-registered'});let calls=0;assert.throws(()=>withLoginItemPreference(f.port,true,()=>calls++),/尚未批准/);assert.equal(calls,0);assert.equal(f.get().openAtLogin,false)});

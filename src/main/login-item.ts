@@ -6,6 +6,13 @@ export interface LoginItemPort {
   write:(openAtLogin:boolean,enabled?:boolean)=>void;
 }
 
+/** Electron 44 parses the Windows lookup path as a command line (electron/electron#54364). */
+export function loginItemReadOptions(platform:string,executablePath:string):{path?:string;args?:string[]} {
+  // Its formatter strips these quotes for openAtLogin, while its legacy launch-item
+  // lookup needs them to preserve spaces. The upstream fix accepts quoted paths too.
+  return platform==='win32'?{path:`"${executablePath}"`,args:[]}:{};
+}
+
 function effective(state:LoginItemState,platform:string):boolean {
   if(platform==='win32')return state.openAtLogin&&state.executableWillLaunchAtLogin===true;
   return state.openAtLogin&&state.status==='enabled';

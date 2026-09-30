@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {createPackage} from '@electron/asar';
 
 const script=fileURLToPath(new URL('../scripts/update-native-smoke.mjs',import.meta.url));
+const wrapper=fileURLToPath(new URL('../scripts/update-native-wrapper.cjs',import.meta.url));
 const plan=(platform:string,arch:string,version:string)=>JSON.parse(execFileSync(process.execPath,[script,'--describe-plan',platform,arch,version],{encoding:'utf8'}));
 
 test('Windows native probe is frozen to the published v1.2.1 installer and candidate v1.2.2',()=>{
@@ -27,4 +28,11 @@ test('ASAR version proof invalidates cached headers when the installer replaces 
   const oldRoot=join(directory,'old'),candidateRoot=join(directory,'candidate'),installed=join(directory,'installed.asar'),candidate=join(directory,'candidate.asar');await mkdir(oldRoot);await mkdir(candidateRoot);await writeFile(join(oldRoot,'package.json'),JSON.stringify({version:'1.2.1'}));await writeFile(join(candidateRoot,'000-prefix.txt'),'candidate layout changed before package.json\n'.repeat(128));await writeFile(join(candidateRoot,'package.json'),JSON.stringify({version:'1.2.2'}));await createPackage(oldRoot,installed);await createPackage(candidateRoot,candidate);
   const result=JSON.parse(execFileSync(process.execPath,[script,'--verify-asar-replacement',installed,candidate],{encoding:'utf8'}));assert.deepEqual(result,{before:'1.2.1',after:'1.2.2'});
  }finally{await rm(directory,{recursive:true,force:true})}
+});
+
+test('native wrapper preserves the first candidate failure and emits only bounded diagnostics',()=>{
+ const output=execFileSync(process.execPath,[wrapper,'--diagnostic-fixture'],{encoding:'utf8'}),value=JSON.parse(output);
+ assert.equal(value.firstRole,'candidate');assert.equal(value.secondRole,'rollback');assert.equal(value.preserved,true);assert.equal(value.state.rollbackLaunches,1);
+ assert.deepEqual(value.state.firstCandidateGui,{reportState:'rejected',schemaMatch:true,passed:false,nonceMatch:false,versionMatch:true,pidMatch:true,checksMatch:false,selfTestStatus:'failed',selfTestCheckCount:18,reportedVersion:'1.2.2',reportedCheckCount:1,exitCode:1});
+ assert.equal(value.invalid.reportState,'invalid_json');assert.equal(value.schema.reportState,'schema_invalid');assert.doesNotMatch(output,/SECRET|Users|private-json|private C:/i);
 });
