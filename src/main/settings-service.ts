@@ -3,6 +3,7 @@ import type {SettingsPatch} from './validation';
 import type {Store,State} from './store';
 import type {Vault} from './vault';
 import {mailboxIdentityChanged} from './mail-settings';
+import {reconcileGlobalArticleReviewMode} from './site-service';
 
 export type SettingsWrite=z.infer<typeof SettingsPatch>;
 
@@ -10,6 +11,7 @@ export interface SettingsWriteResult {
   apiChanged:boolean;
   mailChanged:boolean;
   mailSecretChanged:boolean;
+  reviewModeSites:string[];
 }
 
 /** Encrypt every replacement first, then commit settings and secret changes together. */
@@ -32,6 +34,7 @@ export function saveSettingsAtomic(store:Store,vault:Pick<Vault,'encryptSecrets'
   if(apiChanged&&!apiKey)deleteKeys.push('apiKey');
   if(mailChanged&&!mailPassword)deleteKeys.push('mailPassword');
   const {apiKey:_apiKey,mailPassword:_mailPassword,...safe}=input;
+  let reviewModeSites:string[]=[];
   const apply=(state:State)=>{
     state.settings={
       ...state.settings,
@@ -40,7 +43,8 @@ export function saveSettingsAtomic(store:Store,vault:Pick<Vault,'encryptSecrets'
       hasApiKey:!!apiKey||(!apiChanged&&previous.hasApiKey),
       mail:{...nextMail,hasPassword:!!mailPassword||(!mailChanged&&previous.mail.hasPassword)},
     };
+    if(input.articleReviewMode!==undefined)reviewModeSites=reconcileGlobalArticleReviewMode(state,previous);
   };
   store.updateWithCiphers(apply,ciphers,deleteKeys);
-  return {apiChanged,mailChanged,mailSecretChanged:mailChanged||!!mailPassword};
+  return {apiChanged,mailChanged,mailSecretChanged:mailChanged||!!mailPassword,reviewModeSites};
 }

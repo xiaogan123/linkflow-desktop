@@ -79,6 +79,7 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
         {state.phase==='prepared'&&taskBusy&&<div className="update-message notice"><Info size={17}/><span>当前仍有任务在执行。请先让任务完成，安装按钮随后可用。</span></div>}
         <div className="update-actions">
           {(['idle','up-to-date','installed'].includes(state.phase))&&<Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>{state.phase==='idle'?'检查更新':'再次检查'}</Button>}
+          {state.phase==='unsupported'&&<Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>重新检查</Button>}
           {state.phase==='available'&&<><Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:download-update')}><DownloadSimple size={16}/>下载更新</Button><Button disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>重新检查</Button></>}
           {state.phase==='downloading'&&<Button disabled={demo||command!==null} onClick={()=>void run('app:cancel-update')}><X size={16}/>取消下载</Button>}
           {state.phase==='prepared'&&<Button variant="primary" disabled={demo||busy||taskBusy} onClick={()=>void run('app:install-update')}>安装并重启</Button>}

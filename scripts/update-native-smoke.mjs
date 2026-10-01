@@ -10,7 +10,7 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.1',candidateVersion:'1.2.2',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.1/Linkflow-1.2.1-windows-x64-setup.exe',sha256:'ca4e1d0dc1d415520c61ef0123dcacaee0c4b18642147ae311d553e3d85b2b30'};
+const windowsUpgrade={sourceVersion:'1.2.2',candidateVersion:'1.2.3',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.2/Linkflow-1.2.2-windows-x64-setup.exe',sha256:'b8e18498ad065a723051288dc754e3bc1ab13c322aa0cfadd14c21756270c495'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
@@ -40,8 +40,8 @@ let sourceArtifact=releaseArtifact,candidateAsarSha256;
 if(process.platform==='win32'){
  const candidateAsar=resolve('release',`${packageMetadata.productName}-win32-x64`,'resources','app.asar');
  assert.equal(asarVersion(candidateAsar),version);candidateAsarSha256=sha256(await readFile(candidateAsar));
- sourceArtifact=join(directory,'Linkflow-1.2.1-windows-x64-setup.exe');await download(plan.url,sourceArtifact);
- assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Published Windows v1.2.1 installer SHA-256 mismatch');
+ sourceArtifact=join(directory,`Linkflow-${plan.sourceVersion}-windows-x64-setup.exe`);await download(plan.url,sourceArtifact);
+ assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,`Published Windows v${plan.sourceVersion} installer SHA-256 mismatch`);
 }
 if(process.platform==='darwin')await run('/usr/bin/ditto',['-x','-k',sourceArtifact,installParent]);else await run(sourceArtifact,['/S',`/D=${application}`],{windowsVerbatimArguments:true});
 
@@ -73,7 +73,7 @@ if(repairedFile){assert.equal(sha256(await readFile(repairedFile)),repairHash);r
 report.checks.push('installed preparer exited before installer authorization','real helper runtime runs outside install directory','same target path contains spaces','synthetic sidecar marker outside the application preserved (not a SQLite migration proof)');
 if(process.platform==='win32'){
  const installedAsarSha256=sha256(await readFile(installedAsar)),installedVersion=asarVersion(installedAsar);assert.equal(report.outcome,'installed');assert.equal(installedVersion,version);assert.equal(installedAsarSha256,candidateAsarSha256);assert.notEqual(installedAsarSha256,sourceAsarSha256);
- report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256};report.checks.push('published Windows v1.2.1 ASAR upgraded to the exact candidate v1.2.2 ASAR');
+ report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256};report.checks.push(`published Windows v${sourceVersion} ASAR upgraded to the exact candidate v${version} ASAR`);
 }else if(report.outcome==='rollback_system_policy')assert.equal(sha256(await readFile(installedAsar)),sourceAsarSha256);
 await writeFile(resultPath,JSON.stringify(report,null,2));
 await mkdir(plan.evidenceDirectory,{recursive:true});await copyFile(resultPath,join(plan.evidenceDirectory,`native-update-${process.platform}.json`));

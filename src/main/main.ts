@@ -34,6 +34,9 @@ import {importMailboxesAtomic,saveMailboxAtomic} from './mailbox-service';
 import {saveAccountAtomic} from './account-service';
 import {saveSettingsAtomic} from './settings-service';
 import {loginItemReadOptions,withLoginItemPreference} from './login-item';
+import {getArticleReviewMode} from '../shared/article-review-mode';
+import {channelDiscoveryFor} from '../integrations/channel-discovery';
+import {applySiteUpdate} from './site-service';
 
 app.setName('外链助手');
 const selfTest=prepareSelfTest();
@@ -87,17 +90,17 @@ async function command(name:string,p:unknown):Promise<unknown>{
   switch(name){
     case 'snapshot':return controller.snapshot();
     case 'site:add':{
-      const data=AddSite.parse(p),address=normalizeDomain(data.domain);if(store.read().sites.some(s=>s.domain===address.domain))throw Error('这个网站已经添加');
-      const site:Site={id:randomUUID(),...address,email:data.email,publicEmail:data.email,name:address.domain,description:'',category:'general',language:'en',monthlyTarget:data.monthlyTarget,status:'analyzing',createdAt:new Date().toISOString()};
+      const data=AddSite.parse(p),address=normalizeDomain(data.domain),state=store.read();if(state.sites.some(s=>s.domain===address.domain))throw Error('这个网站已经添加');
+      const site:Site={id:randomUUID(),...address,email:data.email,publicEmail:data.email,name:address.domain,description:'',category:'general',language:'en',monthlyTarget:data.monthlyTarget,articleReviewMode:getArticleReviewMode(data,state.settings),status:'analyzing',createdAt:new Date().toISOString()};
       store.update(s=>s.sites.push(site));void controller.analyze(site.id);break;
     }
-    case 'site:update':{forbidBusy();const input=EditSite.parse(p);store.update(s=>{const site=s.sites.find(x=>x.id===input.id);if(!site)throw Error('网站不存在');if(input.mailboxId&&!s.mailboxes.some(mailbox=>mailbox.id===input.mailboxId))throw Error('收件箱不存在');const update={...input,...(input.publicEmail?{email:input.publicEmail}:{}),mailboxId:input.mailboxId===null?undefined:input.mailboxId};Object.assign(site,update);for(const task of s.tasks.filter(t=>t.siteId===site.id&&!t.submittedAt)){task.articleApprovedAt=undefined;task.articleReview=undefined;if(['name','description','category','language','email','publicEmail'].some(k=>k in input))task.draft=undefined}});controller.plan();break;}
+    case 'site:update':{forbidBusy();const input=EditSite.parse(p);let modeChanged=false;store.update(s=>{modeChanged=applySiteUpdate(s,input).reviewModeChanged});const state=store.read(),site=state.sites.find(item=>item.id===input.id);if(modeChanged&&site&&getArticleReviewMode(site,state.settings)==='ai')controller.resumeArticleReviews(input.id);controller.plan();if(modeChanged)void controller.tick();break;}
     case 'site:queue-channel':{
       forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).parse(p);const s=store.read(),site=s.sites.find(x=>x.id===d.id),channel=controller.channels().find(c=>c.id===d.channelId);
       if(!site||!channel)throw Error('网站或渠道不存在');if(site.status!=='ready')throw Error('请先完成网站分析并恢复计划');
-      const fit=eligibilityFor(site,channel);if(!fit.eligible)throw Error(fit.reason);if(channel.automation!=='manual'&&(channel.free==='unknown'||channel.free==='paid'))throw Error('该渠道不符合自动免费计划条件');
+      const fit=eligibilityFor(site,channel),candidate=channelDiscoveryFor(site,channel);if(channel.automation==='manual'?!candidate.canQueue:!fit.eligible)throw Error(channel.automation==='manual'?candidate.nextStep:fit.reason);if(channel.automation!=='manual'&&(channel.free==='unknown'||channel.free==='paid'))throw Error('该渠道不符合自动免费计划条件');
       if(s.tasks.some(t=>t.siteId===site.id&&t.sourceDomain===channel.domain))throw Error('该来源已有任务，请查看已有记录');
-      const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));void controller.tick();break;
+      const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:channel.automation==='manual'?`${candidate.reason} ${candidate.nextStep}`:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));void controller.tick();break;
     }
     case 'site:adopt-gist':{forbidBusy();const d=z.object({id:z.string().uuid(),url:z.string().trim().max(2048),accountId:z.string().uuid().optional()}).parse(p);await controller.adoptGist(d.id,d.url,d.accountId);break;}
     case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512),accountId:z.string().uuid().optional()}).parse(p);return await controller.connectGist(d.token,d.accountId);}
@@ -112,7 +115,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),task=store.read().tasks.find(t=>t.id===id);if(!task?.draft?.body||task.submittedAt||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=store.read().settings.articleReviewMode==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||task.submittedAt||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
@@ -141,7 +144,8 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(input.apiBase)publicUrl(input.apiBase);
       const result=withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath)),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},input.launchAtLogin,()=>saveSettingsAtomic(store,vault,input));
       if(result.mailSecretChanged)controller.runtime.mailReady=false;
-      await detectAi();controller.plan();if(input.articleReviewMode==='ai'){controller.resumeArticleReviews();void controller.tick()}break;
+      const reviewModeSites=result.reviewModeSites;for(const id of reviewModeSites)controller.resumeArticleReviews(id);
+      await detectAi();controller.plan();if(reviewModeSites.length)void controller.tick();break;
     }
     case 'settings:test-ai':{const result=await testAi(store.read().settings,vault);controller.runtime.aiReady=result.ok;broadcast();return result;}
     case 'settings:test-mail':{forbidBusy();const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}

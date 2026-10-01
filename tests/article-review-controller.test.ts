@@ -28,6 +28,13 @@ test('ordinary content API articles also require the independent AI review',asyn
   try{await controller.tick();assert.equal(reviews,1);assert.equal(executions,1);assert.equal(store.read().tasks[0].articleReview?.status,'passed')}finally{store.close()}
 });
 
+test('site mode overrides the global gate in both directions',async()=>{
+  const aiStore=fixture({mode:'manual'});aiStore.update(state=>{state.sites[0].articleReviewMode='ai';state.tasks[0].articleApprovedAt='2026-09-30T00:00:00.000Z'});let aiReviews=0,aiExecutions=0;const aiController=new Controller(aiStore,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{aiReviews++;return passed(t,s,settings)},executeTask:async()=>{aiExecutions++;return {status:'review',message:'submitted'}}});aiController.runtime.aiReady=true;
+  try{await aiController.tick();assert.equal(aiReviews,1);assert.equal(aiExecutions,1)}finally{aiStore.close()}
+  const manualStore=fixture({mode:'ai'});manualStore.update(state=>{state.sites[0].articleReviewMode='manual'});let manualReviews=0,manualExecutions=0;const manualController=new Controller(manualStore,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{manualReviews++;return passed(t,s,settings)},executeTask:async()=>{manualExecutions++;return {status:'review',message:'unexpected'}}});manualController.runtime.aiReady=true;
+  try{await manualController.tick();assert.equal(manualStore.read().tasks[0].status,'needs_input');assert.equal(manualReviews,0);assert.equal(manualExecutions,0)}finally{manualStore.close()}
+});
+
 test('reject and unknown outcomes stop at needs_input without publication or automatic rerun',async()=>{
   for(const reason of ['公开事实与稿件冲突','公开证据不足，无法核实']){const store=fixture();let reviews=0,executions=0;const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{reviews++;return {...passed(t,s,settings),status:'failed',reason}},executeTask:async()=>{executions++;return {status:'review',message:'should not run'}}});controller.runtime.aiReady=true;
     try{await controller.tick();assert.equal(store.read().tasks[0].status,'needs_input');assert.equal(store.read().tasks[0].articleReview?.status,'failed');assert.equal(executions,0);await controller.tick();assert.equal(reviews,1);assert.equal(executions,0)}finally{store.close()}}
@@ -42,6 +49,7 @@ test('draft, site, or selected model changes during review invalidate the result
   for(const mutate of [
     (store:Store)=>store.update(state=>{state.tasks[0].draft!.body+=' changed';state.tasks[0].draftRevision=(state.tasks[0].draftRevision??0)+1}),
     (store:Store)=>store.update(state=>{state.sites[0].description='changed'}),
+    (store:Store)=>store.update(state=>{state.sites[0].articleReviewMode='manual'}),
     (store:Store)=>store.update(state=>{state.settings.model='changed-model'})
   ]){const store=fixture();let release!:()=>void,executions=0;const wait=new Promise<void>(resolve=>{release=resolve});const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{await wait;return passed(t,s,settings)},executeTask:async()=>{executions++;return {status:'review',message:'should not run'}}});controller.runtime.aiReady=true;
     try{const running=controller.tick();await new Promise(resolve=>setImmediate(resolve));mutate(store);release();await running;assert.equal(executions,0);assert.equal(store.read().tasks[0].status,'needs_input');assert.match(store.read().tasks[0].message,/条件发生变化/)}finally{store.close()}}
@@ -69,8 +77,8 @@ test('all settings writes are blocked while review is in flight while plan pause
   try{const running=controller.tick();await new Promise(resolve=>setImmediate(resolve));assert.throws(()=>controller.assertSettingsWritable(),/暂停执行/);controller.pause();assert.equal(store.read().settings.autoRun,false);release();await running}finally{store.close()}
 });
 
-for(const mutation of ['pause-setting','disable-channel'] as const)test(`submission checkpoint revalidates ${mutation} after real Gist account verification`,async()=>{
+for(const mutation of ['pause-setting','disable-channel','site-review-mode'] as const)test(`submission checkpoint revalidates ${mutation} after real Gist account verification`,async()=>{
   const store=fixture(),accountId='33333333-3333-4333-8333-333333333333';store.update(state=>{state.accounts=[{id:accountId,channelId:'github-gist',username:'octocat',email:'owner@example.com',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:'2026-09-01T00:00:00.000Z'}];state.tasks[0].accountId=accountId;state.tasks[0].draft!.body+='\n\nRecord inputs and outputs in a reusable technical checklist, compare each item with public documentation, and leave unknown fields unset.'});
-  let posts=0;const vault={...fakeVault,get:async()=> 'synthetic-token-12345'} as unknown as Vault;const controller=new Controller(store,vault,'fixture',{reviewArticle:async(t,s,_c,settings)=>passed(t,s,settings),executeTask:context=>runGistTask(context,{fetch:async(url,init)=>{if(url.endsWith('/user')){store.update(state=>{if(mutation==='pause-setting')state.settings.autoRun=false;else state.settings.channelOverrides['github-gist']=false});return new Response(JSON.stringify({login:'octocat'}),{status:200,headers:{'content-type':'application/json'}})}if(init.method==='POST'){posts++;return new Response('{}',{status:503,headers:{'content-type':'application/json'}})}throw Error('unexpected request')}})});controller.runtime.aiReady=true;
+  let posts=0;const vault={...fakeVault,get:async()=> 'synthetic-token-12345'} as unknown as Vault;const controller=new Controller(store,vault,'fixture',{reviewArticle:async(t,s,_c,settings)=>passed(t,s,settings),executeTask:context=>runGistTask(context,{fetch:async(url,init)=>{if(url.endsWith('/user')){store.update(state=>{if(mutation==='pause-setting')state.settings.autoRun=false;else if(mutation==='disable-channel')state.settings.channelOverrides['github-gist']=false;else state.sites[0].articleReviewMode='manual'});return new Response(JSON.stringify({login:'octocat'}),{status:200,headers:{'content-type':'application/json'}})}if(init.method==='POST'){posts++;return new Response('{}',{status:503,headers:{'content-type':'application/json'}})}throw Error('unexpected request')}})});controller.runtime.aiReady=true;
   try{await controller.tick();const saved=store.read().tasks[0];assert.equal(posts,0);assert.equal(saved.submittedAt,undefined);assert.notEqual(saved.checkpoint,'submitting');assert.match(saved.message,/提交已取消/)}finally{store.close()}
 });

@@ -3,6 +3,7 @@ import {load} from 'cheerio';
 import type {AiPort,ArticleReview,Channel,Settings,Site,Task} from '../shared/types';
 import {fetchPublicHtml} from '../integrations/web';
 import {aiInputCharacters,MAX_AI_INPUT_CHARS} from '../integrations/ai';
+import {getArticleReviewMode} from '../shared/article-review-mode';
 
 const DISCLOSURE_LINK=/affiliate|referr|commission|rebate|partner|disclos|disclaimer|about|terms|关于|返佣|推荐|佣金|合作|披露|免责声明/i;
 const RETURN_PROMISE=/\b(?:guaranteed?|promise[sd]?)\s+(?:returns?|profits?)\b|\brisk[- ]?free (?:return|profit|trading|investment)\b|\bno[- ]risk (?:return|profit|trading|investment)\b|稳赚|保本|(?:承诺|保证)(?:稳定|固定|无风险)?(?:收益|盈利)|无风险(?:收益|套利)/ig;
@@ -18,7 +19,7 @@ function canonical(value:unknown):unknown{
 }
 function digest(value:unknown){return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}
 export function articleContentHash(task:Pick<Task,'draft'>){return digest(task.draft??null)}
-export function articleContextHash(site:Site,channel:Channel,settings:Settings){return digest({site:{id:site.id,url:site.url,domain:site.domain,name:site.name,description:site.description,category:site.category,language:site.language,email:site.email,publicEmail:site.publicEmail,qualifications:site.qualifications,status:site.status},channel:{id:channel.id,domain:channel.domain,kind:channel.kind,automation:channel.automation,articleRequired:channel.articleRequired,free:channel.free,freeNote:channel.freeNote,notes:channel.notes,rulesUrl:channel.rulesUrl,checkedAt:channel.checkedAt,allowedHosts:channel.allowedHosts,enabled:channel.enabled,requirements:channel.requirements},settings:{provider:settings.provider,codexPath:settings.codexPath,apiBase:settings.apiBase,model:settings.model,reasoningEffort:settings.reasoningEffort,articleReviewMode:settings.articleReviewMode,dailyAiLimit:settings.dailyAiLimit,channelOverrides:settings.channelOverrides,autoRun:settings.autoRun}})}
+export function articleContextHash(site:Site,channel:Channel,settings:Settings){return digest({site:{id:site.id,url:site.url,domain:site.domain,name:site.name,description:site.description,category:site.category,language:site.language,email:site.email,publicEmail:site.publicEmail,qualifications:site.qualifications,status:site.status},channel:{id:channel.id,domain:channel.domain,kind:channel.kind,automation:channel.automation,articleRequired:channel.articleRequired,free:channel.free,freeNote:channel.freeNote,notes:channel.notes,rulesUrl:channel.rulesUrl,checkedAt:channel.checkedAt,allowedHosts:channel.allowedHosts,enabled:channel.enabled,requirements:channel.requirements},settings:{provider:settings.provider,codexPath:settings.codexPath,apiBase:settings.apiBase,model:settings.model,reasoningEffort:settings.reasoningEffort,articleReviewMode:getArticleReviewMode(site,settings),dailyAiLimit:settings.dailyAiLimit,channelOverrides:settings.channelOverrides,autoRun:settings.autoRun}})}
 
 function textFromHtml(html:string){const $=load(html);$('script,style,noscript,template,svg').remove();return $.root().text().replace(/\s+/g,' ').trim()}
 function sameOriginDetails(html:string,pageUrl:string){
@@ -61,7 +62,7 @@ function validModelReview(value:unknown):value is ModelReview{
 }
 function failed(reason:string,task:Task,site:Site,channel:Channel,settings:Settings,now:Date,evidenceUrls:string[]=[]):ArticleReview{return {status:'failed',reason:reason.slice(0,1000),reviewedAt:now.toISOString(),evidenceUrls:[...new Set(evidenceUrls)].slice(0,12),draftRevision:task.draftRevision??0,contentHash:articleContentHash(task),contextHash:articleContextHash(site,channel,settings)}}
 
-export function articleReviewStillValid(task:Task,site:Site,channel:Channel,settings:Settings){const review=task.articleReview;return !!review&&review.status==='passed'&&settings.articleReviewMode==='ai'&&review.draftRevision===(task.draftRevision??0)&&review.contentHash===articleContentHash(task)&&review.contextHash===articleContextHash(site,channel,settings)}
+export function articleReviewStillValid(task:Task,site:Site,channel:Channel,settings:Settings){const review=task.articleReview;return !!review&&review.status==='passed'&&getArticleReviewMode(site,settings)==='ai'&&review.draftRevision===(task.draftRevision??0)&&review.contentHash===articleContentHash(task)&&review.contextHash===articleContextHash(site,channel,settings)}
 
 export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,settings:Settings,ai:AiPort,signal?:AbortSignal,deps:ArticleReviewDependencies={}):Promise<ArticleReview>{
   const now=deps.now?.()??new Date(),base=()=>failed('AI 核对未通过：无法取得足够且可验证的公开证据，请人工接手。',task,site,channel,settings,now);

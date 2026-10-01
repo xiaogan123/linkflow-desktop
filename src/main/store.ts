@@ -25,6 +25,11 @@ export function migrateState(input:State):State{
   state.customChannels=Array.isArray(state.customChannels)?state.customChannels:[];
   state.channelMetrics=state.channelMetrics&&typeof state.channelMetrics==='object'?state.channelMetrics:{};
   state.settings={...defaultSettings(),...(state.settings??{}),mail:{...defaultSettings().mail,...(state.settings?.mail??{})},channelOverrides:state.settings?.channelOverrides??{}};
+  if(state.settings.articleReviewMode!=='manual'&&state.settings.articleReviewMode!=='ai')state.settings.articleReviewMode='manual';
+  for(const site of state.sites){
+    const mode=(site as Site&{articleReviewMode?:unknown}).articleReviewMode;
+    if(mode!==undefined&&mode!=='manual'&&mode!=='ai')site.articleReviewMode='manual';
+  }
   const now=new Date().toISOString();
   if(legacy)for(const site of state.sites)site.publicEmail=site.publicEmail||site.email;
   if(legacy&&!state.mailboxes.length&&(state.settings.mail.user||state.settings.mail.hasPassword)){

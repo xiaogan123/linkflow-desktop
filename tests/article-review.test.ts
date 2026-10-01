@@ -69,6 +69,14 @@ test('review binding is invalidated by draft, site, channel, model or mode chang
   assert.equal(articleReviewStillValid(reviewed,site,channel,{...settings,articleReviewMode:'manual'}),false);
 });
 
+test('review binding follows the effective site mode instead of an unrelated global change',async()=>{
+  const explicitAi={...site,articleReviewMode:'ai' as const},globalManual={...settings,articleReviewMode:'manual' as const};
+  const review=await reviewArticleDraft(task,explicitAi,channel,globalManual,aiResult(),undefined,{fetchHtml:fetcher()}),reviewed={...task,articleReview:review};
+  assert.equal(articleReviewStillValid(reviewed,explicitAi,channel,globalManual),true);
+  assert.equal(articleReviewStillValid(reviewed,explicitAi,channel,{...globalManual,articleReviewMode:'ai'}),true);
+  assert.equal(articleReviewStillValid(reviewed,{...explicitAi,articleReviewMode:'manual'},channel,globalManual),false);
+});
+
 test('risk disclaimers are not mistaken for promises while positive promises are blocked',()=>{
   for(const text of ['Returns are not guaranteed.','This is not risk-free trading.','本站不保证收益，投资并非无风险。','我们无法保证盈利。'])assert.equal(hasReturnPromise(text),false,text);
   for(const text of ['Guaranteed returns are available.','This is risk-free trading.','本站保证收益。','这是稳赚策略。'])assert.equal(hasReturnPromise(text),true,text);

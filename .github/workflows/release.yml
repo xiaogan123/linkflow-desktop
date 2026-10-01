@@ -56,6 +56,8 @@ jobs:
 
       - name: Run update center UI checks
         run: npm run test:update-ui
+      - name: Per-site article review UI
+        run: npm run test:site-review-ui
 
       - name: Run integration test
         run: npm run test:integration
@@ -102,7 +104,7 @@ jobs:
             }
           }
 
-      - name: Validate published Windows v1.2.1 to candidate v1.2.2 native upgrade
+      - name: Validate published Windows v1.2.2 to candidate v1.2.3 native upgrade
         id: native_upgrade
         run: npm run test:update-native
 
@@ -150,6 +152,8 @@ jobs:
 
       - name: Run update center UI checks
         run: npm run test:update-ui
+      - name: Per-site article review UI
+        run: npm run test:site-review-ui
 
       - name: Run integration test
         run: npm run test:integration

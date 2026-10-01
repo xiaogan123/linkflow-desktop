@@ -8,7 +8,7 @@ const requirements:Record<string,Qualification[]>={
  'product-hunt':['software'],alternativeto:['software'],g2:['software'],saashub:['software'],capterra:['software'],uneed:['software'],betalist:['software'],peerlist:['software'],stackshare:['software'],
  'github-gist':['developer'],github:['developer'],gitlab:['developer'],codeberg:['openSource'],npm:['javascriptPackage'],pypi:['pythonPackage'],nuget:['dotnetPackage'],'crates-io':['rustCrate'],sourceforge:['openSource'],'docker-hub':['containerImage'],huggingface:['aiArtifact'],
  'firefox-addons':['firefoxExtension'],'vscode-marketplace':['vscodeExtension'],'jetbrains-marketplace':['jetbrainsPlugin'],flathub:['linuxApp'],fdroid:['androidFoss'],'snap-store':['linuxApp'],'show-hn':['software'],
- 'itch-io':['gameAsset'],behance:['portfolio'],artstation:['portfolio'],substack:['publication'],gravatar:['publication'],linktree:['publication'],blogger:['publication'],paragraph:['publication'],
+ 'itch-io':['gameAsset'],behance:['portfolio'],artstation:['portfolio'],substack:['publication'],paragraph:['publication'],
  hashnode:['techContent'],hackernoon:['techContent'],'wordpress-plugins':['wordpressPlugin'],drupal:['drupalProject'],packagist:['phpPackage'],'pub-dev':['dartPackage'],rubygems:['rubyGem'],
  clutch:['business'],wellfound:['business'],'indie-hackers':['software'],'google-business':['localBusiness'],'bing-places':['localBusiness'],'apple-business':['business'],'yelp-business':['localBusiness'],
 };
