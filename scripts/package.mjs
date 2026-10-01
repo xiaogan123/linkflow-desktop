@@ -152,6 +152,7 @@ try{
     // Only publish the unpacked app after the corresponding archive is complete.
     await rm(publishedBundle,{recursive:true,force:true});
     await cp(expectedBundle,publishedBundle,{recursive:true,verbatimSymlinks:true});
+    if(macConfig.mode==='unnotarized')console.log('Mac 未经过 Apple 公证；系统可能要求用户亲自确认来源。');
     console.log([`${basename(publishedBundle)}/${rootPackage.productName}.app`,basename(zipPath),basename(checksumPath)].join('\n'));
   }else{
     const builderCli=join(projectRoot,'node_modules','electron-builder','out','cli','cli.js');

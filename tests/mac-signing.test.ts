@@ -26,6 +26,14 @@ test('explicit local mode is isolated, ad-hoc, and cannot use a formal artifact 
   assert.deepEqual(options.optionsForFile('fixture'),{hardenedRuntime:false,timestamp:'none'});
 });
 
+test('unnotarized publication requires an explicit mode; default requirements remain unchanged',()=>{
+  const config=resolveMacBuildConfig(['--unnotarized-release'],{});
+  assert.deepEqual(config,{mode:'unnotarized',artifactSuffix:'mac-arm64'});
+  assert.equal(macSignOptions(config).identity,'-');
+  assert.throws(()=>resolveMacBuildConfig(['--local','--unnotarized-release'],{}));
+  assert.throws(()=>resolveMacBuildConfig([],{}));
+});
+
 test('formal signing requires an exact Developer ID Application identity and uses its hash',async()=>{
   const output=`  1) ${developerHash} "${developerName}"\n  2) ${'B'.repeat(40)} "Apple Development: Example Publisher (ABCDE12345)"\n`;
   const execute=async()=>({stdout:output,stderr:'',code:0});
@@ -186,4 +194,43 @@ test('update signing preflight rejects an ad-hoc or non-hardened archive without
     assert.match(message,/release-developer-id-runtime-check/);
     assert(!message.includes('Private Person Name'));
   }finally{await rm(root,{recursive:true,force:true})}
+});
+
+test('explicit unnotarized archive validation binds ad-hoc integrity, exact bundle properties and stable bytes',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'linkflow-unnotarized-')),archivePath=join(root,'release.zip'),diagnosticsDir=join(root,'private');
+  const calls:string[][]=[];
+  let fault='';
+  const execute:CommandExecutor=async(file,args)=>{
+    calls.push([file,...args]);
+    if(file==='/usr/bin/ditto')await mkdir(join(args.at(-1)!,'外链助手.app'));
+    if(file==='/usr/bin/codesign'&&args[0]==='--verify'&&fault==='corrupt')throw new Error('Invalid code signature');
+    if(file==='/usr/bin/codesign'&&args[0]==='--display')return {stdout:'',stderr:fault==='identity'?'Signature=adhoc\nAuthority=Unexpected Publisher\n':fault==='unsigned'?'Signature=not signed\n':'Signature=adhoc\nTeamIdentifier=not set\n',code:0};
+    if(file==='/usr/bin/plutil'){
+      const key=args[1],values:Record<string,string>={CFBundleIdentifier:'com.linkflow.personal',CFBundleShortVersionString:'1.2.2',LSMinimumSystemVersion:'14.0'};
+      return {stdout:key===fault?'wrong':values[key],stderr:'',code:0};
+    }
+    if(file==='/usr/bin/lipo'){
+      if(fault==='mutation')await writeFile(archivePath,'changed bytes');
+      return {stdout:fault==='arch'?'x86_64':'arm64',stderr:'',code:0};
+    }
+    return {stdout:'',stderr:'',code:0};
+  };
+  try{
+    await writeFile(archivePath,'exact unnotarized archive');
+    const input={archivePath,expectedAppName:'外链助手.app',platform:'darwin',diagnosticsDir,execute,allowUnnotarized:true,expectedVersion:'1.2.2'};
+    assert.match(await validateMacReleaseArchive(input),/^[a-f0-9]{64}$/);
+    assert(calls.some(call=>call[0]==='/usr/bin/codesign'&&call[1]==='--verify'));
+    assert.equal(calls.some(call=>call[0]==='/usr/bin/xcrun'||call[0]==='/usr/sbin/spctl'||call[0]==='/usr/bin/xattr'),false);
+    await assert.rejects(validateMacReleaseArchive({...input,expectedVersion:undefined}),/expected version/);
+    for(fault of ['corrupt','identity','unsigned','CFBundleIdentifier','CFBundleShortVersionString','LSMinimumSystemVersion','arch','mutation']){
+      await writeFile(archivePath,'exact unnotarized archive');
+      await assert.rejects(validateMacReleaseArchive(input),/release-/);
+    }
+  }finally{await rm(root,{recursive:true,force:true})}
+});
+
+test('unknown artifact modes cannot silently omit notarization checks',async()=>{
+  const paths=await fixture(),{execute}=executorFor(paths);
+  try{await assert.rejects(finishMacArtifact({...paths,mode:'typo',execute,sha256Line:async()=>''}),/Unknown macOS artifact mode/);await assert.rejects(stat(paths.finalZipPath))}
+  finally{await rm(paths.root,{recursive:true,force:true})}
 });

@@ -12,10 +12,11 @@ const identityLine=/^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"([^"]+)"\s*$/;
 export const defaultMacDiagnosticsDir=join(homedir(),'.codex','private','linkflow-notarization-diagnostics');
 
 export function resolveMacBuildConfig(args,env=process.env){
-  if(args.length>1||(args.length===1&&args[0]!=='--local')){
-    throw new Error('Usage: node scripts/package.mjs mac-arm64 [--local]');
+  if(args.length>1||(args.length===1&&!['--local','--unnotarized-release'].includes(args[0]))){
+    throw new Error('Usage: node scripts/package.mjs mac-arm64 [--local|--unnotarized-release]');
   }
   if(args[0]==='--local')return {mode:'local',artifactSuffix:'mac-arm64-local-adhoc'};
+  if(args[0]==='--unnotarized-release')return {mode:'unnotarized',artifactSuffix:'mac-arm64'};
   const identity=env.LINKFLOW_MAC_SIGNING_IDENTITY;
   const notaryProfile=env.LINKFLOW_MAC_NOTARY_PROFILE;
   if(!identity||!notaryProfile){
@@ -28,7 +29,7 @@ export function resolveMacBuildConfig(args,env=process.env){
 }
 
 export function macSignOptions(config){
-  if(config.mode==='local'){
+  if(config.mode==='local'||config.mode==='unnotarized'){
     return {
       identity:'-',
       identityValidation:false,
@@ -206,10 +207,13 @@ export async function validateMacReleaseArchive({
   archivePath,
   expectedAppName,
   platform=process.platform,
+  allowUnnotarized=false,
+  expectedVersion,
   diagnosticsDir=defaultMacDiagnosticsDir,
   execute=executeFile
 }){
   if(platform!=='darwin')throw new Error('The macOS release archive must be validated and update-signed on macOS.');
+  if(typeof allowUnnotarized!=='boolean'||allowUnnotarized&& !/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(expectedVersion??''))throw new Error('Unnotarized release validation requires an explicit flag and expected version.');
   if(!/^[^/\\\0\r\n]{1,200}\.app$/.test(expectedAppName))throw new Error('The expected macOS application name is invalid.');
   const extractionRoot=await mkdtemp(join(tmpdir(),'linkflow-mac-release-validation-'));
   try{
@@ -223,6 +227,24 @@ export async function validateMacReleaseArchive({
     await runStage('release-codesign-verification','/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',appPath],{execute,diagnosticsDir});
     const signature=await runStage('release-developer-id-runtime-check','/usr/bin/codesign',['--display','--verbose=4',appPath],{execute,diagnosticsDir});
     const signatureText=`${signature.stdout}\n${signature.stderr}`;
+    if(allowUnnotarized){
+      if(!signatureText.split(/\r?\n/).some(line=>line==='Signature=adhoc')||signatureText.split(/\r?\n/).some(line=>line.startsWith('Authority=')||line.startsWith('TeamIdentifier=')&&line!=='TeamIdentifier=not set')){
+        await failStage('release-adhoc-signature-check',new Error('Expected an explicitly unnotarized ad-hoc signature.'),diagnosticsDir);
+      }
+      const plist=join(appPath,'Contents','Info.plist');
+      const [identifier,version,minimumSystem,architectures]=await Promise.all([
+        runStage('release-app-identifier','/usr/bin/plutil',['-extract','CFBundleIdentifier','raw','-o','-',plist],{execute,diagnosticsDir}),
+        runStage('release-app-version','/usr/bin/plutil',['-extract','CFBundleShortVersionString','raw','-o','-',plist],{execute,diagnosticsDir}),
+        runStage('release-minimum-system','/usr/bin/plutil',['-extract','LSMinimumSystemVersion','raw','-o','-',plist],{execute,diagnosticsDir}),
+        runStage('release-app-architecture','/usr/bin/lipo',['-archs',join(appPath,'Contents','MacOS','外链助手')],{execute,diagnosticsDir})
+      ]);
+      if(identifier.stdout.trim()!=='com.linkflow.personal'||version.stdout.trim()!==expectedVersion||minimumSystem.stdout.trim()!=='14.0'||architectures.stdout.trim()!=='arm64'){
+        await failStage('release-adhoc-bundle-properties',new Error('Unexpected unnotarized bundle identity, version, system or architecture.'),diagnosticsDir);
+      }
+      const afterHash=await stableSha256(archivePath);
+      if(beforeHash!==afterHash)await failStage('release-archive-stability',new Error('Archive changed during native validation.'),diagnosticsDir);
+      return afterHash;
+    }
     const developerId=signatureText.split(/\r?\n/).some(line=>line.startsWith('Authority=Developer ID Application:'));
     const hardenedRuntime=signatureText.split(/\r?\n/).some(line=>line.startsWith('CodeDirectory ')&&/flags=.*\bruntime\b/.test(line));
     if(!developerId||!hardenedRuntime){
@@ -250,6 +272,7 @@ export async function finishMacArtifact({
   diagnosticsDir=defaultMacDiagnosticsDir,
   execute=executeFile
 }){
+  if(!['release','local','unnotarized'].includes(mode))throw new Error('Unknown macOS artifact mode.');
   await rm(temporaryZipPath,{force:true});
   await rm(finalZipTempPath,{force:true});
   let finalPublished=false;

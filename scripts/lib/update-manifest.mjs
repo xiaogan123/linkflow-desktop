@@ -10,9 +10,13 @@ const platformSpecs=[
 const cliPlatforms=new Map([['mac-arm64','darwin-arm64'],['windows-x64','win32-x64']]);
 
 export function parseUpdateSigningArguments(args){
- let notesPath;const selected=[];
+ let notesPath,allowUnnotarizedMac=false;const selected=[];
  for(let index=0;index<args.length;index++){
   const value=args[index];
+  if(value==='--allow-unnotarized-mac'){
+   if(allowUnnotarizedMac)throw Error('Duplicate unnotarized Mac selection');
+   allowUnnotarizedMac=true;continue;
+  }
   if(value==='--platform'){
    const name=args[++index],platform=cliPlatforms.get(name);
    if(!platform||selected.includes(platform))throw Error('Invalid or duplicate update platform selection');
@@ -22,7 +26,9 @@ export function parseUpdateSigningArguments(args){
   notesPath=value;
  }
  if(!notesPath)throw Error('Usage: sign-update <release-notes> [--platform <windows-x64|mac-arm64>]');
- return {notesPath,platforms:selected.length?selected:platformSpecs.map(([platform])=>platform)};
+ const platforms=selected.length?selected:platformSpecs.map(([platform])=>platform);
+ if(allowUnnotarizedMac&&!platforms.includes('darwin-arm64'))throw Error('Unnotarized Mac selection requires a Mac artifact');
+ return {notesPath,platforms,...(allowUnnotarizedMac?{allowUnnotarizedMac:true}:{})};
 }
 
 export async function signUpdateManifest({version,releaseNotes,publishedAt,assets,privateKey,publicKeyDer}){

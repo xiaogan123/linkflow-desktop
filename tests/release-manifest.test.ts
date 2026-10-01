@@ -49,6 +49,13 @@ test('platform selection defaults to both and accepts only explicit public platf
  assert.throws(()=>parseUpdateSigningArguments([]),/Usage/);
 });
 
+test('unnotarized signing selection is explicit, unique and requires a Mac asset',()=>{
+ assert.deepEqual(parseUpdateSigningArguments(['notes.md','--allow-unnotarized-mac']),{notesPath:'notes.md',platforms:['darwin-arm64','win32-x64'],allowUnnotarizedMac:true});
+ assert.throws(()=>parseUpdateSigningArguments(['notes.md','--allow-unnotarized-mac','--allow-unnotarized-mac']),/Duplicate/);
+ assert.throws(()=>parseUpdateSigningArguments(['notes.md','--allow-unnotarized-mac','--platform','windows-x64']),/requires a Mac artifact/);
+ assert.throws(()=>parseUpdateSigningArguments(['notes.md','--allow-unnotarized-mac=false']));
+});
+
 test('low-level signer rejects empty, unknown, missing, and misnamed platform artifacts',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'linkflow-sign-invalid-test-'));
  try{
