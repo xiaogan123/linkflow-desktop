@@ -1,8 +1,8 @@
 import {constants as fsConstants} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFile,spawn} from 'node:child_process';
-import {basename,dirname,isAbsolute,join,relative,resolve,sep} from 'node:path';
-import type {UpdateHelperJob} from './update-install';
+import {basename,dirname,isAbsolute,join,relative,resolve} from 'node:path';
+import {validateUpdateHelperJob,type UpdateHelperJob} from './update-install';
 import {updateRawFs} from './update-files';
 import {hashUpdateTree} from './update-tree';
 
@@ -11,8 +11,6 @@ const rawFs=updateRawFs(),{access,lstat,readFile,rename,rm,writeFile}=rawFs.prom
 interface StartupAck {schemaVersion:2;targetVersion:string;token:string;pid:number;applicationPath:string;executablePath:string}
 interface MacProcess {pid:number;command:string}
 export interface HelperPorts {isAlive?:(pid:number)=>boolean;wait?:(milliseconds:number)=>Promise<void>;executeInstaller?:(file:string,args:string[])=>Promise<void>;launch?:(file:string,args:string[])=>Promise<{pid:number}>;openMac?:(applicationPath:string)=>Promise<void>;listMacProcesses?:()=>Promise<MacProcess[]>;verifyMac?:(applicationPath:string)=>Promise<void>;verifyMacStartup?:(applicationPath:string,executablePath:string,targetVersion:string,treeSha256:string)=>Promise<void>;terminate?:(pid:number)=>void;startupTimeoutMs?:number}
-const versionPattern=/^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
-function inside(parent:string,child:string):boolean{const path=relative(resolve(parent),resolve(child));return !!path&&path!=='..'&&!path.startsWith('..'+sep)&&!isAbsolute(path)}
 function cleanEnvironment():NodeJS.ProcessEnv{const environment={...process.env};delete environment.ELECTRON_RUN_AS_NODE;delete environment.LINKFLOW_UPDATE_HELPER;return environment}
 function executeInstaller(file:string,args:string[]):Promise<void>{return new Promise((done,reject)=>execFile(file,args,{timeout:180_000,maxBuffer:1024*1024,windowsVerbatimArguments:process.platform==='win32',shell:false},error=>error?reject(error):done()))}
 function launch(file:string,args:string[]):Promise<{pid:number}>{return new Promise((done,reject)=>{const child=spawn(file,args,{cwd:dirname(file),detached:true,stdio:'ignore',windowsHide:true,shell:false,env:cleanEnvironment()});child.once('error',reject);child.once('spawn',()=>{if(!child.pid){reject(Error('新版本进程未启动'));return}child.unref();done({pid:child.pid})})})}
@@ -26,18 +24,6 @@ async function verifyMacStartup(applicationPath:string,executablePath:string,tar
   if(identifier!=='com.linkflow.personal'||version!==targetVersion||architectures!=='arm64'||await hashUpdateTree(applicationPath)!==treeSha256)throw Error('macOS 新版本进程身份校验失败');
 }
 function alive(pid:number):boolean{try{process.kill(pid,0);return true}catch(error){return (error as NodeJS.ErrnoException).code==='EPERM'}}
-function validateJob(value:unknown,jobPath:string):UpdateHelperJob{
-  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('更新任务无效');const job=value as Partial<UpdateHelperJob>;
-  if(job.schemaVersion!==1||(job.platform!=='darwin-arm64'&&job.platform!=='win32-x64')||typeof job.token!=='string'||!/^[a-f0-9-]{16,64}$/i.test(job.token)||!Number.isSafeInteger(job.oldPid)||(job.oldPid??0)<1||typeof job.targetVersion!=='string'||!versionPattern.test(job.targetVersion))throw Error('更新任务无效');
-  if(!Number.isSafeInteger(job.artifactSize)||(job.artifactSize??0)<1||typeof job.artifactSha256!=='string'||!/^[a-f0-9]{64}$/.test(job.artifactSha256))throw Error('更新安装包校验信息无效');
-  for(const key of ['updatesDirectory','artifactPath','applicationPath','executablePath','backupPath','helperRuntimePath','readyPath','armPath','startupRequestPath','startupAckPath','receiptPath','errorPath'] as const)if(typeof job[key]!=='string'||!isAbsolute(job[key]!))throw Error('更新任务路径无效');
-  if(resolve(dirname(jobPath))!==resolve(job.updatesDirectory!)||!inside(job.updatesDirectory!,jobPath)||!inside(job.updatesDirectory!,job.artifactPath!)||!inside(job.updatesDirectory!,job.helperRuntimePath!)||resolve(job.readyPath!)!==resolve(jobPath+'.ready')||resolve(job.armPath!)!==resolve(jobPath+'.armed')||resolve(job.startupRequestPath!)!==resolve(job.updatesDirectory!,'startup-request.json')||resolve(job.startupAckPath!)!==resolve(job.updatesDirectory!,'startup-ack')||resolve(dirname(job.receiptPath!))!==resolve(job.updatesDirectory!)||resolve(dirname(job.errorPath!))!==resolve(job.updatesDirectory!))throw Error('更新任务超出受控目录');
-  if(job.platform==='darwin-arm64'){
-    if(typeof job.stagedApplicationPath!=='string'||typeof job.stagedTreeSha256!=='string'||!/^[a-f0-9]{64}$/.test(job.stagedTreeSha256)||!isAbsolute(job.stagedApplicationPath)||resolve(job.applicationPath!)===resolve(job.backupPath!)||!basenameSafe(job.backupPath!).startsWith('.'+basenameSafe(job.applicationPath!)+'.linkflow-backup-')||resolve(dirname(job.applicationPath!))!==resolve(dirname(job.backupPath!))||resolve(dirname(dirname(job.stagedApplicationPath)))!==resolve(dirname(job.applicationPath!))||!basenameSafe(dirname(job.stagedApplicationPath)).startsWith('.linkflow-update-'))throw Error('macOS 更新任务路径无效');
-  }else if(resolve(job.applicationPath!)===resolve(job.backupPath!)||resolve(job.applicationPath!)!==resolve(dirname(job.executablePath!))||resolve(dirname(job.applicationPath!))!==resolve(dirname(job.backupPath!))||!basenameSafe(job.backupPath!).startsWith('.linkflow-backup-'))throw Error('Windows 更新任务路径无效');
-  return job as UpdateHelperJob;
-}
-function basenameSafe(path:string){const parts=path.split(/[\\/]/);return parts.at(-1)??''}
 async function atomicJson(path:string,value:unknown){const temporary=path+'.tmp';await rm(temporary,{force:true});await writeFile(temporary,JSON.stringify(value),{mode:0o600,flag:'wx'});await rename(temporary,path)}
 async function hashFile(path:string){const hash=createHash('sha256');for await(const chunk of rawFs.createReadStream(path))hash.update(chunk as Buffer);return hash.digest('hex')}
 async function waitForExit(pid:number,isAlive:(pid:number)=>boolean,wait:(milliseconds:number)=>Promise<void>,timeoutMs:number,message:string){const deadline=Date.now()+timeoutMs;while(isAlive(pid)){if(Date.now()>=deadline)throw Error(message);await wait(100)}}
@@ -57,7 +43,7 @@ async function restartOld(job:UpdateHelperJob,launchApp:(file:string,args:string
 export async function runUpdateHelper(jobPath:string,ports:HelperPorts={}):Promise<void>{
   const delay=ports.wait??(milliseconds=>new Promise(done=>setTimeout(done,milliseconds))),isAlive=ports.isAlive??alive,runInstaller=ports.executeInstaller??executeInstaller,start=ports.launch??launch,openApplication=ports.openMac??openMac,listProcesses=ports.listMacProcesses??listMacProcesses,verifyMacApplication=ports.verifyMac??verifyMac,verifyStartup=ports.verifyMacStartup??verifyMacStartup,terminate=ports.terminate??(pid=>process.kill(pid,'SIGTERM'));let job:UpdateHelperJob|undefined,preserveRecovery=false;
   try{
-    if(!isAbsolute(jobPath))throw Error('更新任务路径无效');const info=await lstat(jobPath);if(!info.isFile()||info.isSymbolicLink()||info.size>64*1024)throw Error('更新任务文件无效');job=validateJob(JSON.parse(await readFile(jobPath,'utf8')),jobPath);
+    if(!isAbsolute(jobPath))throw Error('更新任务路径无效');const info=await lstat(jobPath);if(!info.isFile()||info.isSymbolicLink()||info.size>64*1024)throw Error('更新任务文件无效');job=validateUpdateHelperJob(JSON.parse(await readFile(jobPath,'utf8')),jobPath);
     await access(job.artifactPath,fsConstants.R_OK);await writeFile(job.readyPath,job.token,{mode:0o600,flag:'wx'});await waitForToken(job.armPath,job.token,delay,5000,'更新安装授权握手超时');await rm(job.armPath,{force:true});await waitForExit(job.oldPid,isAlive,delay,120_000,'等待旧版本退出超时');const artifactInfo=await lstat(job.artifactPath);if(!artifactInfo.isFile()||artifactInfo.isSymbolicLink()||artifactInfo.size!==job.artifactSize||await hashFile(job.artifactPath)!==job.artifactSha256)throw Error('安装前完整性复验失败');
     let backupReady=false,replacementMayExist=false,newPid:number|undefined,macAck:StartupAck|undefined;
     try{

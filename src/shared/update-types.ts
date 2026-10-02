@@ -26,6 +26,7 @@ export interface UpdateProgress {
 export interface UpdateState {
   phase:UpdatePhase;
   currentVersion:string;
+  recoveryPending?:boolean;
   targetVersion?:string;
   releaseNotes?:string;
   publishedAt?:string;

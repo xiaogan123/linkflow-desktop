@@ -3,7 +3,7 @@ import {ArrowClockwise,CheckCircle,DownloadSimple,Info,ShieldCheck,WarningCircle
 import type {UpdatePhase,UpdateState} from '../../shared/update-types';
 import {Button} from '../components';
 
-type UpdateCommand='app:check-update'|'app:download-update'|'app:cancel-update'|'app:install-update';
+type UpdateCommand='app:check-update'|'app:download-update'|'app:cancel-update'|'app:install-update'|'app:recover-update';
 type Props={demo:boolean;platform?:string;currentVersion?:string;taskBusy:boolean;onResult:(ok:boolean,message:string)=>void};
 
 const activePhases=new Set<UpdatePhase>(['checking','downloading','installing']);
@@ -48,12 +48,13 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
 
   const run=async(next:UpdateCommand)=>{
     if(demo||!window.linkflow)return;
-    if(next==='app:install-update'&&taskBusy){onResult(false,'请等待当前任务结束，再安装并重启。');return}
+    if((next==='app:install-update'||next==='app:recover-update')&&taskBusy){onResult(false,'请等待当前任务结束，再安装并重启。');return}
     setCommand(next);setLastCommand(next);
     if(next==='app:check-update'||next==='app:install-update')setState(previous=>({...previous,phase:next==='app:check-update'?'checking':'installing',error:undefined}));
     try{
       const result=await window.linkflow.invoke<UpdateState>(next);
       setState(result);
+      if(next==='app:recover-update'&&!result.recoveryPending&&result.phase!=='failed')onResult(true,'已验证当前正式版本，旧更新事务已归档，恢复副本保留。');
       if(next==='app:cancel-update')onResult(true,'正在取消下载。');
     }catch(error){const message=errorText(error);await readStatus();onResult(false,message)}
     finally{setCommand(null)}
@@ -77,7 +78,9 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
         {state.error&&<div className={`update-message ${state.phase==='failed'?'error':'notice'}`} role={state.phase==='failed'?'alert':'status'}>{state.phase==='failed'?<WarningCircle size={17}/>:<X size={17}/>}<span>{state.error}</span></div>}
         {platform?.startsWith('darwin')&&(['prepared','failed'].includes(state.phase))&&<div className="update-message notice"><Info size={17}/><span>若 macOS 提示来源确认，请自行在系统设置的“隐私与安全性”中处理。未完成启动确认时，软件会保留旧版恢复副本。</span></div>}
         {state.phase==='prepared'&&taskBusy&&<div className="update-message notice"><Info size={17}/><span>当前仍有任务在执行。请先让任务完成，安装按钮随后可用。</span></div>}
+        {state.recoveryPending&&<p className="muted">如果已手动安装并打开较新的正式版本，可验证当前安装后恢复更新功能。此操作会下载当前版本的官方安装包作校验，并保留旧版副本；不会替你确认 macOS 安全提示。</p>}
         <div className="update-actions">
+          {state.recoveryPending&&<Button variant="primary" disabled={demo||busy||taskBusy} onClick={()=>void run('app:recover-update')}>验证并恢复更新</Button>}
           {(['idle','up-to-date','installed'].includes(state.phase))&&<Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>{state.phase==='idle'?'检查更新':'再次检查'}</Button>}
           {state.phase==='unsupported'&&<Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>重新检查</Button>}
           {state.phase==='available'&&<><Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:download-update')}><DownloadSimple size={16}/>下载更新</Button><Button disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>重新检查</Button></>}

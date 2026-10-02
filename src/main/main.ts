@@ -37,6 +37,8 @@ import {loginItemReadOptions,withLoginItemPreference} from './login-item';
 import {getArticleReviewMode} from '../shared/article-review-mode';
 import {channelDiscoveryFor} from '../integrations/channel-discovery';
 import {applySiteUpdate} from './site-service';
+import {applyChannelPolicyDecision,canConfirmMissingPolicy} from './channel-policy';
+import {saveTaskDraft} from './task-draft';
 
 app.setName('外链助手');
 const selfTest=prepareSelfTest();
@@ -95,6 +97,13 @@ async function command(name:string,p:unknown):Promise<unknown>{
       store.update(s=>s.sites.push(site));void controller.analyze(site.id);break;
     }
     case 'site:update':{forbidBusy();const input=EditSite.parse(p);let modeChanged=false;store.update(s=>{modeChanged=applySiteUpdate(s,input).reviewModeChanged});const state=store.read(),site=state.sites.find(item=>item.id===input.id);if(modeChanged&&site&&getArticleReviewMode(site,state.settings)==='ai')controller.resumeArticleReviews(input.id);controller.plan();if(modeChanged)void controller.tick();break;}
+    case 'site:confirm-channel-policy':{
+      forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).strict().parse(p),site=store.read().sites.find(item=>item.id===d.id),channel=controller.channels().find(item=>item.id===d.channelId);
+      if(!site||!channel||!canConfirmMissingPolicy(channel))throw Error('网站或渠道不能进行此确认');
+      const result=await dialog.showMessageBox(win!,{type:'question',title:'渠道使用确认',message:'是否允许 '+site.domain+' 使用 '+channel.name+'？',detail:'已核对官方接口与产品说明，但尚未找到适用的完整内容政策。确认仅适用于这个网站和当前渠道资料，有效期90天。每篇仍须独立AI审核事实、作者关系、佣金披露、独立价值和金融风险；明确违规、证据抓取失败或内容未知仍停止。平台可能删除内容或限制账号。此确认不表示AI已确认平台内容政策。',buttons:['取消','确认使用','撤回确认'],defaultId:0,cancelId:0});
+      if(result.response===0)return;forbidBusy();const currentChannel=controller.channels().find(item=>item.id===d.channelId);if(!currentChannel)throw Error('渠道已不存在');
+      store.update(state=>applyChannelPolicyDecision(state,d.id,currentChannel,result.response===1));if(result.response===1)void controller.tick();break;
+    }
     case 'site:queue-channel':{
       forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).parse(p);const s=store.read(),site=s.sites.find(x=>x.id===d.id),channel=controller.channels().find(c=>c.id===d.channelId);
       if(!site||!channel)throw Error('网站或渠道不存在');if(site.status!=='ready')throw Error('请先完成网站分析并恢复计划');
@@ -134,7 +143,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'task:open-result':{const id=getId(p),task=store.read().tasks.find(item=>item.id===id);if(!task?.publicUrl)throw Error('任务还没有公开结果网址');const url=publicUrl(task.publicUrl);await openInPreferredBrowser(url.href,store.read().settings.preferredBrowser,value=>shell.openExternal(value));return;}
     case 'task:generate':{forbidBusy();await controller.generateDraft(getId(p));break;}
     case 'task:update-draft':{
-      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).parse(p);const task=store.read().tasks.find(t=>t.id===d.id);if(!task)throw Error('任务不存在');if(task.status==='running'||task.submittedAt)throw Error('正在执行或已提交的材料不能修改');controller.patch(d.id,{articleApprovedAt:undefined,articleReview:undefined,draft:{title:d.title,description:d.description,body:d.body},draftRevision:(task.draftRevision??0)+1,draftUpdatedAt:new Date().toISOString()});break;
+      const d=z.object({id:z.string().uuid(),title:z.string().min(1).max(150),description:z.string().max(3000),body:z.string().max(30000)}).strict().parse(p);let queue=false;store.update(state=>{queue=saveTaskDraft(state,d.id,{title:d.title,description:d.description,body:d.body})});if(queue)void controller.tick();break;
     }
     case 'plan:run':store.update(s=>{s.settings.autoRun=true});void controller.tick();break;
     case 'plan:pause':controller.pause();break;
@@ -217,6 +226,10 @@ async function command(name:string,p:unknown):Promise<unknown>{
     }
     case 'app:update-status':return updater.status();
     case 'app:check-update':return updater.check();
+    case 'app:recover-update':{
+      forbidBusy();if(activeCommands.size)throw Error('请等待当前操作完成后再恢复更新');updating=true;controller.stop();
+      try{return await updater.supersedeRecovery()}finally{updating=false;if(runtimeStarted)controller.start()}
+    }
     case 'app:download-update':{const state=updater.status();if(!['available','failed'].includes(state.phase)||!state.targetVersion)throw Error('请重新检查可用更新');void updater.download().catch(()=>broadcast());return updater.status();}
     case 'app:cancel-update':return updater.cancel();
     case 'app:install-update':{
@@ -257,7 +270,7 @@ app.whenReady().then(async()=>{
     const operation=Symbol();let tracked=false;
     try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!IPC_COMMANDS.includes(name)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
       if(JSON.stringify(payload??{}).length>100000)throw Error('输入内容过大');
-      if(!['snapshot','app:update-status','app:install-update'].includes(name)){activeCommands.add(operation);tracked=true}
+      if(!['snapshot','app:update-status','app:install-update','app:recover-update'].includes(name)){activeCommands.add(operation);tracked=true}
       return {ok:true,value:await command(name,payload)};
     }catch(e){return {ok:false,error:safeMessage(e)}}finally{if(tracked)activeCommands.delete(operation)}
   });

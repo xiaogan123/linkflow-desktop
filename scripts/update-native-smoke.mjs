@@ -10,7 +10,7 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.2',candidateVersion:'1.2.3',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.2/Linkflow-1.2.2-windows-x64-setup.exe',sha256:'b8e18498ad065a723051288dc754e3bc1ab13c322aa0cfadd14c21756270c495'};
+const windowsUpgrade={sourceVersion:'1.2.3',candidateVersion:'1.2.4',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.3/Linkflow-1.2.3-windows-x64-setup.exe',sha256:'69fc43070324794c4c9f000be8131b9fdf58057cddd3ff5db70f3bf58171615f'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');

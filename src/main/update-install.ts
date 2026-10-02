@@ -38,6 +38,19 @@ const realFiles:InstallFilePorts={access:rawPromises.access as typeof access,cp:
 const versionPattern=/^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 
 function inside(parent:string,child:string):boolean{const path=relative(resolve(parent),resolve(child));return !!path&&path!=='..'&&!path.startsWith('..'+sep)&&!isAbsolute(path)}
+function basenameSafe(path:string){const parts=path.split(/[\\/]/);return parts.at(-1)??''}
+export function validateUpdateHelperJob(value:unknown,jobPath:string):UpdateHelperJob{
+  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('更新任务无效');const job=value as Partial<UpdateHelperJob>;
+  if(job.schemaVersion!==1||(job.platform!=='darwin-arm64'&&job.platform!=='win32-x64')||typeof job.token!=='string'||!/^[a-f0-9-]{16,64}$/i.test(job.token)||!Number.isSafeInteger(job.oldPid)||(job.oldPid??0)<1||typeof job.targetVersion!=='string'||!versionPattern.test(job.targetVersion))throw Error('更新任务无效');
+  if(!Number.isSafeInteger(job.artifactSize)||(job.artifactSize??0)<1||typeof job.artifactSha256!=='string'||!/^[a-f0-9]{64}$/.test(job.artifactSha256))throw Error('更新安装包校验信息无效');
+  for(const key of ['updatesDirectory','artifactPath','applicationPath','executablePath','backupPath','helperRuntimePath','readyPath','armPath','startupRequestPath','startupAckPath','receiptPath','errorPath'] as const)if(typeof job[key]!=='string'||!isAbsolute(job[key]!))throw Error('更新任务路径无效');
+  const jobName=basenameSafe(jobPath),idMatch=/^install-([a-zA-Z0-9-]{1,80})\.json$/.exec(jobName),jobId=idMatch?.[1];if(!jobId)throw Error('更新任务文件名无效');
+  if(resolve(dirname(jobPath))!==resolve(job.updatesDirectory!)||!inside(job.updatesDirectory!,jobPath)||!inside(job.updatesDirectory!,job.artifactPath!)||!inside(job.updatesDirectory!,job.helperRuntimePath!)||basenameSafe(job.helperRuntimePath!)!==`helper-runtime-${jobId}`||resolve(job.readyPath!)!==resolve(jobPath+'.ready')||resolve(job.armPath!)!==resolve(jobPath+'.armed')||resolve(job.startupRequestPath!)!==resolve(job.updatesDirectory!,'startup-request.json')||resolve(job.startupAckPath!)!==resolve(job.updatesDirectory!,'startup-ack')||resolve(job.receiptPath!)!==resolve(job.updatesDirectory!,'installed.json')||resolve(job.errorPath!)!==resolve(job.updatesDirectory!,'install-error.json'))throw Error('更新任务超出受控目录');
+  if(job.platform==='darwin-arm64'){
+    if(typeof job.stagedApplicationPath!=='string'||typeof job.stagedTreeSha256!=='string'||!/^[a-f0-9]{64}$/.test(job.stagedTreeSha256)||!isAbsolute(job.stagedApplicationPath)||resolve(job.applicationPath!)===resolve(job.backupPath!)||basenameSafe(job.backupPath!)!=='.'+basenameSafe(job.applicationPath!)+`.linkflow-backup-${jobId}`||resolve(dirname(job.applicationPath!))!==resolve(dirname(job.backupPath!))||resolve(dirname(dirname(job.stagedApplicationPath)))!==resolve(dirname(job.applicationPath!))||basenameSafe(dirname(job.stagedApplicationPath))!==`.linkflow-update-${job.targetVersion}`)throw Error('macOS 更新任务路径无效');
+  }else if(resolve(job.applicationPath!)===resolve(job.backupPath!)||resolve(job.applicationPath!)!==resolve(dirname(job.executablePath!))||resolve(dirname(job.applicationPath!))!==resolve(dirname(job.backupPath!))||basenameSafe(job.backupPath!)!==`.linkflow-backup-${jobId}`)throw Error('Windows 更新任务路径无效');
+  return job as UpdateHelperJob;
+}
 function execute(file:string,args:string[]):Promise<string>{return new Promise((done,reject)=>execFile(file,args,{timeout:120_000,maxBuffer:1024*1024,encoding:'utf8'},(error,stdout)=>error?reject(error):done(stdout)))}
 function assertBaseJob(input:{platform:UpdatePlatform;oldPid:number;targetVersion:string;updatesDirectory:string;artifactPath:string;applicationPath:string;executablePath:string}){
   if(!Number.isSafeInteger(input.oldPid)||input.oldPid<1||!versionPattern.test(input.targetVersion))throw Error('无法创建安全的更新任务');
