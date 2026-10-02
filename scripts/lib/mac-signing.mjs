@@ -218,7 +218,9 @@ export async function validateMacReleaseArchive({
   const extractionRoot=await mkdtemp(join(tmpdir(),'linkflow-mac-release-validation-'));
   try{
     const beforeHash=await stableSha256(archivePath);
-    await runStage('release-archive-extraction','/usr/bin/ditto',['-x','-k','--noextattr',archivePath,extractionRoot],{execute,diagnosticsDir});
+    // Validate the same metadata a normal extraction would preserve; stripping
+    // attributes here could hide an archive that fails strict code signing.
+    await runStage('release-archive-extraction','/usr/bin/ditto',['-x','-k',archivePath,extractionRoot],{execute,diagnosticsDir});
     const entries=await readdir(extractionRoot,{withFileTypes:true});
     if(entries.length!==1||entries[0].name!==expectedAppName||!entries[0].isDirectory()||entries[0].isSymbolicLink()){
       await failStage('release-archive-shape',new Error('Unexpected archive shape.'),diagnosticsDir);

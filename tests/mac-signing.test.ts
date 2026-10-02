@@ -176,6 +176,7 @@ test('update signing preflight revalidates the exact archived app and binds its 
   try{
     const hash=await validateMacReleaseArchive({archivePath,expectedAppName:'外链助手.app',platform:'darwin',diagnosticsDir,execute});
     assert.match(hash,/^[a-f0-9]{64}$/);
+    assert.deepEqual(calls.find(call=>call[0]==='/usr/bin/ditto')?.slice(0,4),['/usr/bin/ditto','-x','-k',archivePath]);
     assert(calls.some(call=>call[0]==='/usr/bin/xcrun'&&call[1]==='stapler'&&call[2]==='validate'));
     assert(calls.some(call=>call[0]==='/usr/sbin/spctl'));
   }finally{await rm(root,{recursive:true,force:true})}
