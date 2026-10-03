@@ -95,12 +95,15 @@ async function fixture(){
   return {root,appPath,diagnosticsDir,temporaryZipPath,finalZipTempPath,finalZipPath,checksumPath};
 }
 
-function executorFor(paths:Awaited<ReturnType<typeof fixture>>,failStage?:'staple'|'spctl',notaryStatus='Accepted'){
+function executorFor(paths:Awaited<ReturnType<typeof fixture>>,failStage?:'staple'|'spctl'|'quarantine'|'postarchive-codesign',notaryStatus='Accepted'){
   const calls:string[][]=[];
   const execute:CommandExecutor=async(file,args)=>{
     calls.push([file,...args]);
-    if(file==='/usr/bin/ditto')await writeFile(args.at(-1)!,args.at(-1)===paths.temporaryZipPath?'before-staple':'after-staple');
+    if(file==='/usr/bin/ditto'&&args[0]==='-c')await writeFile(args.at(-1)!,args.at(-1)===paths.temporaryZipPath?'before-staple':'after-staple');
+    if(file==='/usr/bin/ditto'&&args[0]==='-x')await mkdir(join(args.at(-1)!,'外链助手.app'));
+    if(failStage==='postarchive-codesign'&&file==='/usr/bin/codesign'&&args[0]==='--verify'&&args.at(-1)!==paths.appPath)throw new Error('private extracted bundle verification detail');
     if(file==='/usr/bin/codesign'&&args[0]==='--display')return {stdout:'',stderr:`Authority=${developerName}\n`,code:0};
+    if(file==='/usr/bin/xattr')return {stdout:failStage==='quarantine'?`${args.at(-1)}: com.apple.quarantine: 0081;fixture\n`:'',stderr:'',code:0};
     if(file==='/usr/bin/xcrun'&&args[0]==='notarytool'&&args[1]==='submit')return {stdout:JSON.stringify({status:notaryStatus,id:'00000000-0000-4000-8000-000000000001'}),stderr:'',code:0};
     if(file==='/usr/bin/xcrun'&&args[0]==='notarytool'&&args[1]==='log')return {stdout:'{"issues":[]}',stderr:'',code:0};
     if(failStage==='staple'&&file==='/usr/bin/xcrun'&&args[0]==='stapler'&&args[1]==='staple'){
@@ -128,7 +131,10 @@ test('formal ZIP and checksum are created only after Accepted, staple validation
     const staple=calls.findIndex(call=>call[0]==='/usr/bin/xcrun'&&call[1]==='stapler'&&call[2]==='staple');
     const validate=calls.findIndex(call=>call[0]==='/usr/bin/xcrun'&&call[1]==='stapler'&&call[2]==='validate');
     const gatekeeper=calls.findIndex(call=>call[0]==='/usr/sbin/spctl');
-    assert(staple>=0&&validate>staple&&gatekeeper>validate&&finalArchive>gatekeeper);
+    const postExtract=calls.findIndex(call=>call[0]==='/usr/bin/ditto'&&call[1]==='-x'&&call[3]===paths.finalZipTempPath);
+    const postVerify=calls.findIndex((call,index)=>index>postExtract&&call[0]==='/usr/bin/codesign'&&call[1]==='--verify');
+    const quarantineCheck=calls.findIndex((call,index)=>index>postVerify&&call[0]==='/usr/bin/xattr');
+    assert(staple>=0&&validate>staple&&gatekeeper>validate&&finalArchive>gatekeeper&&postExtract>finalArchive&&postVerify>postExtract&&quarantineCheck>postVerify);
     await assert.rejects(stat(paths.temporaryZipPath));
   }finally{await rm(paths.root,{recursive:true,force:true})}
 });
@@ -160,8 +166,23 @@ test('local mode never calls notarytool, stapler, or Gatekeeper',async()=>{
   try{
     await finishMacArtifact({...paths,mode:'local',execute,sha256Line:async()=>`digest  final.zip\n`});
     assert.equal(calls.some(call=>call[0]==='/usr/bin/xcrun'||call[0]==='/usr/sbin/spctl'),false);
+    const finalSign=calls.findIndex(call=>call[0]==='/usr/bin/codesign'&&call.slice(1,5).join(' ')==='--force --deep --sign -'&&call[5]===paths.appPath);
+    const strictVerify=calls.findIndex((call,index)=>index>finalSign&&call[0]==='/usr/bin/codesign'&&call[1]==='--verify');
+    const finalArchive=calls.findIndex((call,index)=>index>strictVerify&&call[0]==='/usr/bin/ditto'&&call[1]==='-c');
+    assert(finalSign>=0&&strictVerify>finalSign&&finalArchive>strictVerify);
     assert.equal(await readFile(paths.finalZipPath,'utf8'),'after-staple');
   }finally{await rm(paths.root,{recursive:true,force:true})}
+});
+
+test('post-archive strict verification or quarantine blocks artifact publication',async()=>{
+  for(const [failure,stage] of [['postarchive-codesign','post-archive-codesign-verification'],['quarantine','post-archive-quarantine-check']] as const){
+    const paths=await fixture(),{execute}=executorFor(paths,failure);
+    try{
+      await assert.rejects(finishMacArtifact({...paths,mode:'unnotarized',execute,sha256Line:async()=>`digest  final.zip\n`}),new RegExp(stage));
+      await assert.rejects(stat(paths.finalZipPath));
+      await assert.rejects(stat(paths.checksumPath));
+    }finally{await rm(paths.root,{recursive:true,force:true})}
+  }
 });
 
 test('update signing preflight revalidates the exact archived app and binds its hash',async()=>{

@@ -10,7 +10,7 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.4',candidateVersion:'1.2.5',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.4/Linkflow-1.2.4-windows-x64-setup.exe',sha256:'46117889b56c189275a3c8f28e945e0cb6b98f73651b0334951800a37be32356'};
+const windowsUpgrade={sourceVersion:'1.2.5',candidateVersion:'1.2.6',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.5/Linkflow-1.2.5-windows-x64-setup.exe',sha256:'49c057845a37eba327ef4bf22dff3c769ba0730d7bcc5be502e3b382a37a27b4'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
@@ -25,6 +25,13 @@ const download=async(url,path)=>{const response=await fetch(url,{redirect:'follo
 
 async function main(){
 const packageMetadata=JSON.parse(await readFile('package.json','utf8')),version=packageMetadata.version,plan=probePlan(process.platform,process.arch,version);
+const bridgeIndex=process.argv.indexOf('--mac-bridge');
+if(bridgeIndex>=0){
+ if(process.platform!=='darwin'||process.argv.length!==bridgeIndex+4)throw Error('Usage: --mac-bridge <zip> <sha256> <source-version>');
+ const [path,sha,sourceVersion]=process.argv.slice(bridgeIndex+1);
+ if(!/^[a-f0-9]{64}$/.test(sha)||!/^\d+\.\d+\.\d+$/.test(sourceVersion)||sourceVersion===version)throw Error('Bridge must bind a distinct version and exact SHA-256');
+ Object.assign(plan,{sourceVersion,sourceArtifact:'private-patched-updater-bridge',sourcePath:resolve(path),sha256:sha,originalPublishedUpdater:false});
+}
 if(process.platform==='win32'){
  if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted')throw Error('Windows installer probe requires a disposable hosted CI runner');
  const existing=await new Promise((done,reject)=>execFile('reg',['query','HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall','/s','/f','外链助手','/d'],{encoding:'utf8'},error=>{if(!error)done(true);else if(error.code===1)done(false);else reject(Error('Unable to establish clean Windows registry'))}));
@@ -37,6 +44,11 @@ const executable=process.platform==='darwin'?join(application,'Contents','MacOS'
 const resources=process.platform==='darwin'?join(application,'Contents','Resources'):join(application,'resources');
 const releaseArtifact=resolve('release',`Linkflow-${version}-${process.platform==='darwin'?'mac-arm64.zip':'windows-x64-setup.exe'}`);
 let sourceArtifact=releaseArtifact,candidateAsarSha256;
+if(process.platform==='darwin'){
+ const candidateAsar=resolve('release',`${packageMetadata.productName}-darwin-arm64`,'外链助手.app','Contents','Resources','app.asar');
+ assert.equal(asarVersion(candidateAsar),version);candidateAsarSha256=sha256(await readFile(candidateAsar));
+ if(plan.sourcePath){sourceArtifact=plan.sourcePath;assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Private bridge archive SHA-256 mismatch')}
+}
 if(process.platform==='win32'){
  const candidateAsar=resolve('release',`${packageMetadata.productName}-win32-x64`,'resources','app.asar');
  assert.equal(asarVersion(candidateAsar),version);candidateAsarSha256=sha256(await readFile(candidateAsar));
@@ -52,7 +64,7 @@ const installedAsar=join(resources,'app.asar'),sourceAsarSha256=sha256(await rea
 let repairedFile,repairHash;
 if(process.platform==='win32'){repairedFile=join(application,'LICENSES.chromium.html');repairHash=sha256(await readFile(resolve('release',`${packageMetadata.productName}-win32-x64`,'LICENSES.chromium.html')));await writeFile(repairedFile,'Synthetic old-install marker; replacement must restore the packaged resource.')}
 
-const configuration={directory,application,artifact,updates,version,sourceVersion,candidateAsarSha256,wrapper:resolve('scripts/update-native-wrapper.cjs')};
+const configuration={directory,application,artifact,updates,version,sourceVersion,candidateAsarSha256,sourceArtifactKind:plan.sourceArtifact,wrapper:resolve('scripts/update-native-wrapper.cjs')};
 const configPath=join(directory,'config.json');await writeFile(configPath,JSON.stringify(configuration),{mode:0o600});
 const entryPath=join(directory,'entry.cjs');await build({entryPoints:['scripts/update-native-entry.ts'],outfile:entryPath,platform:'node',format:'cjs',bundle:true,target:'node24',external:['original-fs']});
 const preparer=spawn(executable,[entryPath,configPath],{cwd:process.platform==='darwin'?join(application,'Contents','MacOS'):application,stdio:'ignore',env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},shell:false});
@@ -74,7 +86,16 @@ report.checks.push('installed preparer exited before installer authorization','r
 if(process.platform==='win32'){
  const installedAsarSha256=sha256(await readFile(installedAsar)),installedVersion=asarVersion(installedAsar);assert.equal(report.outcome,'installed');assert.equal(installedVersion,version);assert.equal(installedAsarSha256,candidateAsarSha256);assert.notEqual(installedAsarSha256,sourceAsarSha256);
  report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256};report.checks.push(`published Windows v${sourceVersion} ASAR upgraded to the exact candidate v${version} ASAR`);
-}else if(report.outcome==='rollback_system_policy')assert.equal(sha256(await readFile(installedAsar)),sourceAsarSha256);
+}else{
+ assert.equal(report.outcome,'installed','Mac probe requires a real authenticated GUI launch; a preserved unconfirmed transaction is not success');
+ const installedVersion=asarVersion(installedAsar),installedAsarSha256=sha256(await readFile(installedAsar));
+ assert.equal(installedVersion,version);assert.equal(installedAsarSha256,candidateAsarSha256);
+ const attributes=await new Promise((done,reject)=>execFile('/usr/bin/xattr',['-lr',application],{encoding:'utf8',maxBuffer:4*1024*1024},(error,stdout)=>error?reject(error):done(stdout)));
+ assert(!attributes.includes('com.apple.quarantine'),'Installed candidate must have zero quarantine attributes');
+ await run('/usr/bin/codesign',['--verify','--deep','--strict',application]);
+ report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256,sourceArtifactKind:plan.sourceArtifact,originalPublishedUpdater:plan.originalPublishedUpdater??false};
+ report.checks.push('native installed Mac tree has zero quarantine attributes and valid strict signature');
+}
 await writeFile(resultPath,JSON.stringify(report,null,2));
 await mkdir(plan.evidenceDirectory,{recursive:true});await copyFile(resultPath,join(plan.evidenceDirectory,`native-update-${process.platform}.json`));
 console.log('NATIVE_UPDATE_RESULT '+JSON.stringify(report));

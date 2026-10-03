@@ -2,7 +2,7 @@ import {execFile} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,mkdtemp,open,readdir,rename,rm,writeFile} from 'node:fs/promises';
 import {homedir,tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {basename,join} from 'node:path';
 import {promisify} from 'node:util';
 
 const execFileAsync=promisify(execFile);
@@ -278,7 +278,14 @@ export async function finishMacArtifact({
   await rm(temporaryZipPath,{force:true});
   await rm(finalZipTempPath,{force:true});
   let finalPublished=false;
+  let verificationRoot;
   try{
+    // electron-packager signs nested code while assembling the bundle. Ad-hoc
+    // artifacts receive one final whole-bundle signature only after every
+    // packaged byte is in place; nothing mutates appPath after this point.
+    if(mode==='local'||mode==='unnotarized'){
+      await runStage('final-adhoc-codesign','/usr/bin/codesign',['--force','--deep','--sign','-',appPath],{execute,diagnosticsDir});
+    }
     await runStage('codesign-verification','/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',appPath],{execute,diagnosticsDir});
     if(mode==='release'){
       const signature=await runStage('developer-id-signature-check','/usr/bin/codesign',['--display','--verbose=4',appPath],{execute,diagnosticsDir});
@@ -295,6 +302,18 @@ export async function finishMacArtifact({
       await runStage('gatekeeper-assessment','/usr/sbin/spctl',['--assess','--type','execute','--verbose=4',appPath],{execute,diagnosticsDir});
     }
     await runStage('final-archive','/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',appPath,finalZipTempPath],{execute,diagnosticsDir});
+    verificationRoot=await mkdtemp(join(tmpdir(),'linkflow-mac-postarchive-'));
+    await runStage('post-archive-extraction','/usr/bin/ditto',['-x','-k',finalZipTempPath,verificationRoot],{execute,diagnosticsDir});
+    const expectedAppName=basename(appPath),entries=await readdir(verificationRoot,{withFileTypes:true});
+    if(!expectedAppName||entries.length!==1||entries[0].name!==expectedAppName||!entries[0].isDirectory()||entries[0].isSymbolicLink()){
+      await failStage('post-archive-shape',new Error('Unexpected final archive shape.'),diagnosticsDir);
+    }
+    const extractedAppPath=join(verificationRoot,expectedAppName);
+    await runStage('post-archive-codesign-verification','/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',extractedAppPath],{execute,diagnosticsDir});
+    const attributes=await runStage('post-archive-quarantine-check','/usr/bin/xattr',['-l','-r','-s',extractedAppPath],{execute,diagnosticsDir});
+    if(/(?:^|\n)[^\n]*com\.apple\.quarantine:/.test(`${attributes.stdout}\n${attributes.stderr}`)){
+      await failStage('post-archive-quarantine-check',new Error('The final archive restored a quarantine attribute.'),diagnosticsDir);
+    }
     await rm(finalZipPath,{force:true});
     await rename(finalZipTempPath,finalZipPath);
     finalPublished=true;
@@ -306,6 +325,7 @@ export async function finishMacArtifact({
     }
     throw error;
   }finally{
+    if(verificationRoot)await rm(verificationRoot,{recursive:true,force:true});
     await rm(temporaryZipPath,{force:true});
     await rm(finalZipTempPath,{force:true});
   }

@@ -174,7 +174,7 @@ export class UpdateManager {
       ]);
       advance('artifact');await this.downloadRecoveryArtifact(asset,officialArtifactPath);
       advance('extraction');
-      await this.recoveryPorts.execute('/usr/bin/ditto',['-x','-k','--norsrc',officialArtifactPath,verificationRoot]);
+      await this.recoveryPorts.execute('/usr/bin/ditto',['-x','-k','--noqtn',officialArtifactPath,verificationRoot]);
       const officialApplicationPath=join(verificationRoot,basename(this.options.applicationPath)),executableRelative=relative(this.options.applicationPath,this.options.executablePath);
       if(!inside(this.options.applicationPath,this.options.executablePath))throw Error('current executable path is invalid');
       const identity=await this.verifySupersedingIdentity(job,officialApplicationPath,join(officialApplicationPath,executableRelative),advance);
@@ -220,9 +220,9 @@ export class UpdateManager {
       if(runtimeTranslocated&&!confirmedTranslocation(runtimeApplicationPath,await this.recoveryPorts.execute('/sbin/mount',[])))return;
       advance('identity-official');
       const treeSha256=await this.recoveryPorts.hashTree(officialApplicationPath);if(!/^[a-f0-9]{64}$/.test(treeSha256))return;
-      if(!await this.verifyRecoveryBundle(officialApplicationPath,officialExecutablePath,this.options.currentVersion,treeSha256,false))return;
-      advance('identity-installed');if(!await this.verifyRecoveryBundle(this.options.applicationPath,this.options.executablePath,this.options.currentVersion,treeSha256,true))return;
-      advance('identity-runtime');if(!await this.verifyRecoveryBundle(runtimeApplicationPath,runtimeExecutablePath,this.options.currentVersion,treeSha256,false)||!this.recoveryPorts.isAlive(pid))return;
+      if(!await this.verifyRecoveryBundle(officialApplicationPath,officialExecutablePath,this.options.currentVersion,treeSha256))return;
+      advance('identity-installed');if(!await this.verifyRecoveryBundle(this.options.applicationPath,this.options.executablePath,this.options.currentVersion,treeSha256))return;
+      advance('identity-runtime');if(!await this.verifyRecoveryBundle(runtimeApplicationPath,runtimeExecutablePath,this.options.currentVersion,treeSha256)||!this.recoveryPorts.isAlive(pid))return;
       advance('identity-process');
       const finalCommand=await this.recoveryPorts.execute('/bin/ps',['-p',String(pid),'-o','command=']);if(!commandMatches(finalCommand,runtimeExecutablePath)||!this.recoveryPorts.isAlive(pid))return;
       return {treeSha256,runtimeTranslocated};
@@ -246,12 +246,11 @@ export class UpdateManager {
   private lockRecovery(targetVersion?:string,error='新版本启动身份未能确认，已保留恢复副本；请重新打开应用，如仍提示失败请联系支持'):UpdateState{return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion,retryable:false,recoveryPending:true,error})}
   private async stateFilePresent(name:string):Promise<boolean>{try{await this.files.lstat(join(this.options.updatesDirectory,name));return true}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT'}}
   private async pathPresent(path:string):Promise<boolean>{try{await this.files.lstat(path);return true}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT'}}
-  private async verifyRecoveryBundle(applicationPath:string,executablePath:string,targetVersion:string,treeSha256:string,requireQuarantine:boolean):Promise<boolean>{
+  private async verifyRecoveryBundle(applicationPath:string,executablePath:string,targetVersion:string,treeSha256:string):Promise<boolean>{
     try{
       const appInfo=await this.files.lstat(applicationPath),executableInfo=await this.files.lstat(executablePath);if(!appInfo.isDirectory()||appInfo.isSymbolicLink()||!executableInfo.isFile()||executableInfo.isSymbolicLink()||!inside(applicationPath,executablePath))return false;
       await this.recoveryPorts.execute('/usr/bin/codesign',['--verify','--deep','--strict',applicationPath]);const plist=join(applicationPath,'Contents','Info.plist'),identifier=(await this.recoveryPorts.execute('/usr/bin/plutil',['-extract','CFBundleIdentifier','raw','-o','-',plist])).trim(),version=(await this.recoveryPorts.execute('/usr/bin/plutil',['-extract','CFBundleShortVersionString','raw','-o','-',plist])).trim(),architectures=(await this.recoveryPorts.execute('/usr/bin/lipo',['-archs',executablePath])).trim().split(/\s+/);
       if(identifier!=='com.linkflow.personal'||version!==targetVersion||architectures.length!==1||architectures[0]!=='arm64')return false;
-      if(requireQuarantine){const quarantine=(await this.recoveryPorts.execute('/usr/bin/xattr',['-p','com.apple.quarantine',applicationPath])).trim();if(!/^[0-9a-fA-F]{4};/.test(quarantine)||(Number.parseInt(quarantine.slice(0,4),16)&0x81)!==0x81)return false}
       return await this.recoveryPorts.hashTree(applicationPath)===treeSha256;
     }catch{return false}
   }
@@ -266,8 +265,8 @@ export class UpdateManager {
       const command=await this.recoveryPorts.execute('/bin/ps',['-p',String(pid),'-o','command=']);if(!commandMatches(command,runtimeExecutablePath))return false;
       const applicationReal=await this.files.realpath(job.applicationPath),runtimeReal=await this.files.realpath(runtimeApplicationPath),sameApplication=applicationReal===runtimeReal;
       if(!sameApplication){const mounts=await this.recoveryPorts.execute('/sbin/mount',[]);if(!confirmedTranslocation(runtimeApplicationPath,mounts))return false}
-      if(!await this.verifyRecoveryBundle(job.applicationPath,job.executablePath,job.targetVersion,job.stagedTreeSha256!,true))return false;
-      if(!sameApplication&&!await this.verifyRecoveryBundle(runtimeApplicationPath,runtimeExecutablePath,job.targetVersion,job.stagedTreeSha256!,false))return false;if(!this.recoveryPorts.isAlive(pid))return false;
+      if(!await this.verifyRecoveryBundle(job.applicationPath,job.executablePath,job.targetVersion,job.stagedTreeSha256!))return false;
+      if(!sameApplication&&!await this.verifyRecoveryBundle(runtimeApplicationPath,runtimeExecutablePath,job.targetVersion,job.stagedTreeSha256!))return false;if(!this.recoveryPorts.isAlive(pid))return false;
       const ack:StartupAck={schemaVersion:2,targetVersion:job.targetVersion,token:job.token,pid,applicationPath:runtimeApplicationPath,executablePath:runtimeExecutablePath},receipt:Receipt={schemaVersion:1,targetVersion:job.targetVersion,installedAt:(this.options.now?.()??new Date()).toISOString(),cleanupPath:job.helperRuntimePath,backupCleanupPath:job.backupPath,recoveryJobCleanupPath:jobPath};await this.writeAtomic('startup-ack',ack);await this.writeAtomic('installed.json',receipt);
       try{await this.files.rm(join(this.options.updatesDirectory,'install-error.json'),{force:true})}catch{return false}
       this.recoveryPending=false;this.set({phase:'installed',currentVersion:this.options.currentVersion,targetVersion:job.targetVersion});return true;

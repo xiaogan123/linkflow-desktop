@@ -8,7 +8,26 @@
 
 Mac 解压后，请将“外链助手.app”放进“应用程序”文件夹（也支持当前用户的“应用程序”文件夹），再打开使用。更新中心需要能够确认并写入这个安装位置。
 
-已公开的 1.2.0 Mac 版本未经 Apple 公证，系统可能要求用户确认来源。默认 Mac 打包流程要求 Developer ID 签名和 Apple 公证；发布者明确选择未公证分发时，发行说明必须披露这一状态，并验证 ad-hoc 完整性、版本、架构和更新清单签名。流程代码完成不代表安装包已通过公证，具体以对应版本的发行验收为准。本项目不要求关闭系统安全保护。Windows 目前没有商业代码签名；未提供 Intel Mac 版本。
+未经 Apple 公证的 Mac 版本可能要求用户确认来源。默认 Mac 打包流程要求 Developer ID 签名和 Apple 公证；发布者明确选择未公证分发时，发行说明必须披露这一状态，并验证 ad-hoc 完整性、版本、架构和更新清单签名。流程代码完成不代表安装包已通过公证，具体以对应版本的发行验收为准。本项目不要求关闭系统安全保护。Windows 目前没有商业代码签名；未提供 Intel Mac 版本。
+
+### macOS Apple Silicon 命令行安装
+
+1.2.6 发行附带一个只安装该正式版本的命令行安装器。先下载并阅读脚本，再单独执行；不要使用 `curl | sh`：
+
+```sh
+installer_path="$(/usr/bin/mktemp -t linkflow-install)"
+/usr/bin/curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  --output "$installer_path" \
+  https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.6/install-mac.sh
+/usr/bin/less "$installer_path"
+/bin/bash "$installer_path"
+```
+
+发行时会把确切版本和对应 ZIP 的 SHA-256 写入该脚本。安装器只从本项目的官方 GitHub Release 下载这一个包，先核对摘要，再检查 ZIP 路径与内部符号链接、固定的 Bundle ID 与版本、Apple Silicon 架构及严格 ad-hoc 签名。它以 `ditto --noqtn` 解包，并要求解包树的来源隔离属性为零；安装器不包含主动删除扩展属性的路径，发现异常就在写入安装目录前终止。校验全部通过后，它原子替换 `/Applications/外链助手.app`，并保留旧应用回滚副本。它不读写用户数据，不会结束运行中的进程；检测到应用正在运行时，请先正常退出再重试。没有 `/Applications` 写入权限时，脚本会明确退出，不安装常驻或提权助手。
+
+命令行安装器只使用 macOS 14 自带的系统命令，不依赖 Python、Node.js 或第三方包。缺少所需系统命令时它会报错停止，不会自动安装依赖。
+
+通过浏览器直接下载未公证 ZIP 后手动安装，macOS 仍可能要求亲自确认来源。命令行安装器也不承诺 `spctl --assess` 显示已接受；没有 Developer ID 和 Apple 公证的版本不应声称已获得这种系统信任。已发布的原始 1.2.5 Mac 版本的应用内更新辅助流程会主动写入来源隔离属性；从该版本升级到 1.2.6 时，请使用上述命令行安装器完成一次迁移。
 
 1. 打开设置，选择已登录的本机 Codex CLI，或填写自己的 HTTPS API 服务和 Key，从服务返回的模型列表选择模型并测试连接；自定义模型仍可填写。
 2. 添加公开网站域名、联系邮箱与每月目标，并选择“AI 核对后自动发布”或“人工审核后发布”；之后可在编辑网站中修改。
@@ -52,7 +71,7 @@ npm run test:packaged
 
 正式 Mac 构建须在本机钥匙串中配置有效的 Developer ID Application 证书及 `notarytool` 凭据配置，并通过环境变量 `LINKFLOW_MAC_SIGNING_IDENTITY`、`LINKFLOW_MAC_NOTARY_PROFILE` 指定名称。不要在命令行、日志或仓库中填写私钥或 Apple 账号密码。打包会依次完成签名、公证、附票及系统验证；任何一步失败都不产出正式发行包。更新清单签名入口会重新解包检查精确 Mac 制品。
 
-仅做本地调试时，先构建，再运行 `node scripts/package.mjs mac-arm64 --local`；输出带 `local-adhoc` 标记，不可作为正式更新发布。当前云端 Mac 工作流没有配置 Apple 凭据，应在本机完成构建。经发布者明确授权的未公证分发使用 `node scripts/package.mjs mac-arm64 --unnotarized-release`，再以 `node scripts/sign-update.mjs <说明文件> --allow-unnotarized-mac` 签清单；说明必须包含“Mac 未经过 Apple 公证”。更新保留系统隔离属性，用户可能仍需亲自确认来源。此模式不代表 Apple 公证通过。
+仅做本地调试时，先构建，再运行 `node scripts/package.mjs mac-arm64 --local`；输出带 `local-adhoc` 标记，不可作为正式更新发布。当前云端 Mac 工作流没有配置 Apple 凭据，应在本机完成构建。经发布者明确授权的未公证分发使用 `node scripts/package.mjs mac-arm64 --unnotarized-release`，再以 `node scripts/sign-update.mjs <说明文件> --allow-unnotarized-mac` 签清单；说明必须包含“Mac 未经过 Apple 公证”。打包流程会对最终应用整体重做 ad-hoc 签名，从最终 ZIP 重新解包后严格验签并确认不带来源隔离属性。浏览器下载仍可能重新加上该属性，用户可能仍需亲自确认来源。此模式不代表 Apple 公证通过。
 
 公开 Actions 工作流仅手动触发，使用标准 GitHub 托管 runner。构建产物通过测试和隐私检查后才会发到 Releases。Mac 与 Windows 分别在原生系统运行；不将跨平台打包等同于原生验证。
 

@@ -2,11 +2,13 @@ import { packager } from '@electron/packager';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
+  chmod,
   copyFile,
   cp,
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile
 } from 'node:fs/promises';
@@ -58,6 +60,24 @@ await mkdir(join(stageDir,'assets'),{recursive:true});
 async function sha256File(filePath){
   const digest=createHash('sha256').update(await readFile(filePath)).digest('hex');
   return `${digest}  ${basename(filePath)}\n`;
+}
+
+async function writePinnedMacInstaller({version,archivePath,outputPath}){
+  if(!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(version))throw new Error('Invalid installer version.');
+  const archiveSha256=createHash('sha256').update(await readFile(archivePath)).digest('hex');
+  const template=await readFile(join(projectRoot,'scripts','install-mac.sh'),'utf8');
+  const versionToken='__LINKFLOW_VERSION__',hashToken='__LINKFLOW_MAC_ARM64_SHA256__';
+  if(template.split(versionToken).length!==2||template.split(hashToken).length!==2)throw new Error('Mac installer template tokens are missing or duplicated.');
+  const rendered=template.replace(versionToken,version).replace(hashToken,archiveSha256);
+  if(rendered.includes('__LINKFLOW_'))throw new Error('Mac installer template contains unresolved release tokens.');
+  const temporaryPath=`${outputPath}.${process.pid}.tmp`;
+  await rm(temporaryPath,{force:true});
+  try{
+    await writeFile(temporaryPath,rendered,{encoding:'utf8',mode:0o755,flag:'wx'});
+    await chmod(temporaryPath,0o755);
+    await rename(temporaryPath,outputPath);
+  }finally{await rm(temporaryPath,{force:true})}
+  return archiveSha256;
 }
 
 try{
@@ -149,11 +169,17 @@ try{
       checksumPath,
       sha256Line:sha256File
     });
+    let installerPath;
+    if(macConfig.mode==='unnotarized'){
+      installerPath=join(releaseDir,'install-mac.sh');
+      await writePinnedMacInstaller({version:rootPackage.version,archivePath:zipPath,outputPath:installerPath});
+      await writeFile(checksumPath,`${await sha256File(zipPath)}${await sha256File(installerPath)}`,'utf8');
+    }
     // Only publish the unpacked app after the corresponding archive is complete.
     await rm(publishedBundle,{recursive:true,force:true});
     await cp(expectedBundle,publishedBundle,{recursive:true,verbatimSymlinks:true});
     if(macConfig.mode==='unnotarized')console.log('Mac 未经过 Apple 公证；系统可能要求用户亲自确认来源。');
-    console.log([`${basename(publishedBundle)}/${rootPackage.productName}.app`,basename(zipPath),basename(checksumPath)].join('\n'));
+    console.log([`${basename(publishedBundle)}/${rootPackage.productName}.app`,basename(zipPath),...(installerPath?[basename(installerPath)]:[]),basename(checksumPath)].join('\n'));
   }else{
     const builderCli=join(projectRoot,'node_modules','electron-builder','out','cli','cli.js');
     execFileSync(process.execPath,[builderCli,'--config',join(projectRoot,'electron-builder.yml'),'--win','nsis','--x64','--prepackaged',expectedBundle],{
@@ -172,6 +198,17 @@ try{
 }
 
 main().catch(()=>{
-  console.error('Packaging failed. Verify native packaging prerequisites. Formal macOS releases require LINKFLOW_MAC_SIGNING_IDENTITY and LINKFLOW_MAC_NOTARY_PROFILE; raw failure details are kept private.');
+  const requestedTarget=process.argv[2]??'';
+  const requestedFlags=process.argv.slice(3);
+  const message=requestedTarget==='mac-arm64'&&requestedFlags.includes('--unnotarized-release')
+    ?'Unnotarized macOS packaging failed. Verify native ad-hoc packaging and archive validation prerequisites; raw failure details are kept private.'
+    :requestedTarget==='mac-arm64'&&requestedFlags.includes('--local')
+      ?'Local macOS packaging failed. Verify native ad-hoc development packaging prerequisites; raw failure details are kept private.'
+      :requestedTarget==='mac-arm64'
+        ?'Formal macOS packaging failed. Verify LINKFLOW_MAC_SIGNING_IDENTITY, LINKFLOW_MAC_NOTARY_PROFILE, and native release prerequisites; raw failure details are kept private.'
+        :requestedTarget==='windows-x64'
+          ?'Windows packaging failed. Verify native Windows packaging prerequisites; raw failure details are kept private.'
+          :'Packaging failed. Verify the target and native packaging prerequisites; raw failure details are kept private.';
+  console.error(message);
   process.exitCode=1;
 });
