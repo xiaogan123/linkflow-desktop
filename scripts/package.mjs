@@ -5,6 +5,7 @@ import {
   chmod,
   copyFile,
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -27,6 +28,7 @@ async function main(){
 const projectRoot=dirname(dirname(fileURLToPath(import.meta.url)));
 const releaseDir=join(projectRoot,'release');
 const assetsDir=join(projectRoot,'assets');
+const macQuarantineProbeName='linkflow-update-quarantine-probe';
 process.chdir(projectRoot);
 const rootPackage=JSON.parse(await readFile(join(projectRoot,'package.json'),'utf8'));
 const target=process.argv[2]??(process.platform==='darwin'?'mac-arm64':process.platform==='win32'?'windows-x64':'');
@@ -105,6 +107,7 @@ try{
     execFileSync('/usr/bin/iconutil',['-c','icns',join(assetsDir,'AppIcon.iconset'),'-o',icon],{stdio:'inherit'});
     platformOptions={
       appBundleId:'com.linkflow.personal',
+      extraResource:join(projectRoot,'dist-native',macQuarantineProbeName),
       osxSign:macSignOptions(macConfig),
       extendInfo:{LSMinimumSystemVersion:'14.0',NSHumanReadableCopyright:'个人使用 · Linkflow'}
     };
@@ -153,6 +156,12 @@ try{
 
   if(target==='mac-arm64'){
     const appPath=join(expectedBundle,`${rootPackage.productName}.app`);
+    const quarantineProbePath=join(appPath,'Contents','Resources',macQuarantineProbeName),probeInfo=await lstat(quarantineProbePath);
+    if(!probeInfo.isFile()||probeInfo.isSymbolicLink()||probeInfo.nlink!==1||(probeInfo.mode&0o777)!==0o755)throw Error('Packaged macOS quarantine helper is missing or has unsafe permissions.');
+    const probeArchitectures=execFileSync('/usr/bin/lipo',['-archs',quarantineProbePath],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+    const probeBuild=execFileSync('/usr/bin/vtool',['-show-build',quarantineProbePath],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
+    if(probeArchitectures!=='arm64'||!/(?:^|\n)\s*platform MACOS\s*(?:\n|$)/.test(probeBuild)||!/(?:^|\n)\s*minos 14[.]0\s*(?:\n|$)/.test(probeBuild))throw Error('Packaged macOS quarantine helper has an invalid architecture or deployment target.');
+    execFileSync('/usr/bin/codesign',['--verify','--strict',quarantineProbePath],{stdio:['ignore','pipe','pipe']});
     const zipPath=join(releaseDir,`Linkflow-${rootPackage.version}-${macConfig.artifactSuffix}.zip`);
     const finalZipTempPath=join(releaseDir,`.${basename(zipPath)}.${process.pid}.tmp`);
     const temporaryZipPath=join(stageRoot,'notary-upload.zip');

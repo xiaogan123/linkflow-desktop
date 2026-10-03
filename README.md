@@ -12,13 +12,13 @@ Mac 解压后，请将“外链助手.app”放进“应用程序”文件夹（
 
 ### macOS Apple Silicon 命令行安装
 
-1.2.6 发行附带一个只安装该正式版本的命令行安装器。先下载并阅读脚本，再单独执行；不要使用 `curl | sh`：
+1.2.7 发行附带一个只安装该正式版本的命令行安装器。先下载并阅读脚本，再单独执行；不要使用 `curl | sh`：
 
 ```sh
 installer_path="$(/usr/bin/mktemp -t linkflow-install)"
 /usr/bin/curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$installer_path" \
-  https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.6/install-mac.sh
+  https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.7/install-mac.sh
 /usr/bin/less "$installer_path"
 /bin/bash "$installer_path"
 ```
@@ -27,7 +27,7 @@ installer_path="$(/usr/bin/mktemp -t linkflow-install)"
 
 命令行安装器只使用 macOS 14 自带的系统命令，不依赖 Python、Node.js 或第三方包。缺少所需系统命令时它会报错停止，不会自动安装依赖。
 
-通过浏览器直接下载未公证 ZIP 后手动安装，macOS 仍可能要求亲自确认来源。命令行安装器也不承诺 `spctl --assess` 显示已接受；没有 Developer ID 和 Apple 公证的版本不应声称已获得这种系统信任。已发布的原始 1.2.5 Mac 版本的应用内更新辅助流程会主动写入来源隔离属性；从该版本升级到 1.2.6 时，请使用上述命令行安装器完成一次迁移。
+通过浏览器直接下载未公证 ZIP 后手动安装，macOS 仍可能要求亲自确认来源。命令行安装器也不承诺 `spctl --assess` 显示已接受；没有 Developer ID 和 Apple 公证的版本不应声称已获得这种系统信任。已发布的原始 1.2.5 Mac 版本的应用内更新辅助流程会主动写入来源隔离属性；从 1.2.5 或 1.2.6 升级到 1.2.7 时，请使用上述命令行安装器完成一次迁移。
 
 1. 打开设置，选择已登录的本机 Codex CLI，或填写自己的 HTTPS API 服务和 Key，从服务返回的模型列表选择模型并测试连接；自定义模型仍可填写。
 2. 添加公开网站域名、联系邮箱与每月目标，并选择“AI 核对后自动发布”或“人工审核后发布”；之后可在编辑网站中修改。

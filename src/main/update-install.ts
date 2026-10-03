@@ -5,7 +5,7 @@ import {basename,dirname,extname,isAbsolute,join,relative,resolve,sep} from 'nod
 import {createHash,randomUUID} from 'node:crypto';
 import type {UpdatePlatform} from '../shared/update-types';
 import {executeWithUpdateDescriptor,updateRawFs} from './update-files';
-import {verifyVerifiedMacStageQuarantineFree} from './update-mac-quarantine';
+import {verifyVerifiedMacStageQuarantineFree,type MacQuarantinePorts} from './update-mac-quarantine';
 import {hashUpdateTree} from './update-tree';
 
 export interface UpdateHelperJob {
@@ -33,7 +33,7 @@ export interface UpdateHelperJob {
 }
 
 export interface InstallFilePorts {access:typeof access;cp:typeof cp;lstat:typeof lstat;mkdir:typeof mkdir;open:typeof open;readFile:typeof readFile;readBundledFile:typeof readFile;readdir:typeof readdir;rename:typeof rename;rm:typeof rm;stat:typeof stat;unlink:typeof unlink;writeFile:typeof writeFile}
-export interface InstallPorts {files?:Partial<InstallFilePorts>;execute?:(file:string,args:string[])=>Promise<string>;extractMacArchive?:(descriptor:number,destination:string)=>Promise<void>;uuid?:()=>string}
+export interface InstallPorts {files?:Partial<InstallFilePorts>;execute?:(file:string,args:string[])=>Promise<string>;extractMacArchive?:(descriptor:number,destination:string)=>Promise<void>;probeMacQuarantine?:MacQuarantinePorts['probeQuarantine'];verifyMacQuarantineProbe?:MacQuarantinePorts['verifyProbe'];uuid?:()=>string}
 const rawPromises=updateRawFs().promises;
 const realFiles:InstallFilePorts={access:rawPromises.access as typeof access,cp:rawPromises.cp as typeof cp,lstat:rawPromises.lstat as typeof lstat,mkdir:rawPromises.mkdir as typeof mkdir,open:rawPromises.open as typeof open,readFile:rawPromises.readFile as typeof readFile,readBundledFile:readFile,readdir:rawPromises.readdir as typeof readdir,rename:rawPromises.rename as typeof rename,rm:rawPromises.rm as typeof rm,stat:rawPromises.stat as typeof stat,unlink:rawPromises.unlink as typeof unlink,writeFile:rawPromises.writeFile as typeof writeFile};
 const versionPattern=/^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
@@ -92,7 +92,7 @@ export async function prepareInstallJob(input:{platform:UpdatePlatform;oldPid:nu
       if((await files.stat(stageRoot)).dev!==(await files.stat(parent)).dev)throw Error('更新暂存目录与应用不在同一磁盘');
       const info=await files.lstat(stagedApplicationPath);if(!info.isDirectory()||info.isSymbolicLink())throw Error('更新压缩包不含预期的应用');
       const executableRelative=relative(input.applicationPath,input.executablePath),stagedExecutable=join(stagedApplicationPath,executableRelative),executableInfo=await files.lstat(stagedExecutable);if(!executableInfo.isFile()||executableInfo.isSymbolicLink())throw Error('更新应用缺少可执行文件');
-      await verifyVerifiedMacStageQuarantineFree({updatesDirectory:input.updatesDirectory,artifactPath:input.artifactPath,artifactSize:input.artifactSize,artifactSha256:input.artifactSha256,applicationPath:input.applicationPath,executablePath:input.executablePath,stagedApplicationPath,targetVersion:input.targetVersion,treeSha256:freshTreeSha256},{execute:run});
+      await verifyVerifiedMacStageQuarantineFree({updatesDirectory:input.updatesDirectory,artifactPath:input.artifactPath,artifactSize:input.artifactSize,artifactSha256:input.artifactSha256,applicationPath:input.applicationPath,executablePath:input.executablePath,stagedApplicationPath,targetVersion:input.targetVersion,treeSha256:freshTreeSha256},{execute:run,...(ports.probeMacQuarantine?{probeQuarantine:ports.probeMacQuarantine}:{}),...(ports.verifyMacQuarantineProbe?{verifyProbe:ports.verifyMacQuarantineProbe}:{})});
       job={...common,backupPath,stagedApplicationPath,stagedTreeSha256:freshTreeSha256};
     }catch(error){await Promise.allSettled([files.rm(freshRoot,{recursive:true,force:true}),files.rm(stageRoot,{recursive:true,force:true})]);throw error}
   }else{

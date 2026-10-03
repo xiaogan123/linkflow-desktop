@@ -8,6 +8,7 @@ import type {UpdateAsset,UpdateInstallHandoff,UpdateManifest,UpdatePlatform,Upda
 import {compareVersions,fetchVerifiedManifest,fetchWithPinnedRedirects,parseUpdateManifest,UpdateError,verifyManifestSignature} from './update-network';
 import {prepareInstallJob,validateUpdateHelperJob,type InstallPorts,type UpdateHelperJob} from './update-install';
 import {updateRawFs} from './update-files';
+import {macUpdateUtf8Environment} from './update-mac-locale';
 import {hashUpdateTree} from './update-tree';
 
 interface PreparedRecord {schemaVersion:1;manifest:string;signature:string;artifactFile:string}
@@ -81,7 +82,7 @@ export interface UpdateManagerOptions {
 }
 const rawFs=updateRawFs(),rawPromises=rawFs.promises;
 const realFiles:UpdateFilePorts={lstat:rawPromises.lstat as typeof lstat,mkdir:rawPromises.mkdir as typeof mkdir,open:rawPromises.open as typeof open,readFile:rawPromises.readFile as typeof readFile,realpath:rawPromises.realpath as typeof realpath,rename:rawPromises.rename as typeof rename,rm:rawPromises.rm as typeof rm,writeFile:rawPromises.writeFile as typeof writeFile,createReadStream:rawFs.createReadStream as typeof createReadStream};
-const realRecoveryPorts:MacRecoveryPorts={execute:(file,args)=>new Promise((done,reject)=>execFile(file,args,{timeout:60_000,maxBuffer:8*1024*1024,encoding:'utf8',shell:false},(error,stdout,stderr)=>error?reject(recoveryCommandFailure(file,error,stderr)):done(stdout))),hashTree:hashUpdateTree,isAlive:pid=>{try{process.kill(pid,0);return true}catch(error){return (error as NodeJS.ErrnoException).code==='EPERM'}}};
+const realRecoveryPorts:MacRecoveryPorts={execute:(file,args)=>new Promise((done,reject)=>execFile(file,args,{timeout:60_000,maxBuffer:8*1024*1024,encoding:'utf8',shell:false,...(file==='/bin/ps'?{env:macUpdateUtf8Environment()}:{})},(error,stdout,stderr)=>error?reject(recoveryCommandFailure(file,error,stderr)):done(stdout))),hashTree:hashUpdateTree,isAlive:pid=>{try{process.kill(pid,0);return true}catch(error){return (error as NodeJS.ErrnoException).code==='EPERM'}}};
 const controlledMessage=(error:unknown,fallback:string)=>error instanceof UpdateError&&error.message?error.message:fallback;
 function inside(parent:string,child:string):boolean{const path=relative(resolve(parent),resolve(child));return !!path&&path!=='..'&&!path.startsWith('..'+sep)&&!isAbsolute(path)}
 function commandMatches(command:string,executablePath:string):boolean{return command.trim()===executablePath||command.trim().startsWith(executablePath+' ')}

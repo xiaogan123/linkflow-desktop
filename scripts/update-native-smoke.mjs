@@ -10,7 +10,7 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.5',candidateVersion:'1.2.6',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.5/Linkflow-1.2.5-windows-x64-setup.exe',sha256:'49c057845a37eba327ef4bf22dff3c769ba0730d7bcc5be502e3b382a37a27b4'};
+const windowsUpgrade={sourceVersion:'1.2.6',candidateVersion:'1.2.7',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.6/Linkflow-1.2.6-windows-x64-setup.exe',sha256:'a9522521b3efe7299d0e46390efd5bea7dc0a1a88b3c9469afea6ab9a8b160b7'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
@@ -47,7 +47,7 @@ let sourceArtifact=releaseArtifact,candidateAsarSha256;
 if(process.platform==='darwin'){
  const candidateAsar=resolve('release',`${packageMetadata.productName}-darwin-arm64`,'外链助手.app','Contents','Resources','app.asar');
  assert.equal(asarVersion(candidateAsar),version);candidateAsarSha256=sha256(await readFile(candidateAsar));
- if(plan.sourcePath){sourceArtifact=plan.sourcePath;assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Private bridge archive SHA-256 mismatch')}
+ if(plan.sourcePath){sourceArtifact=plan.sourcePath;assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Bound Mac source archive SHA-256 mismatch')}
 }
 if(process.platform==='win32'){
  const candidateAsar=resolve('release',`${packageMetadata.productName}-win32-x64`,'resources','app.asar');
@@ -67,7 +67,9 @@ if(process.platform==='win32'){repairedFile=join(application,'LICENSES.chromium.
 const configuration={directory,application,artifact,updates,version,sourceVersion,candidateAsarSha256,sourceArtifactKind:plan.sourceArtifact,wrapper:resolve('scripts/update-native-wrapper.cjs')};
 const configPath=join(directory,'config.json');await writeFile(configPath,JSON.stringify(configuration),{mode:0o600});
 const entryPath=join(directory,'entry.cjs');await build({entryPoints:['scripts/update-native-entry.ts'],outfile:entryPath,platform:'node',format:'cjs',bundle:true,target:'node24',external:['original-fs']});
-const preparer=spawn(executable,[entryPath,configPath],{cwd:process.platform==='darwin'?join(application,'Contents','MacOS'):application,stdio:'ignore',env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},shell:false});
+const preparerEnvironment={...process.env,ELECTRON_RUN_AS_NODE:'1'};
+if(process.platform==='darwin')for(const key of Object.keys(preparerEnvironment))if(key==='LANG'||key.startsWith('LC_'))delete preparerEnvironment[key];
+const preparer=spawn(executable,[entryPath,configPath],{cwd:process.platform==='darwin'?join(application,'Contents','MacOS'):application,stdio:'ignore',env:preparerEnvironment,shell:false});
 const preparationDeadline=setTimeout(()=>preparer.kill(),120000),preparationCode=await new Promise((done,reject)=>{preparer.once('exit',done);preparer.once('error',reject)});clearTimeout(preparationDeadline);
 if(preparationCode!==0)throw Error('Native updater preparation failed');
 const handoff=JSON.parse(await readFile(join(directory,'handoff.json'),'utf8'));

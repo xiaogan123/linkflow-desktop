@@ -2,11 +2,11 @@ import {createHash} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {basename,dirname,isAbsolute,join,relative,resolve,sep} from 'node:path';
 import {constants as fsConstants,type Stats} from 'node:fs';
-import {executeWithUpdateDescriptor,updateRawFs} from './update-files';
+import {macQuarantineProbeFilename,probeMacQuarantineDescriptor,readMacQuarantineProbeIdentity,updateRawFs,type MacQuarantineProbeIdentity} from './update-files';
 import {hashUpdateTree} from './update-tree';
 
 const rawFs=updateRawFs(),files=rawFs.promises;
-const quarantineAttribute='com.apple.quarantine',maximumEntries=100_000;
+const maximumEntries=100_000;
 
 export interface VerifiedMacApplication {
   applicationPath:string;
@@ -26,6 +26,8 @@ export interface VerifiedMacStage extends VerifiedMacApplication {
 export interface MacQuarantinePorts {
   execute:(file:string,args:string[])=>Promise<string>;
   hashTree:(root:string)=>Promise<string>;
+  probeQuarantine:(descriptor:number,verifiedIdentity:MacQuarantineProbeIdentity)=>Promise<boolean>;
+  verifyProbe:()=>Promise<MacQuarantineProbeIdentity>;
 }
 
 interface EntrySnapshot {
@@ -46,10 +48,26 @@ interface ControlledStage {
   archive:EntrySnapshot;
 }
 
+const executeNative=(file:string,args:string[])=>new Promise<string>((done,reject)=>execFile(file,args,{encoding:'utf8',timeout:120_000,maxBuffer:4*1024*1024,shell:false,env:{...process.env,LC_ALL:'C',LANG:'C'}},(error,stdout)=>error?reject(error):done(stdout)));
 const realPorts:MacQuarantinePorts={
-  execute:(file,args)=>new Promise((done,reject)=>execFile(file,args,{encoding:'utf8',timeout:120_000,maxBuffer:4*1024*1024,shell:false,env:{...process.env,LC_ALL:'C',LANG:'C'}},(error,stdout)=>error?reject(error):done(stdout))),
-  hashTree:hashUpdateTree
+  execute:executeNative,
+  hashTree:hashUpdateTree,
+  probeQuarantine:(descriptor,verifiedIdentity)=>probeMacQuarantineDescriptor(macQuarantineProbePath(),descriptor,verifiedIdentity),
+  verifyProbe:()=>verifyMacQuarantineProbeResource()
 };
+
+export function macQuarantineProbePath(resourcesPath=(process as NodeJS.Process&{resourcesPath?:string}).resourcesPath):string{
+  if(typeof resourcesPath!=='string'||!isAbsolute(resourcesPath)||basename(resourcesPath)!=='Resources'||basename(dirname(resourcesPath))!=='Contents'||!dirname(dirname(resourcesPath)).endsWith('.app'))throw Error('macOS 隔离属性检查工具路径无效');
+  return join(resourcesPath,macQuarantineProbeFilename);
+}
+
+function sameProbeIdentity(left:MacQuarantineProbeIdentity,right:MacQuarantineProbeIdentity):boolean{return left.path===right.path&&left.sha256===right.sha256&&left.dev===right.dev&&left.ino===right.ino&&left.nlink===right.nlink&&left.mode===right.mode&&left.size===right.size&&left.mtimeNs===right.mtimeNs&&left.ctimeNs===right.ctimeNs}
+export async function verifyMacQuarantineProbeResource(resourcesPath=(process as NodeJS.Process&{resourcesPath?:string}).resourcesPath,execute=executeNative):Promise<MacQuarantineProbeIdentity>{
+  const probePath=macQuarantineProbePath(resourcesPath),applicationPath=dirname(dirname(resourcesPath!)),applicationInfo=await files.lstat(applicationPath),before=await readMacQuarantineProbeIdentity(probePath);
+  if(!applicationInfo.isDirectory()||applicationInfo.isSymbolicLink())throw Error('macOS 隔离属性检查工具无效');
+  await execute('/usr/bin/codesign',['--verify','--strict',probePath]);await execute('/usr/bin/codesign',['--verify','--deep','--strict',applicationPath]);
+  const after=await readMacQuarantineProbeIdentity(probePath);if(!sameProbeIdentity(before,after))throw Error('macOS 隔离属性检查工具发生变化');return before;
+}
 
 function inside(parent:string,child:string,allowSame=false):boolean{
   const path=relative(resolve(parent),resolve(child));
@@ -113,18 +131,16 @@ async function assertSnapshotStable(entries:EntrySnapshot[]):Promise<void>{
   for(const entry of entries)if(!sameEntry(entry,await entryAt(entry.path,entry.relativePath)))throw Error('macOS 更新应用路径在验证期间发生变化');
 }
 
-function attributeNames(output:string):string[]{return output.split('\n').map(value=>value.endsWith('\r')?value.slice(0,-1):value).filter(Boolean)}
-
 async function withStableEntry<T>(entry:EntrySnapshot,action:(descriptor:number)=>Promise<T>):Promise<T>{
   const symbolicLinkFlag=(fsConstants as typeof fsConstants&{O_SYMLINK?:number}).O_SYMLINK;if(entry.kind==='symlink'&&!symbolicLinkFlag)throw Error('当前系统无法安全打开更新应用符号链接');
   const flags=entry.kind==='symlink'?symbolicLinkFlag!:fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW|(entry.kind==='directory'?fsConstants.O_DIRECTORY:0),handle=await files.open(entry.path,flags);
   try{const current=snapshot(entry.path,entry.relativePath,await handle.stat());if(!sameEntry(entry,current)||current.kind!=='directory'&&current.nlink!==1)throw Error('macOS 更新应用路径在处理期间发生变化');return await action(handle.fd)}finally{await handle.close()}
 }
 
-async function readAttributes(entry:EntrySnapshot):Promise<string[]>{return withStableEntry(entry,async descriptor=>attributeNames(await executeWithUpdateDescriptor('/usr/bin/xattr',['-s'],descriptor,{timeoutMs:30_000,maxBuffer:1024*1024})))}
+async function hasQuarantine(entry:EntrySnapshot,probe:(descriptor:number,verifiedIdentity:MacQuarantineProbeIdentity)=>Promise<boolean>,verifiedIdentity:MacQuarantineProbeIdentity):Promise<boolean>{return withStableEntry(entry,descriptor=>probe(descriptor,verifiedIdentity))}
 
-async function assertNoQuarantine(entries:EntrySnapshot[]):Promise<void>{
-  for(const entry of entries)if((await readAttributes(entry)).includes(quarantineAttribute))throw Error('macOS 更新应用仍带有隔离属性');
+async function assertNoQuarantine(entries:EntrySnapshot[],probe:(descriptor:number,verifiedIdentity:MacQuarantineProbeIdentity)=>Promise<boolean>,verifiedIdentity:MacQuarantineProbeIdentity):Promise<void>{
+  for(const entry of entries)if(await hasQuarantine(entry,probe,verifiedIdentity))throw Error('macOS 更新应用仍带有隔离属性');
 }
 
 async function applicationPathShape(input:VerifiedMacApplication):Promise<void>{
@@ -149,12 +165,14 @@ export async function verifyVerifiedMacStageQuarantineFree(input:VerifiedMacStag
   const ports={...realPorts,...overrides},controlled=await controlledStage(input);
   await verifyArchive(input,controlled.archive);await verifyBundle(controlled.application,ports);
   const entries=await snapshotTree(controlled.application.applicationPath);
-  await assertNoQuarantine(entries);
+  const firstProbeIdentity=await ports.verifyProbe();
+  await assertNoQuarantine(entries,ports.probeQuarantine,firstProbeIdentity);
   await assertSnapshotStable(entries);await verifyArchive(input,controlled.archive);await verifyBundle(controlled.application,ports);await assertSnapshotStable(entries);
-  await assertNoQuarantine(entries);
+  const secondProbeIdentity=await ports.verifyProbe();
+  await assertNoQuarantine(entries,ports.probeQuarantine,secondProbeIdentity);
 }
 
 /** Revalidates the installed application and proves quarantine is absent before launch. */
 export async function verifyMacApplicationQuarantineFree(input:VerifiedMacApplication,overrides:Partial<MacQuarantinePorts>={}):Promise<void>{
-  const ports={...realPorts,...overrides};await applicationPathShape(input);await verifyBundle(input,ports);const entries=await snapshotTree(input.applicationPath);await assertNoQuarantine(entries);await assertSnapshotStable(entries);await verifyBundle(input,ports);
+  const ports={...realPorts,...overrides};await applicationPathShape(input);await verifyBundle(input,ports);const entries=await snapshotTree(input.applicationPath),verifiedProbeIdentity=await ports.verifyProbe();await assertNoQuarantine(entries,ports.probeQuarantine,verifiedProbeIdentity);await assertSnapshotStable(entries);await verifyBundle(input,ports);
 }

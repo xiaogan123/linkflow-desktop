@@ -17,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {hashUpdateTree} from '../src/main/update-tree';
 
 const nativeSkip=process.platform!=='darwin'||process.arch!=='arm64'
   ?'Mac installer tests require a native Apple Silicon Mac.'
@@ -77,14 +78,20 @@ async function writeExecutable(path:string,body:string){
   await chmod(path,0o755);
 }
 
-async function renderInstaller(root:string,expectedHash:string,overrides:Record<string,string>={}){
+async function renderInstaller(root:string,expectedHash:string,overrides:Record<string,string>={},version=fixtureVersion){
   let source=await readFile(installerTemplatePath,'utf8');
   assert.equal(source.split('__LINKFLOW_VERSION__').length-1,1);
   assert.equal(source.split('__LINKFLOW_MAC_ARM64_SHA256__').length-1,1);
   source=source
-    .replace('__LINKFLOW_VERSION__',fixtureVersion)
+    .replace('__LINKFLOW_VERSION__',version)
     .replace('__LINKFLOW_MAC_ARM64_SHA256__',expectedHash);
-  for(const [name,path] of Object.entries(overrides)){
+  const effectiveOverrides={...overrides};
+  if(!effectiveOverrides.PGREP_BIN){
+    const idlePgrep=join(root,'pgrep-idle-stub.sh');
+    await writeExecutable(idlePgrep,'#!/bin/bash\nexit 1\n');
+    effectiveOverrides.PGREP_BIN=idlePgrep;
+  }
+  for(const [name,path] of Object.entries(effectiveOverrides)){
     const declaration=new RegExp(`^${name}=.*$`,'m');
     assert.match(source,declaration);
     source=source.replace(declaration,`${name}=${shellLiteral(path)}`);
@@ -139,6 +146,7 @@ test('installer template is pinned to one official release and exposes only the 
   assert.match(source,/REPOSITORY="xiaogan123\/linkflow-desktop"/);
   assert.match(source,/download_url="https:\/\/github\.com\/\$REPOSITORY\/releases\/download\/v\$VERSION\/Linkflow-\$VERSION-mac-arm64\.zip"/);
   assert.match(source,/--destination 仅允许位于系统临时目录中的隔离测试目录/);
+  assert.match(source,/^umask 077$/m);
   assert.doesNotMatch(source,/"\$XATTR_BIN"[^\n]*\s-[a-z]*[dwc][a-z]*\b/);
   assert.doesNotMatch(source,/\/usr\/bin\/(?:python3?|node)\b/);
   assert.match(source,/exec 3<> "\$archive_snapshot_path"/);
@@ -147,6 +155,7 @@ test('installer template is pinned to one official release and exposes only the 
   assert.match(source,/"\$DITTO_BIN" -x -k --noqtn \/dev\/fd\/7/);
   assert.match(source,/"\$SHASUM_BIN" -a 256 \/dev\/fd\/4/);
   assert.match(source,/"\$SHASUM_BIN" -a 256 \/dev\/fd\/9/);
+  assert.match(source,/\|"\$TAR_BIN" -xpf - -C "\$new_app"/);
   assert.equal(source.match(/ensure_app_is_not_running/g)?.length,3);
   assert.match(source,/外链助手\[\.\]app\/Contents\/MacOS\/外链助手/);
   assert.doesNotMatch(source,/--url|--archive|--app-path/);
@@ -166,6 +175,11 @@ test('installer validates the exact official URL and installs a strict ad-hoc ar
 
     const installed=join(destination,'外链助手.app');
     assert.equal((await lstat(installed)).isDirectory(),true);
+    const sourceExecutable=join(fixture.appPath,'Contents','MacOS','外链助手');
+    const installedExecutable=join(installed,'Contents','MacOS','外链助手');
+    assert.equal((await lstat(sourceExecutable)).mode&0o777,0o755);
+    assert.equal((await lstat(installedExecutable)).mode&0o777,0o755);
+    assert.equal(await hashUpdateTree(installed),await hashUpdateTree(fixture.appPath));
     requireSuccess(run('/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',installed]),'installed codesign');
     const architectures=run('/usr/bin/lipo',['-archs',join(installed,'Contents','MacOS','外链助手')]);
     requireSuccess(architectures,'installed architecture');
@@ -181,6 +195,48 @@ test('installer validates the exact official URL and installs a strict ad-hoc ar
     assert(curlArguments.includes(`https://github.com/xiaogan123/linkflow-desktop/releases/download/v${fixtureVersion}/Linkflow-${fixtureVersion}-mac-arm64.zip`));
     assert(curlArguments.includes('--proto'));
     assert(curlArguments.includes('=https'));
+  }finally{await rm(root,{recursive:true,force:true})}
+});
+
+test('a packaged Electron ZIP keeps the canonical update tree under installer umask 077',{skip:nativeSkip,timeout:180_000},async t=>{
+  const packageVersion=JSON.parse(await readFile(resolve('package.json'),'utf8')).version as string;
+  const archive=resolve(process.env.LINKFLOW_INSTALLER_ELECTRON_ZIP??`release/Linkflow-${packageVersion}-mac-arm64.zip`);
+  try{
+    const archiveInfo=await lstat(archive);
+    assert.equal(archiveInfo.isFile()&&!archiveInfo.isSymbolicLink(),true);
+  }catch(error){
+    if(process.env.LINKFLOW_INSTALLER_ELECTRON_ZIP)throw error;
+    t.skip(`Packaged Electron ZIP is not present: ${archive}`);
+    return;
+  }
+  const {root,destination}=await testRoot();
+  try{
+    const referenceRoot=join(root,'reference');
+    await mkdir(referenceRoot);
+    requireSuccess(run('/usr/bin/ditto',['-x','-k',archive,referenceRoot]),'reference Electron ZIP extraction');
+    const entries=await readdir(referenceRoot);
+    assert.deepEqual(entries,['外链助手.app']);
+    const referenceApp=join(referenceRoot,'外链助手.app');
+    const versionResult=run('/usr/bin/plutil',['-extract','CFBundleShortVersionString','raw','-o','-',join(referenceApp,'Contents','Info.plist')]);
+    requireSuccess(versionResult,'Electron ZIP version');
+    const archiveVersion=versionResult.stdout.trim();
+    assert.match(archiveVersion,/^\d{1,6}\.\d{1,6}\.\d{1,6}$/);
+    const expectedTree=await hashUpdateTree(referenceApp);
+    const curl=await createCurlStub(root);
+    const pgrep=await createCallLogger(root,'pgrep',1);
+    const installer=await renderInstaller(root,await sha256(archive),{CURL_BIN:curl,PGREP_BIN:pgrep},archiveVersion);
+    const result=runInstaller(installer,destination,{
+      FIXTURE_ARCHIVE:archive,
+      CURL_LOG:join(root,'curl.log'),
+      CALL_LOG:join(root,'pgrep.log')
+    });
+    requireSuccess(result,'packaged Electron ZIP installation');
+    const installed=join(destination,'外链助手.app');
+    assert.equal(await hashUpdateTree(installed),expectedTree);
+    assert.equal(
+      (await lstat(join(installed,'Contents','Frameworks','Electron Framework.framework','Versions','A','Libraries','libffmpeg.dylib'))).mode&0o111,
+      (await lstat(join(referenceApp,'Contents','Frameworks','Electron Framework.framework','Versions','A','Libraries','libffmpeg.dylib'))).mode&0o111
+    );
   }finally{await rm(root,{recursive:true,force:true})}
 });
 

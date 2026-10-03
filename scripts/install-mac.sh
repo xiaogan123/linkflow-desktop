@@ -296,7 +296,7 @@ previous_app="./previous-$APP_NAME"
 rejected_app="./rejected-$APP_NAME"
 target_app="../$APP_NAME"
 "$MKDIR_BIN" -m 700 "$new_app"||fail '无法在事务目录创建新应用位置。'
-if ! (validated_staged_stream 1)|"$TAR_BIN" -xf - -C "$new_app";then
+if ! (validated_staged_stream 1)|"$TAR_BIN" -xpf - -C "$new_app";then
   fail '无法把已验证应用快照复制到已锁定的安装卷。'
 fi
 replacement_context_matches||fail '原子替换事务或安装目录在复制期间被换名或替换；未替换任何应用。'

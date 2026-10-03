@@ -4,6 +4,7 @@ import {execFile,spawn} from 'node:child_process';
 import {basename,dirname,isAbsolute,join,relative,resolve} from 'node:path';
 import {validateUpdateHelperJob,type UpdateHelperJob} from './update-install';
 import {updateRawFs} from './update-files';
+import {macUpdateUtf8Environment} from './update-mac-locale';
 import {verifyMacApplicationQuarantineFree,verifyVerifiedMacStageQuarantineFree} from './update-mac-quarantine';
 import {hashUpdateTree} from './update-tree';
 
@@ -18,7 +19,7 @@ function cleanEnvironment():NodeJS.ProcessEnv{const environment={...process.env}
 function executeInstaller(file:string,args:string[]):Promise<void>{return new Promise((done,reject)=>execFile(file,args,{timeout:180_000,maxBuffer:1024*1024,windowsVerbatimArguments:process.platform==='win32',shell:false},error=>error?reject(error):done()))}
 function launch(file:string,args:string[]):Promise<{pid:number}>{return new Promise((done,reject)=>{const child=spawn(file,args,{cwd:dirname(file),detached:true,stdio:'ignore',windowsHide:true,shell:false,env:cleanEnvironment()});child.once('error',reject);child.once('spawn',()=>{if(!child.pid){reject(Error('新版本进程未启动'));return}child.unref();done({pid:child.pid})})})}
 function openMac(applicationPath:string):Promise<void>{return new Promise((done,reject)=>execFile('/usr/bin/open',['-n',applicationPath],{timeout:30_000,maxBuffer:1024*1024,shell:false,env:cleanEnvironment()},error=>error?reject(error):done()))}
-function listMacProcesses():Promise<MacProcess[]>{return new Promise((done,reject)=>execFile('/bin/ps',['-axo','pid=,command='],{timeout:10_000,maxBuffer:8*1024*1024,encoding:'utf8',shell:false},(error,stdout)=>{if(error){reject(error);return}done(stdout.split('\n').flatMap(line=>{const match=/^\s*(\d+)\s+(.+)$/.exec(line);return match?[{pid:Number(match[1]),command:match[2]}]:[]}))}))}
+export function listMacProcesses(environment:NodeJS.ProcessEnv=process.env):Promise<MacProcess[]>{return new Promise((done,reject)=>execFile('/bin/ps',['-axo','pid=,command='],{timeout:10_000,maxBuffer:8*1024*1024,encoding:'utf8',shell:false,env:macUpdateUtf8Environment(environment)},(error,stdout)=>{if(error){reject(error);return}done(stdout.split('\n').flatMap(line=>{const match=/^\s*(\d+)\s+(.+)$/.exec(line);return match?[{pid:Number(match[1]),command:match[2]}]:[]}))}))}
 function run(file:string,args:string[]):Promise<string>{return new Promise((done,reject)=>execFile(file,args,{timeout:60_000,maxBuffer:1024*1024,encoding:'utf8',shell:false},(error,stdout)=>error?reject(error):done(stdout)))}
 async function prepareMacStage(job:UpdateHelperJob){await verifyVerifiedMacStageQuarantineFree({updatesDirectory:job.updatesDirectory,artifactPath:job.artifactPath,artifactSize:job.artifactSize,artifactSha256:job.artifactSha256,applicationPath:job.applicationPath,executablePath:job.executablePath,stagedApplicationPath:job.stagedApplicationPath!,targetVersion:job.targetVersion,treeSha256:job.stagedTreeSha256!})}
 async function verifyMacReady(applicationPath:string,executablePath:string,targetVersion:string,treeSha256:string){await verifyMacApplicationQuarantineFree({applicationPath,executablePath,targetVersion,treeSha256})}
