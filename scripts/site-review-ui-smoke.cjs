@@ -33,7 +33,7 @@ if(!process.versions.electron){
 
   const channel={id:'article-api',name:'文章 API',domain:'publisher.example',url:'https://publisher.example',submitUrl:'https://publisher.example/new',categories:['general'],languages:['zh'],kind:'article',emailRequired:false,accountRequired:false,articleRequired:true,free:'yes',freeNote:'测试渠道',automation:'api',quality:'A',qualityReason:'隔离 UI fixture',rulesUrl:'https://publisher.example/rules',checkedAt:'2026-10-01',notes:'',allowedHosts:['publisher.example'],enabled:true};
   const site=(id,domain,articleReviewMode)=>({id,domain,url:`https://${domain}`,email:`hello@${domain}`,publicEmail:`hello@${domain}`,name:domain.split('.')[0],description:'隔离 UI 测试网站',category:'general',language:'zh',monthlyTarget:2,...(articleReviewMode?{articleReviewMode}:{}),status:'ready',createdAt:'2026-10-01T00:00:00.000Z'});
-  const task=(id,siteId)=>({id,siteId,channelId:channel.id,sourceDomain:channel.domain,status:'review',createdAt:'2026-10-01T00:00:00.000Z',scheduledAt:'2026-10-01T00:00:00.000Z',updatedAt:`2026-10-01T00:00:0${id.endsWith('ai')?2:1}.000Z`,attempts:1,message:'稿件等待审核',checkpoint:'article_review',draft:{title:`${siteId} 稿件`,description:'摘要',body:'正文'}});
+  const task=(id,siteId)=>({id,siteId,channelId:channel.id,sourceDomain:channel.domain,status:id.endsWith('ai')?'queued':'needs_input',createdAt:'2026-10-01T00:00:00.000Z',scheduledAt:'2026-10-01T00:00:00.000Z',updatedAt:`2026-10-01T00:00:0${id.endsWith('ai')?2:1}.000Z`,attempts:1,message:'稿件等待审核',checkpoint:'article_review',draft:{title:`${siteId} 稿件`,description:'摘要',body:'正文'}});
   const state={
     sites:[site('site-manual','manual.example','manual'),site('site-ai','auto.example','ai'),site('site-legacy','legacy.example')],
     tasks:[task('task-manual','site-manual'),task('task-ai','site-ai')],
@@ -124,17 +124,19 @@ if(!process.versions.electron){
     check('site details show the current effective mode',await evaluate('document.body.innerText.includes("人工审核 · 逐篇确认")'));
 
     await clickText('任务');
-    await waitFor('document.querySelectorAll(".work-identity").length===2');
+    await clickText('需你处理');
+    await waitFor('document.querySelectorAll(".work-identity").length===1');
     await clickTask('manual.example');
     check('manual site task exposes only the human review route',await evaluate('document.body.innerText.includes("稿件待人工审核")&&document.body.innerText.includes("查看并人工审核")&&!document.body.innerText.includes("重新 AI 核对")'));
     await clickText('查看并人工审核');
     check('manual TaskCard offers approval and no AI retry',await evaluate('[...document.querySelectorAll(".task-actions button")].some(item=>item.innerText.includes("已核对稿件，继续发布"))&&![...document.querySelectorAll(".task-actions button")].some(item=>item.innerText.includes("重新 AI 核对"))'));
 
     await clickText('任务');
+    await waitFor('document.querySelectorAll(".work-identity").length===1');
     await clickTask('auto.example');
-    check('AI site task exposes the AI review route within the mixed list',await evaluate('document.body.innerText.includes("稿件待 AI 审核")&&document.body.innerText.includes("查看 AI 审核详情")&&document.body.innerText.includes("重新 AI 核对")'));
+    check('AI site task remains scheduled system work',await evaluate('document.body.innerText.includes("等待 AI 审核")&&document.body.innerText.includes("查看 AI 审核详情")&&!document.body.innerText.includes("重新 AI 核对")'));
     await clickText('查看 AI 审核详情');
-    check('AI TaskCard offers AI retry and no manual approval',await evaluate('[...document.querySelectorAll(".task-actions button")].some(item=>item.innerText.includes("重新 AI 核对"))&&![...document.querySelectorAll(".task-actions button")].some(item=>item.innerText.includes("已核对稿件，继续发布"))'));
+    check('AI TaskCard leaves the queued review to the system',await evaluate('![...document.querySelectorAll(".task-actions button")].some(item=>item.innerText.includes("重新 AI 核对")||item.innerText.includes("已核对稿件，继续发布"))'));
 
     writeFileSync(join(evidence,'result.json'),JSON.stringify({passed:true,viewport:{width:1050,height:720},checks,actions},null,2));
     console.log(`SITE REVIEW UI PASSED: ${checks.length} checks`);

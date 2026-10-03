@@ -29,10 +29,10 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
   const [command,setCommand]=useState<UpdateCommand|null>(null);
   const [lastCommand,setLastCommand]=useState<UpdateCommand>('app:check-update');
 
-  const readStatus=useCallback(async()=>{
+  const readStatus=useCallback(async(recovery=false)=>{
     if(demo||!window.linkflow)return;
-    try{setState(await window.linkflow.invoke<UpdateState>('app:update-status'))}
-    catch(error){setState(previous=>({...previous,phase:'failed',retryable:true,error:errorText(error)}))}
+    try{const result=await window.linkflow.invoke<UpdateState>('app:update-status');setState(result);return result}
+    catch(error){setState(previous=>recovery?{...previous,error:'暂时无法读取恢复进度；仍在等待验证结果。'}:{...previous,phase:'failed',retryable:true,error:errorText(error)});return undefined}
   },[demo]);
 
   useEffect(()=>{
@@ -42,29 +42,36 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
 
   useEffect(()=>{
     if(demo||!activePhases.has(state.phase))return;
-    const timer=window.setInterval(()=>void readStatus(),750);
+    const timer=window.setInterval(()=>void readStatus(state.recoveryPending===true),750);
     return()=>window.clearInterval(timer);
-  },[demo,state.phase,readStatus]);
+  },[demo,state.phase,state.recoveryPending,readStatus]);
 
   const run=async(next:UpdateCommand)=>{
     if(demo||!window.linkflow)return;
-    if((next==='app:install-update'||next==='app:recover-update')&&taskBusy){onResult(false,'请等待当前任务结束，再安装并重启。');return}
+    if((next==='app:install-update'||next==='app:recover-update')&&taskBusy){onResult(false,next==='app:recover-update'?'请等待当前任务结束，再验证并恢复更新。':'请等待当前任务结束，再安装并重启。');return}
     setCommand(next);setLastCommand(next);
-    if(next==='app:check-update'||next==='app:install-update')setState(previous=>({...previous,phase:next==='app:check-update'?'checking':'installing',error:undefined}));
+    if(next==='app:check-update'||next==='app:install-update'||next==='app:recover-update')setState(previous=>({...previous,phase:next==='app:install-update'?'installing':'checking',retryable:next==='app:recover-update'?false:previous.retryable,recoveryPending:next==='app:recover-update'?true:previous.recoveryPending,error:undefined}));
     try{
       const result=await window.linkflow.invoke<UpdateState>(next);
       setState(result);
       if(next==='app:recover-update'&&!result.recoveryPending&&result.phase!=='failed')onResult(true,'已验证当前正式版本，旧更新事务已归档，恢复副本保留。');
       if(next==='app:cancel-update')onResult(true,'正在取消下载。');
-    }catch(error){const message=errorText(error);await readStatus();onResult(false,message)}
+    }catch(error){const result=await readStatus(next==='app:recover-update'),message=next==='app:recover-update'?(result?.error??'无法安全恢复更新；恢复副本和原事务已保留'):errorText(error);if(next==='app:recover-update'&&!result)setState(previous=>({...previous,phase:'failed',retryable:false,recoveryPending:true,error:message}));onResult(false,message)}
     finally{setCommand(null)}
   };
 
-  const copy=state.phase==='failed'&&state.retryable===false
+  const copy=state.phase==='checking'&&state.recoveryPending
+    ?{...phaseCopy.checking,label:'正在恢复',title:'正在验证当前安装',body:'正在核对当前正式版本与上次更新事务，请稍候。'}
+    :state.phase==='failed'&&state.recoveryPending
+    ?{...phaseCopy.failed,title:'恢复验证未完成',body:'恢复副本和原事务仍已保留。可按下方提示重新验证，其他功能可以继续使用。'}
+    :state.phase==='failed'&&state.retryable===false
     ?{...phaseCopy.failed,title:'更新需要进一步确认',body:'已保留恢复副本。请按下方提示处理，其他功能可以继续使用。'}
     :phaseCopy[state.phase];
   const progress=Math.max(0,Math.min(100,state.progress?.percent??0));
   const busy=command!==null||activePhases.has(state.phase);
+  const versionSummary=state.recoveryPending
+    ?{label:'上次更新版本',value:state.targetVersion??'尚未记录'}
+    :{label:'最新版本',value:state.targetVersion??(state.phase==='up-to-date'?state.currentVersion:'尚未获取')};
   const retry=()=>run(lastCommand==='app:install-update'?'app:install-update':state.targetVersion?'app:download-update':'app:check-update');
 
   return <div className="page update-center-page">
@@ -73,14 +80,14 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
     <div className="update-center-grid">
       <section className="panel update-status-card" aria-live="polite">
         <header><div className={`update-phase-icon ${copy.tone}`}>{state.phase==='failed'||state.phase==='unsupported'?<WarningCircle size={25}/>:state.phase==='downloading'?<DownloadSimple size={25}/>:state.phase==='prepared'||state.phase==='installed'||state.phase==='up-to-date'?<CheckCircle size={25}/>:<ArrowClockwise size={25}/>}</div><div><span className={`badge ${copy.tone}`}>{copy.label}</span><h2>{copy.title}</h2><p>{copy.body}</p></div></header>
-        <dl className="update-version-grid"><div><dt>当前版本</dt><dd>{state.currentVersion||currentVersion||'—'}</dd></div><div><dt>最新版本</dt><dd>{state.targetVersion??(state.phase==='up-to-date'?state.currentVersion:'尚未获取')}</dd></div><div><dt>运行平台</dt><dd>{formatPlatform(platform)}</dd></div><div><dt>最近检查</dt><dd>{state.checkedAt?new Date(state.checkedAt).toLocaleString():'尚未检查'}</dd></div></dl>
+        <dl className="update-version-grid"><div><dt>当前版本</dt><dd>{state.currentVersion||currentVersion||'—'}</dd></div><div><dt>{versionSummary.label}</dt><dd>{versionSummary.value}</dd></div><div><dt>运行平台</dt><dd>{formatPlatform(platform)}</dd></div><div><dt>最近检查</dt><dd>{state.checkedAt?new Date(state.checkedAt).toLocaleString():'尚未检查'}</dd></div></dl>
         {state.phase==='downloading'&&<div className="update-progress"><div><strong>下载进度</strong><span>{formatBytes(state.progress?.receivedBytes)} / {formatBytes(state.progress?.totalBytes)} · {Math.round(progress)}%</span></div><div className="update-progress-track" role="progressbar" aria-label="更新下载进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style={{width:`${progress}%`}}/></div></div>}
-        {state.error&&<div className={`update-message ${state.phase==='failed'?'error':'notice'}`} role={state.phase==='failed'?'alert':'status'}>{state.phase==='failed'?<WarningCircle size={17}/>:<X size={17}/>}<span>{state.error}</span></div>}
+        {state.error&&<div className={`update-message ${state.phase==='failed'?'error':'notice'}`} role={state.phase==='failed'?'alert':'status'}>{state.phase==='failed'?<WarningCircle size={17}/>:state.phase==='checking'&&state.recoveryPending?<Info size={17}/>:<X size={17}/>}<span>{state.error}</span></div>}
         {platform?.startsWith('darwin')&&(['prepared','failed'].includes(state.phase))&&<div className="update-message notice"><Info size={17}/><span>若 macOS 提示来源确认，请自行在系统设置的“隐私与安全性”中处理。未完成启动确认时，软件会保留旧版恢复副本。</span></div>}
         {state.phase==='prepared'&&taskBusy&&<div className="update-message notice"><Info size={17}/><span>当前仍有任务在执行。请先让任务完成，安装按钮随后可用。</span></div>}
         {state.recoveryPending&&<p className="muted">如果已手动安装并打开较新的正式版本，可验证当前安装后恢复更新功能。此操作会下载当前版本的官方安装包作校验，并保留旧版副本；不会替你确认 macOS 安全提示。</p>}
         <div className="update-actions">
-          {state.recoveryPending&&<Button variant="primary" disabled={demo||busy||taskBusy} onClick={()=>void run('app:recover-update')}>验证并恢复更新</Button>}
+          {state.recoveryPending&&<Button variant="primary" disabled={demo||busy||taskBusy} onClick={()=>void run('app:recover-update')}>{command==='app:recover-update'?'正在验证并恢复…':'验证并恢复更新'}</Button>}
           {(['idle','up-to-date','installed'].includes(state.phase))&&<Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>{state.phase==='idle'?'检查更新':'再次检查'}</Button>}
           {state.phase==='unsupported'&&<Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>重新检查</Button>}
           {state.phase==='available'&&<><Button variant="primary" disabled={demo||busy} onClick={()=>void run('app:download-update')}><DownloadSimple size={16}/>下载更新</Button><Button disabled={demo||busy} onClick={()=>void run('app:check-update')}><ArrowClockwise size={16}/>重新检查</Button></>}

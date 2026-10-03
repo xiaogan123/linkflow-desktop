@@ -24,11 +24,11 @@ export function saveAccountAtomic(store:Store,input:AccountWrite,channel:Channel
   const before=store.read(),old=input.id?before.accounts.find(account=>account.id===input.id):undefined;
   if(input.id&&!old)throw Error('账号不存在');
   if(channel.id!==input.channelId)throw Error('账号与渠道不匹配');
+  if(channel.automation==='api'||old?.credentialKind==='api_token')throw Error(channel.id==='telegraph'?'Telegraph 身份由任务自动准备，无需导入邮箱或密码；已有身份请编辑绑定。':'API 身份请使用专用连接入口；已有身份请编辑绑定。');
   if(input.mailboxId&&!before.mailboxes.some(mailbox=>mailbox.id===input.mailboxId))throw Error('收件箱不存在');
   if(before.accounts.some(account=>account.id!==input.id&&account.channelId===input.channelId&&account.email.toLowerCase()===input.email.toLowerCase()))throw Error('该渠道已有此邮箱账号');
   const changed=!!old&&identityChanged(old,input);
   if(changed&&before.tasks.some(task=>task.accountId===old?.id))throw Error('该账号已归属历史任务，请新增账号以保留当时身份');
-  if(old?.credentialKind==='api_token'&&(changed||input.password))throw Error('API 作者身份与令牌不可作为普通密码修改，请保留原账号。');
   const repairedCredentials=old?.status==='credentials_invalid'&&!!input.password;
   const status=old?.status==='restricted'&&!changed?'restricted':!old||changed||repairedCredentials?'unknown':old.status;
   const stamp=now.toISOString(),id=old?.id??randomUUID(),hasNewSecret=!!input.password;

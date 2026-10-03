@@ -8,14 +8,15 @@ import type {ArticleReview,ExecutionContext,Site,Task} from '../src/shared/types
 import type {Vault} from '../src/main/vault';
 import {validateBackup} from '../src/main/backup-validation';
 import {runGistTask} from '../src/integrations/gist';
+import {dateKey,nextTask,reservesSlot} from '../src/main/planner';
 
-const siteId='11111111-1111-4111-8111-111111111111',taskId='22222222-2222-4222-8222-222222222222';
+const siteId='11111111-1111-4111-8111-111111111111',taskId='22222222-2222-4222-8222-222222222222',defaultAccountId='44444444-4444-4444-8444-444444444444';
 function site():Site{return {id:siteId,domain:'review-fixture.com',url:'https://review-fixture.com/',email:'owner@review-fixture.com',name:'Review Fixture',description:'Financial comparison and affiliate referral program',category:'finance',language:'en',monthlyTarget:1,status:'ready',createdAt:'2026-09-01T00:00:00.000Z',analyzedAt:'2026-09-01T00:00:00.000Z',qualifications:{developer:'https://review-fixture.com/project'}}}
 function task(status:Task['status']='queued'):Task{return {id:taskId,siteId,channelId:'github-gist',sourceDomain:'gist.github.com',status,createdAt:'2026-09-01T00:00:00.000Z',scheduledAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z',attempts:0,message:'fixture',checkpoint:'article_review',draftRevision:1,draft:{title:'Operator checklist',description:'A reusable technical checklist.',body:'We operate and maintain Review Fixture. We participate in its affiliate referral program and may receive a commission. Use this reproducible checklist to compare public eligibility rules and record source dates. [Official site](https://review-fixture.com/)'}}}
 const fakeVault={ready:true,available:()=>true,get:async()=>undefined,set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault;
 function passed(t:Task,s:Site,settings:ReturnType<Store['read']>['settings']):ArticleReview{const channel=CHANNELS.find(item=>item.id==='github-gist')!;return {status:'passed',reason:'All checks passed with public evidence.',reviewedAt:'2026-09-30T00:00:00.000Z',evidenceUrls:[s.url,channel.rulesUrl],draftRevision:t.draftRevision??0,contentHash:articleContentHash(t),contextHash:articleContextHash(s,channel,settings)}}
 function fixture(options:{mode?:'manual'|'ai';status?:Task['status'];submitted?:boolean;review?:ArticleReview}={}){
-  const store=new Store(':memory:');store.update(state=>{state.settings.articleReviewMode=options.mode??'ai';state.settings.autoRun=true;state.settings.dailyAiLimit=40;state.sites=[site()];const value=task(options.status);if(options.submitted){value.submittedAt='2026-09-30T00:00:00.000Z';value.status='needs_input'}if(options.review)value.articleReview=options.review;state.tasks=[value]});return store;
+  const store=new Store(':memory:');store.update(state=>{state.settings.articleReviewMode=options.mode??'ai';state.settings.autoRun=true;state.settings.dailyAiLimit=40;state.sites=[site()];state.accounts=[{id:defaultAccountId,channelId:'github-gist',username:'fixture-owner',email:'owner@example.com',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:'2026-09-01T00:00:00.000Z'}];const value=task(options.status);value.accountId=defaultAccountId;if(options.submitted){value.submittedAt='2026-09-30T00:00:00.000Z';value.status='needs_input'}if(options.review)value.articleReview=options.review;state.tasks=[value]});return store;
 }
 
 test('AI pass is a separate review call and publishes once with a bound synthetic approval',async()=>{
@@ -24,7 +25,7 @@ test('AI pass is a separate review call and publishes once with a bound syntheti
 });
 
 test('ordinary content API articles also require the independent AI review',async()=>{
-  const store=fixture();store.update(state=>{state.sites[0].category='content';state.sites[0].description='Operator-authored publishing guides';state.tasks[0].channelId='telegraph';state.tasks[0].sourceDomain='telegra.ph'});let reviews=0,executions=0;const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,c,settings)=>{reviews++;return {status:'passed',reason:'checked',reviewedAt:'2026-09-30T00:00:00.000Z',evidenceUrls:[s.url,c.rulesUrl],draftRevision:t.draftRevision??0,contentHash:articleContentHash(t),contextHash:articleContextHash(s,c,settings)}},executeTask:async()=>{executions++;return {status:'review',message:'submitted'}}});controller.runtime.aiReady=true;
+  const store=fixture();store.update(state=>{state.sites[0].category='content';state.sites[0].description='Operator-authored publishing guides';state.tasks[0].channelId='telegraph';state.tasks[0].sourceDomain='telegra.ph';state.tasks[0].accountId=undefined});let reviews=0,executions=0;const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,c,settings)=>{reviews++;return {status:'passed',reason:'checked',reviewedAt:'2026-09-30T00:00:00.000Z',evidenceUrls:[s.url,c.rulesUrl],draftRevision:t.draftRevision??0,contentHash:articleContentHash(t),contextHash:articleContextHash(s,c,settings)}},executeTask:async()=>{executions++;return {status:'review',message:'submitted'}}});controller.runtime.aiReady=true;
   try{await controller.tick();assert.equal(reviews,1);assert.equal(executions,1);assert.equal(store.read().tasks[0].articleReview?.status,'passed')}finally{store.close()}
 });
 
@@ -35,9 +36,102 @@ test('site mode overrides the global gate in both directions',async()=>{
   try{await manualController.tick();assert.equal(manualStore.read().tasks[0].status,'needs_input');assert.equal(manualReviews,0);assert.equal(manualExecutions,0)}finally{manualStore.close()}
 });
 
-test('reject and unknown outcomes stop at needs_input without publication or automatic rerun',async()=>{
+test('semantic review rejection releases the slot without publication or automatic rerun',async()=>{
   for(const reason of ['公开事实与稿件冲突','公开证据不足，无法核实']){const store=fixture();let reviews=0,executions=0;const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{reviews++;return {...passed(t,s,settings),status:'failed',reason}},executeTask:async()=>{executions++;return {status:'review',message:'should not run'}}});controller.runtime.aiReady=true;
-    try{await controller.tick();assert.equal(store.read().tasks[0].status,'needs_input');assert.equal(store.read().tasks[0].articleReview?.status,'failed');assert.equal(executions,0);await controller.tick();assert.equal(reviews,1);assert.equal(executions,0)}finally{store.close()}}
+    try{await controller.tick();assert.equal(store.read().tasks[0].status,'failed');assert.equal(store.read().tasks[0].checkpoint,'channel_wait');assert.match(store.read().tasks[0].message,/不会.*重复/);assert.equal(store.read().tasks[0].articleReview?.status,'failed');assert.equal(reviews,1);assert.equal(executions,0)}finally{store.close()}}
+});
+
+test('missing Gist identity becomes one user handoff before any paid work and does not block Telegraph',async()=>{
+  const store=fixture();store.update(state=>{state.accounts=[];state.tasks[0].accountId=undefined});let reviews=0,executions=0;
+  const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{reviews++;return passed(t,s,settings)},executeTask:async()=>{executions++;return {status:'review',message:'unexpected'}}});controller.runtime.aiReady=true;
+  try{
+    controller.plan();const state=store.read(),gist=state.tasks.find(item=>item.channelId==='github-gist');
+    assert.equal(reviews,0);assert.equal(executions,0);assert.equal(gist?.status,'needs_input');assert.equal(gist?.checkpoint,'account_handoff');
+    assert.equal(state.tasks.some(item=>item.channelId==='telegraph'&&item.status==='queued'),true);
+    const accountId='55555555-5555-4555-8555-555555555555';store.update(next=>next.accounts.push({id:accountId,channelId:'github-gist',username:'owner',email:'owner@users.noreply.github.com',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:'2026-09-01T00:00:00.000Z'}));controller.plan();
+    const resumed=store.read().tasks.find(item=>item.channelId==='github-gist');assert.equal(resumed?.status,'queued');assert.equal(resumed?.accountId,accountId);
+  }finally{store.close()}
+});
+
+test('transient review failures get one bounded retry and then release the slot',async()=>{
+  const store=fixture();let reviews=0,executions=0;const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{reviews++;return {...passed(t,s,settings),status:'failed',reason:'公开证据网络暂时不可用',reasonCode:'evidence_fetch_failed'}},executeTask:async()=>{executions++;return {status:'review',message:'unexpected'}}});controller.runtime.aiReady=true;
+  try{
+    await controller.tick();let saved=store.read().tasks.find(item=>item.id===taskId)!;assert.equal(saved.status,'queued');assert.equal(saved.attempts,1);assert.ok(Date.parse(saved.scheduledAt)>Date.now());
+    store.update(state=>{state.tasks.find(item=>item.id===taskId)!.scheduledAt=new Date(0).toISOString()});await controller.tick();saved=store.read().tasks.find(item=>item.id===taskId)!;
+    assert.equal(reviews,2);assert.equal(executions,0);assert.equal(saved.status,'failed');assert.equal(saved.checkpoint,'system_wait');assert.equal(saved.attempts,2);
+  }finally{store.close()}
+});
+
+test('daily AI exhaustion resumes on the next configured local day',async()=>{
+  const store=fixture();const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>({...passed(t,s,settings),status:'failed',reason:'AI 核对未通过：今日 AI 调用已达上限',reasonCode:'ai_unavailable'}),executeTask:async()=>({status:'review',message:'unexpected'})});controller.runtime.aiReady=true;
+  try{const before=new Date();for(let run=0;run<2;run++){await controller.tick();const state=store.read(),saved=state.tasks.find(item=>item.id===taskId)!;assert.equal(saved.status,'queued');assert.equal(saved.attempts,0);assert.equal(saved.nextCheckAt,saved.scheduledAt);assert.notEqual(dateKey(saved.scheduledAt,state.settings.timezone),dateKey(before,state.settings.timezone));assert.match(saved.message,/下一个本地自然日/);if(run===0)store.update(next=>{next.tasks.find(item=>item.id===taskId)!.scheduledAt=new Date(0).toISOString()})}}finally{store.close()}
+});
+
+test('execution-stage daily AI limits wait for the next local day without consuming an attempt',async()=>{
+  for(const throws of [false,true]){
+    const store=fixture(),controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>passed(t,s,settings),executeTask:async()=>{if(throws)throw Error('今日 AI 调用已达上限，明天继续');return {status:'failed',message:'今日 AI 调用已达上限，明天继续'}}});controller.runtime.aiReady=true;
+    try{const before=new Date();await controller.tick();const state=store.read(),saved=state.tasks[0];assert.equal(saved.status,'queued');assert.equal(saved.attempts,0);assert.equal(saved.nextCheckAt,saved.scheduledAt);assert.notEqual(dateKey(saved.scheduledAt,state.settings.timezone),dateKey(before,state.settings.timezone));assert.match(saved.message,/下一个本地自然日/)}finally{store.close()}
+  }
+});
+
+test('unknown channel policy is a system wait and never a publication permission',async()=>{
+  const store=fixture();let executions=0,notices=0;const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>({...passed(t,s,settings),status:'failed',reason:'only API guidance found',reasonCode:'policy_not_found'}),executeTask:async()=>{executions++;return {status:'review',message:'unexpected'}}});controller.runtime.aiReady=true;controller.onNotice=()=>{notices++};
+  try{await controller.tick();const saved=store.read().tasks.find(item=>item.id===taskId)!;assert.equal(saved.status,'failed');assert.equal(saved.checkpoint,'channel_wait');assert.match(saved.message,/许可仍未确认/);assert.equal(executions,0);assert.equal(notices,0)}finally{store.close()}
+});
+
+test('an existing registration transaction keeps its checkpoint and only continues inside the verification window',()=>{
+  const store=fixture(),channel=CHANNELS.find(item=>item.id==='github')!,recent=new Date().toISOString();
+  store.update(state=>{const current=state.tasks[0],account=state.accounts[0];current.channelId=channel.id;current.sourceDomain=channel.domain;current.checkpoint='account_registration_submitted';current.scheduledAt=new Date(0).toISOString();account.channelId=channel.id;account.email=state.sites[0].email;account.status='needs_verification';account.credentialKind='password';account.lastUsedAt=recent;state.accountBindings=[{id:'binding',siteId,channelId:channel.id,accountId:account.id,createdAt:recent,updatedAt:recent}]});
+  const controller=new Controller(store,fakeVault,'fixture');
+  try{
+    controller.plan();let state=store.read(),saved=state.tasks[0];assert.equal(saved.status,'queued');assert.equal(saved.checkpoint,'account_registration_submitted');assert.equal(nextTask(state,new Date(),CHANNELS)?.id,taskId);
+    store.update(next=>{const account=next.accounts[0];account.lastUsedAt='2026-09-01T00:00:00.000Z';const current=next.tasks[0];current.status='queued';current.scheduledAt=new Date(0).toISOString()});controller.plan();state=store.read();saved=state.tasks.find(item=>item.id===taskId)!;
+    assert.equal(saved.status,'needs_input');assert.equal(saved.checkpoint,'account_registration_submitted');assert.match(saved.message,/保留原注册事务/);assert.equal(reservesSlot(saved,new Date()),false);
+  }finally{store.close()}
+});
+
+test('an unsubmitted article task switches from a pinned invalid account only to a verified same-channel identity',async()=>{
+  const store=fixture(),readyId='55555555-5555-4555-8555-555555555555';let reviews=0,executedStatus='';
+  store.update(state=>{state.accounts[0].status='credentials_invalid';state.accounts.push({...state.accounts[0],id:readyId,username:'ready-owner',status:'registered'})});
+  const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{reviews++;return passed(t,s,settings)},executeTask:async context=>{executedStatus=context.getAccount()?.status??'missing';return {status:'needs_input',message:'fixture'}}});controller.runtime.aiReady=true;
+  try{await controller.tick();const state=store.read(),saved=state.tasks.find(item=>item.id===taskId)!;assert.equal(reviews,1);assert.equal(executedStatus,'registered');assert.equal(saved.accountId,readyId);assert.equal(state.accounts.find(item=>item.id===defaultAccountId)?.status,'credentials_invalid')}finally{store.close()}
+});
+
+test('a restricted pinned identity is preserved and never replaced to continue publication',()=>{
+  const store=fixture(),readyId='55555555-5555-4555-8555-555555555555';
+  store.update(state=>{state.accounts[0].status='restricted';state.accounts.push({...state.accounts[0],id:readyId,username:'ready-owner',status:'registered'})});
+  const controller=new Controller(store,fakeVault,'fixture');
+  try{controller.plan();const saved=store.read().tasks.find(item=>item.id===taskId)!;assert.equal(saved.status,'needs_input');assert.equal(saved.accountId,defaultAccountId);assert.equal(saved.checkpoint,'account_handoff')}finally{store.close()}
+});
+
+test('Telegraph self-provisioning does not resolve a legacy password identity at execution',async()=>{
+  const store=fixture();let seenCredential='not-executed';
+  store.update(state=>{state.sites[0].category='content';const current=state.tasks[0];current.channelId='telegraph';current.sourceDomain='telegra.ph';current.accountId=undefined;Object.assign(state.accounts[0],{channelId:'telegraph',email:state.sites[0].email,credentialKind:'password',source:'imported'})});
+  const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,c,settings)=>({...passed(t,s,settings),contextHash:articleContextHash(s,c,settings)}),executeTask:async context=>{seenCredential=context.getAccount()?.credentialKind??'none';return {status:'needs_input',message:'fixture'}}});controller.runtime.aiReady=true;
+  try{await controller.tick();assert.equal(seenCredential,'none');assert.equal(store.read().accounts[0].credentialKind,'password')}finally{store.close()}
+});
+
+test('planning migrates existing AI policy waits without changing drafts, approvals, or manual mode',()=>{
+  const store=fixture(),stamp='2026-09-30T00:00:00.000Z';
+  store.update(state=>{
+    state.accounts=[];state.sites=[];state.tasks=[];
+    for(let index=0;index<3;index++){
+      const currentSite={...site(),id:`11111111-1111-4111-8111-11111111111${index}`,domain:`site-${index}.example`,url:`https://site-${index}.example/`,qualifications:undefined};
+      const currentTask={...task('needs_input'),id:`22222222-2222-4222-8222-22222222222${index}`,siteId:currentSite.id,channelId:'telegraph',sourceDomain:'telegra.ph',accountId:undefined,articleApprovedAt:stamp};
+      currentTask.articleReview={...passed(currentTask,currentSite,state.settings),status:'failed',reason:'Only API guidance was found.',reasonCode:index===1?'policy_unknown':'policy_not_found'};
+      state.sites.push(currentSite);state.tasks.push(currentTask);
+    }
+    const manualSite={...site(),id:'33333333-3333-4333-8333-333333333333',domain:'manual.example',url:'https://manual.example/',articleReviewMode:'manual' as const,qualifications:undefined};
+    const manualTask={...task('needs_input'),id:'44444444-4444-4444-8444-444444444444',siteId:manualSite.id,channelId:'telegraph',sourceDomain:'telegra.ph',accountId:undefined,articleApprovedAt:stamp};
+    manualTask.articleReview={...passed(manualTask,manualSite,state.settings),status:'failed',reason:'Only API guidance was found.',reasonCode:'policy_not_found'};
+    state.sites.push(manualSite);state.tasks.push(manualTask);
+  });
+  const before=structuredClone(store.read().tasks),controller=new Controller(store,fakeVault,'fixture');
+  try{
+    controller.plan();const after=store.read().tasks;
+    for(let index=0;index<3;index++){assert.equal(after[index].status,'failed');assert.equal(after[index].checkpoint,'channel_wait');assert.equal(reservesSlot(after[index],new Date()),false);assert.deepEqual(after[index].draft,before[index].draft);assert.deepEqual(after[index].articleReview,before[index].articleReview);assert.equal(after[index].articleApprovedAt,stamp);assert.ok(after[index].nextCheckAt)}
+    assert.equal(after[3].status,'needs_input');assert.equal(after[3].checkpoint,'article_review');assert.deepEqual(after[3].draft,before[3].draft);assert.deepEqual(after[3].articleReview,before[3].articleReview);assert.equal(after[3].articleApprovedAt,stamp);
+  }finally{store.close()}
 });
 
 test('pause during AI review aborts the run and cannot publish a late pass',async()=>{

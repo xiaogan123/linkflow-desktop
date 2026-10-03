@@ -32,6 +32,29 @@ interface SupersededRecoveryRecord {
   currentTreeSha256:string;
   runtimeTranslocated:boolean;
 }
+type RecoverySupersedeStage='transaction'|'release'|'archive'|'artifact'|'extraction'|'identity-process'|'identity-official'|'identity-installed'|'identity-runtime'|'commit';
+const recoveryStageCopy:Record<RecoverySupersedeStage,{progress:string;failure:string}>={
+  transaction:{progress:'正在核对上次更新事务材料…',failure:'无法确认上次更新事务材料完整；恢复副本和原事务已保留'},
+  release:{progress:'正在验证当前正式版本的签名发布信息…',failure:'无法验证当前正式版本的签名发布信息；恢复副本和原事务已保留'},
+  archive:{progress:'正在建立受控恢复验证空间…',failure:'无法建立受控恢复验证空间；恢复副本和原事务已保留'},
+  artifact:{progress:'正在下载并校验当前正式版本安装包…',failure:'无法下载或校验当前正式版本安装包；恢复副本和原事务已保留'},
+  extraction:{progress:'正在安全解包当前正式版本…',failure:'无法安全解包当前正式版本；恢复副本和原事务已保留'},
+  'identity-process':{progress:'正在确认当前运行进程的安装来源…',failure:'无法确认当前运行进程对应真实安装应用；恢复副本和原事务已保留'},
+  'identity-official':{progress:'正在核对官方安装包内的应用身份…',failure:'官方安装包内的应用身份未通过验证；恢复副本和原事务已保留'},
+  'identity-installed':{progress:'正在核对“应用程序”中的当前应用身份…',failure:'“应用程序”中的当前应用身份未通过验证；恢复副本和原事务已保留'},
+  'identity-runtime':{progress:'正在核对当前运行应用副本的身份…',failure:'当前运行应用副本的身份未通过验证；恢复副本和原事务已保留'},
+  commit:{progress:'正在安全归档上次更新事务…',failure:'当前正式版本已通过验证，但旧更新事务未能安全归档；恢复副本和原事务已保留'}
+};
+class RecoveryCommandFailure extends Error {}
+export function recoveryCommandFailure(file:string,error:unknown,stderr=''):Error{
+  const tools:Record<string,string>={'/usr/bin/ditto':'解包工具','/usr/bin/codesign':'签名校验工具','/usr/bin/plutil':'应用信息校验工具','/usr/bin/lipo':'架构校验工具','/usr/bin/xattr':'来源属性校验工具','/bin/ps':'进程检查工具','/sbin/mount':'挂载检查工具'};
+  const label=tools[file]??'系统校验工具',details=error&&typeof error==='object'?error as {code?:unknown;signal?:unknown;killed?:unknown}:{};
+  const code=typeof details.code==='number'&&Number.isInteger(details.code)&&details.code>=0&&details.code<=255?`退出码 ${details.code}`:details.code==='ENOENT'?'工具不存在':details.code==='EACCES'||details.code==='EPERM'?'系统拒绝访问':details.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'?'诊断输出超过上限':details.killed===true?'执行已超时或终止':'执行失败';
+  const signal=typeof details.signal==='string'&&['SIGTERM','SIGKILL','SIGABRT','SIGSEGV','SIGBUS'].includes(details.signal)?`，${details.signal}`:'';
+  const bounded=stderr.slice(0,8192),reason=/no space left on device/i.test(bounded)?'，磁盘空间不足':/operation not permitted|permission denied/i.test(bounded)?'，系统拒绝文件访问':/read-only file system/i.test(bounded)?'，目标位置只读':'';
+  return new RecoveryCommandFailure(`${label}：${code}${signal}${reason}`);
+}
+class RecoverySupersedeFailure extends Error {constructor(readonly stage:RecoverySupersedeStage,cause?:unknown){super(recoveryStageCopy[stage].failure+(cause instanceof RecoveryCommandFailure?`（${cause.message}）`:''));this.name='RecoverySupersedeFailure'}}
 export interface UpdateFilePorts {lstat:typeof lstat;mkdir:typeof mkdir;open:typeof open;readFile:typeof readFile;realpath:typeof realpath;rename:typeof rename;rm:typeof rm;writeFile:typeof writeFile;createReadStream:typeof createReadStream}
 export interface MacRecoveryPorts {execute:(file:string,args:string[])=>Promise<string>;hashTree:(root:string)=>Promise<string>;isAlive:(pid:number)=>boolean}
 export interface UpdateManagerOptions {
@@ -58,7 +81,7 @@ export interface UpdateManagerOptions {
 }
 const rawFs=updateRawFs(),rawPromises=rawFs.promises;
 const realFiles:UpdateFilePorts={lstat:rawPromises.lstat as typeof lstat,mkdir:rawPromises.mkdir as typeof mkdir,open:rawPromises.open as typeof open,readFile:rawPromises.readFile as typeof readFile,realpath:rawPromises.realpath as typeof realpath,rename:rawPromises.rename as typeof rename,rm:rawPromises.rm as typeof rm,writeFile:rawPromises.writeFile as typeof writeFile,createReadStream:rawFs.createReadStream as typeof createReadStream};
-const realRecoveryPorts:MacRecoveryPorts={execute:(file,args)=>new Promise((done,reject)=>execFile(file,args,{timeout:60_000,maxBuffer:8*1024*1024,encoding:'utf8',shell:false},(error,stdout)=>error?reject(error):done(stdout))),hashTree:hashUpdateTree,isAlive:pid=>{try{process.kill(pid,0);return true}catch(error){return (error as NodeJS.ErrnoException).code==='EPERM'}}};
+const realRecoveryPorts:MacRecoveryPorts={execute:(file,args)=>new Promise((done,reject)=>execFile(file,args,{timeout:60_000,maxBuffer:8*1024*1024,encoding:'utf8',shell:false},(error,stdout,stderr)=>error?reject(recoveryCommandFailure(file,error,stderr)):done(stdout))),hashTree:hashUpdateTree,isAlive:pid=>{try{process.kill(pid,0);return true}catch(error){return (error as NodeJS.ErrnoException).code==='EPERM'}}};
 const controlledMessage=(error:unknown,fallback:string)=>error instanceof UpdateError&&error.message?error.message:fallback;
 function inside(parent:string,child:string):boolean{const path=relative(resolve(parent),resolve(child));return !!path&&path!=='..'&&!path.startsWith('..'+sep)&&!isAbsolute(path)}
 function commandMatches(command:string,executablePath:string):boolean{return command.trim()===executablePath||command.trim().startsWith(executablePath+' ')}
@@ -121,23 +144,26 @@ export class UpdateManager {
     if(this.downloadPromise||['checking','downloading','installing'].includes(this.current.phase))return Promise.reject(Error('更新操作正在进行'));
     if(!this.recoveryPending)return Promise.reject(Error('当前没有待归档的 macOS 恢复事务'));
     if(!this.options.packaged||this.options.unsupportedReason||this.platform!=='darwin-arm64')return Promise.reject(Error('只能在已安装的 Apple Silicon macOS 正式客户端中恢复'));
-    const operation=this.performSupersedeRecovery().catch(()=>{this.recoveryPending=true;this.lockRecovery(this.current.targetVersion);throw Error('无法验证当前正式版本；旧更新事务仍保持锁定')});
+    const targetVersion=this.current.targetVersion,operation=this.performSupersedeRecovery().catch(error=>{const message=error instanceof RecoverySupersedeFailure?error.message:'无法安全恢复更新；恢复副本和原事务已保留';this.recoveryPending=true;this.lockRecovery(targetVersion,message);throw Error(message)});
     this.recoverySupersedePromise=operation;const clear=()=>{if(this.recoverySupersedePromise===operation)this.recoverySupersedePromise=undefined};void operation.then(clear,clear);return operation;
   }
   private async performSupersedeRecovery():Promise<UpdateState>{
-    await this.files.mkdir(this.options.updatesDirectory,{recursive:true,mode:0o700});
-    const errorPath=join(this.options.updatesDirectory,'install-error.json'),errorRaw=await this.readBoundedFile(errorPath,32*1024),failure=parseSmallJson<InstallError>(errorRaw,32*1024);
-    if(!this.validInstallError(failure)||!this.validRecoveryPath(failure.recoveryJobPath))throw Error('invalid recovery error');
-    const jobPath=failure.recoveryJobPath!,jobRaw=await this.readBoundedFile(jobPath,64*1024),job=validateUpdateHelperJob(parseSmallJson<unknown>(jobRaw,64*1024),jobPath),requestRaw=await this.readBoundedFile(job.startupRequestPath,16*1024),request=parseSmallJson<StartupRequest>(requestRaw,16*1024);
-    if(!this.frozenRecoveryMatches(jobPath,job,failure,request)||compareVersions(job.targetVersion,this.options.currentVersion)>=0)throw Error('recovery transaction is not an older frozen job');
-    if(!await this.frozenRecoveryMaterialsValid(job,jobPath))throw Error('recovery transaction is incomplete');
-
-    const verified=await fetchVerifiedManifest(this.options.publicKey,{request:this.options.request,timeoutMs:30_000}),asset=verified.manifest.assets['darwin-arm64'];
-    if(verified.manifest.version!==this.options.currentVersion||!asset)throw Error('current version has no signed published artifact');
-
-    const id=randomUUID(),jobId=basename(jobPath).slice('install-'.length,-'.json'.length),archiveName=`superseded-${jobId}-by-${this.options.currentVersion}-${id}`,archiveTemporary=join(this.options.updatesDirectory,'.'+archiveName+'.tmp'),archivePath=join(this.options.updatesDirectory,archiveName),verificationRoot=join(this.options.updatesDirectory,`.supersede-verify-${id}`),officialArtifactPath=join(archiveTemporary,`Linkflow-${this.options.currentVersion}-darwin-arm64.zip`);
-    let archiveCommitted=false;
+    let stage:RecoverySupersedeStage='transaction';const advance=(next:RecoverySupersedeStage)=>{stage=next;this.setRecoveryProgress(next)};advance(stage);
     try{
+      await this.files.mkdir(this.options.updatesDirectory,{recursive:true,mode:0o700});
+      const errorPath=join(this.options.updatesDirectory,'install-error.json'),errorRaw=await this.readBoundedFile(errorPath,32*1024),failure=parseSmallJson<InstallError>(errorRaw,32*1024);
+      if(!this.validInstallError(failure)||!this.validRecoveryPath(failure.recoveryJobPath))throw Error('invalid recovery error');
+      const jobPath=failure.recoveryJobPath!,jobRaw=await this.readBoundedFile(jobPath,64*1024),job=validateUpdateHelperJob(parseSmallJson<unknown>(jobRaw,64*1024),jobPath),requestRaw=await this.readBoundedFile(job.startupRequestPath,16*1024),request=parseSmallJson<StartupRequest>(requestRaw,16*1024);
+      if(!this.frozenRecoveryMatches(jobPath,job,failure,request)||compareVersions(job.targetVersion,this.options.currentVersion)>=0)throw Error('recovery transaction is not an older frozen job');
+      if(!await this.frozenRecoveryMaterialsValid(job,jobPath))throw Error('recovery transaction is incomplete');
+
+      advance('release');const verified=await fetchVerifiedManifest(this.options.publicKey,{request:this.options.request,timeoutMs:30_000}),asset=verified.manifest.assets['darwin-arm64'];
+      if(verified.manifest.version!==this.options.currentVersion||!asset)throw Error('current version has no signed published artifact');
+
+      const id=randomUUID(),jobId=basename(jobPath).slice('install-'.length,-'.json'.length),archiveName=`superseded-${jobId}-by-${this.options.currentVersion}-${id}`,archiveTemporary=join(this.options.updatesDirectory,'.'+archiveName+'.tmp'),archivePath=join(this.options.updatesDirectory,archiveName),verificationRoot=join(this.options.updatesDirectory,`.supersede-verify-${id}`),officialArtifactPath=join(archiveTemporary,`Linkflow-${this.options.currentVersion}-darwin-arm64.zip`);
+      let archiveCommitted=false;
+      try{
+      advance('archive');
       await this.files.mkdir(archiveTemporary,{recursive:false,mode:0o700});await this.files.mkdir(verificationRoot,{recursive:false,mode:0o700});
       await Promise.all([
         this.writeExclusive(join(archiveTemporary,'install-error.snapshot.json'),errorRaw),
@@ -146,14 +172,15 @@ export class UpdateManager {
         this.writeExclusive(join(archiveTemporary,'signed-manifest.json'),verified.manifestBytes),
         this.writeExclusive(join(archiveTemporary,'signed-manifest.sig'),verified.signature)
       ]);
-      await this.downloadRecoveryArtifact(asset,officialArtifactPath);
+      advance('artifact');await this.downloadRecoveryArtifact(asset,officialArtifactPath);
+      advance('extraction');
       await this.recoveryPorts.execute('/usr/bin/ditto',['-x','-k','--norsrc',officialArtifactPath,verificationRoot]);
       const officialApplicationPath=join(verificationRoot,basename(this.options.applicationPath)),executableRelative=relative(this.options.applicationPath,this.options.executablePath);
       if(!inside(this.options.applicationPath,this.options.executablePath))throw Error('current executable path is invalid');
-      const identity=await this.verifySupersedingIdentity(job,officialApplicationPath,join(officialApplicationPath,executableRelative));
+      const identity=await this.verifySupersedingIdentity(job,officialApplicationPath,join(officialApplicationPath,executableRelative),advance);
       if(!identity)throw Error('current application identity does not match the official artifact');
-      const officialArtifactInfo=await this.files.lstat(officialArtifactPath);if(!officialArtifactInfo.isFile()||officialArtifactInfo.isSymbolicLink()||officialArtifactInfo.size!==asset.size||await hashFile(officialArtifactPath,this.files.createReadStream)!==asset.sha256)throw Error('official artifact changed during verification');
-      if(!await this.frozenRecoveryMaterialsValid(job,jobPath)||!this.recoveryPorts.isAlive(this.options.pid??process.pid))throw Error('recovery transaction changed during verification');
+      advance('artifact');const officialArtifactInfo=await this.files.lstat(officialArtifactPath);if(!officialArtifactInfo.isFile()||officialArtifactInfo.isSymbolicLink()||officialArtifactInfo.size!==asset.size||await hashFile(officialArtifactPath,this.files.createReadStream)!==asset.sha256)throw Error('official artifact changed during verification');
+      advance('commit');if(!await this.frozenRecoveryMaterialsValid(job,jobPath)||!this.recoveryPorts.isAlive(this.options.pid??process.pid))throw Error('recovery transaction changed during verification');
       const currentErrorRaw=await this.readBoundedFile(errorPath,32*1024),currentJobRaw=await this.readBoundedFile(jobPath,64*1024),currentRequestRaw=await this.readBoundedFile(job.startupRequestPath,16*1024);
       if(this.digest(currentErrorRaw)!==this.digest(errorRaw)||this.digest(currentJobRaw)!==this.digest(jobRaw)||this.digest(currentRequestRaw)!==this.digest(requestRaw))throw Error('recovery transaction changed during verification');
       const record:SupersededRecoveryRecord={schemaVersion:1,status:'superseded',supersededAt:(this.options.now?.()??new Date()).toISOString(),oldTargetVersion:job.targetVersion,currentVersion:this.options.currentVersion,currentPublishedAt:verified.manifest.publishedAt,frozenJobSha256:this.digest(jobRaw),frozenErrorSha256:this.digest(errorRaw),frozenRequestSha256:this.digest(requestRaw),frozenArtifactSha256:job.artifactSha256,signedManifestSha256:this.digest(verified.manifestBytes),signedArtifactSha256:asset.sha256,signedArtifactSize:asset.size,currentTreeSha256:identity.treeSha256,runtimeTranslocated:identity.runtimeTranslocated};
@@ -164,9 +191,10 @@ export class UpdateManager {
       await this.files.rename(errorPath,join(archivePath,'install-error.original.json'));
       this.verified=verified;this.artifactPath=undefined;this.recoveryPending=false;
       return this.set({phase:'up-to-date',currentVersion:this.options.currentVersion,targetVersion:this.options.currentVersion,releaseNotes:verified.manifest.releaseNotes,publishedAt:verified.manifest.publishedAt,checkedAt:(this.options.now?.()??new Date()).toISOString(),recoveryPending:false});
-    }finally{
+      }finally{
       await this.files.rm(verificationRoot,{recursive:true,force:true}).catch(()=>{});if(!archiveCommitted)await this.files.rm(archiveTemporary,{recursive:true,force:true}).catch(()=>{});
-    }
+      }
+    }catch(error){if(error instanceof RecoverySupersedeFailure)throw error;throw new RecoverySupersedeFailure(stage,error)}
   }
   private frozenRecoveryMatches(jobPath:string,job:UpdateHelperJob,failure:InstallError,request:StartupRequest):boolean{
     return job.platform==='darwin-arm64'&&failure.targetVersion===job.targetVersion&&resolve(failure.recoveryJobPath!)===resolve(jobPath)&&request.schemaVersion===1&&request.targetVersion===job.targetVersion&&request.token===job.token&&resolve(job.updatesDirectory)===resolve(this.options.updatesDirectory)&&resolve(job.applicationPath)===resolve(this.options.applicationPath)&&resolve(job.executablePath)===resolve(this.options.executablePath)&&resolve(job.errorPath)===resolve(this.options.updatesDirectory,'install-error.json')&&resolve(job.receiptPath)===resolve(this.options.updatesDirectory,'installed.json')&&typeof failure.cleanupPath==='string'&&resolve(failure.cleanupPath)===resolve(job.helperRuntimePath);
@@ -182,15 +210,20 @@ export class UpdateManager {
     const processes=await this.recoveryPorts.execute('/bin/ps',['-axo','pid=,command=']),currentPid=this.options.pid??process.pid;
     for(const line of processes.split('\n')){const match=/^\s*(\d+)\s+(.+)$/.exec(line);if(!match||Number(match[1])===currentPid)continue;const command=match[2];if(command.includes(job.helperRuntimePath+sep)||command.includes(jobPath))return true}return false;
   }
-  private async verifySupersedingIdentity(job:UpdateHelperJob,officialApplicationPath:string,officialExecutablePath:string):Promise<{treeSha256:string;runtimeTranslocated:boolean}|undefined>{
+  private async verifySupersedingIdentity(job:UpdateHelperJob,officialApplicationPath:string,officialExecutablePath:string,advance:(stage:RecoverySupersedeStage)=>void):Promise<{treeSha256:string;runtimeTranslocated:boolean}|undefined>{
     try{
       const pid=this.options.pid??process.pid,runtimeApplicationPath=this.options.runtimeApplicationPath??this.options.applicationPath,runtimeExecutablePath=this.options.runtimeExecutablePath??this.options.executablePath;
+      advance('identity-process');
       if(pid===job.oldPid||!this.recoveryPorts.isAlive(pid)||!macShape(runtimeApplicationPath,runtimeExecutablePath,this.options.applicationPath,this.options.executablePath))return;
       const command=await this.recoveryPorts.execute('/bin/ps',['-p',String(pid),'-o','command=']);if(!commandMatches(command,runtimeExecutablePath))return;
       const applicationReal=await this.files.realpath(this.options.applicationPath),runtimeReal=await this.files.realpath(runtimeApplicationPath),runtimeTranslocated=applicationReal!==runtimeReal;
       if(runtimeTranslocated&&!confirmedTranslocation(runtimeApplicationPath,await this.recoveryPorts.execute('/sbin/mount',[])))return;
+      advance('identity-official');
       const treeSha256=await this.recoveryPorts.hashTree(officialApplicationPath);if(!/^[a-f0-9]{64}$/.test(treeSha256))return;
-      if(!await this.verifyRecoveryBundle(officialApplicationPath,officialExecutablePath,this.options.currentVersion,treeSha256,false)||!await this.verifyRecoveryBundle(this.options.applicationPath,this.options.executablePath,this.options.currentVersion,treeSha256,true)||!await this.verifyRecoveryBundle(runtimeApplicationPath,runtimeExecutablePath,this.options.currentVersion,treeSha256,false)||!this.recoveryPorts.isAlive(pid))return;
+      if(!await this.verifyRecoveryBundle(officialApplicationPath,officialExecutablePath,this.options.currentVersion,treeSha256,false))return;
+      advance('identity-installed');if(!await this.verifyRecoveryBundle(this.options.applicationPath,this.options.executablePath,this.options.currentVersion,treeSha256,true))return;
+      advance('identity-runtime');if(!await this.verifyRecoveryBundle(runtimeApplicationPath,runtimeExecutablePath,this.options.currentVersion,treeSha256,false)||!this.recoveryPorts.isAlive(pid))return;
+      advance('identity-process');
       const finalCommand=await this.recoveryPorts.execute('/bin/ps',['-p',String(pid),'-o','command=']);if(!commandMatches(finalCommand,runtimeExecutablePath)||!this.recoveryPorts.isAlive(pid))return;
       return {treeSha256,runtimeTranslocated};
     }catch{return}
@@ -209,7 +242,8 @@ export class UpdateManager {
   private digest(data:Buffer):string{return createHash('sha256').update(data).digest('hex')}
   private validStartupRequest(value:StartupRequest|undefined):value is StartupRequest{return !!value&&value.schemaVersion===1&&value.targetVersion===this.options.currentVersion&&typeof value.token==='string'&&/^[a-f0-9-]{16,64}$/i.test(value.token)}
   private validInstallError(value:InstallError|undefined):value is InstallError{return !!value&&value.schemaVersion===1&&typeof value.targetVersion==='string'&&/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(value.targetVersion)&&typeof value.failedAt==='string'&&!Number.isNaN(Date.parse(value.failedAt))&&typeof value.message==='string'&&(!value.cleanupPath||typeof value.cleanupPath==='string')&&(!value.recoveryJobPath||typeof value.recoveryJobPath==='string')}
-  private lockRecovery(targetVersion?:string):UpdateState{return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion,retryable:false,recoveryPending:true,error:'新版本启动身份未能确认，已保留恢复副本；请重新打开应用，如仍提示失败请联系支持'})}
+  private setRecoveryProgress(stage:RecoverySupersedeStage):UpdateState{return this.set({phase:'checking',currentVersion:this.options.currentVersion,targetVersion:this.current.targetVersion,retryable:false,recoveryPending:true,error:recoveryStageCopy[stage].progress})}
+  private lockRecovery(targetVersion?:string,error='新版本启动身份未能确认，已保留恢复副本；请重新打开应用，如仍提示失败请联系支持'):UpdateState{return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion,retryable:false,recoveryPending:true,error})}
   private async stateFilePresent(name:string):Promise<boolean>{try{await this.files.lstat(join(this.options.updatesDirectory,name));return true}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT'}}
   private async pathPresent(path:string):Promise<boolean>{try{await this.files.lstat(path);return true}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT'}}
   private async verifyRecoveryBundle(applicationPath:string,executablePath:string,targetVersion:string,treeSha256:string,requireQuarantine:boolean):Promise<boolean>{

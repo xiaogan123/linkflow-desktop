@@ -157,3 +157,18 @@ test('validated backup preserves a real custom-channel id and sourced metrics',(
  state.channelMetrics=importChannelMetrics({},[{channelId:custom[0].id,authority:{name:'Synthetic score',value:42,source:'https://metrics.example.org/method',asOf:'2026-09-28',scope:'domain'},traffic:{monthly:1234,source:'https://metrics.example.org/traffic',asOf:'2026-09-28',region:'Global',period:'2026-08',metric:'visits',estimated:true}}],[...CHANNELS,...custom]);
  const restored=validateBackup({state,secrets:{}}).state;assert.equal(restored.customChannels?.[0].id,custom[0].id);assert.deepEqual(restored.channelMetrics?.[custom[0].id],state.channelMetrics[custom[0].id]);
 });
+
+
+test('password import rejects managed API channels and existing API identities before encryption',()=>{
+ const store=new Store(':memory:');let encrypted=false;
+ try{
+  const managed={...channel(),id:'telegraph',automation:'api' as const};
+  const before=store.read();
+  assert.throws(()=>saveAccountAtomic(store,{channelId:managed.id,email:'owner@example.com',username:'owner',password:'secret'},managed,()=>{encrypted=true;return {}}),/自动准备/);
+  assert.equal(encrypted,false);assert.deepEqual(store.read(),before);assert.deepEqual(store.allCiphers(),{});
+  store.update(state=>{state.accounts.push({id:accountId,channelId:'profile',email:'owner@example.com',username:'owner',createdAt:'2026-09-01T00:00:00.000Z',status:'registered',hasPassword:true,credentialKind:'api_token'})});
+  const withIdentity=store.read();
+  assert.throws(()=>saveAccountAtomic(store,{id:accountId,channelId:'profile',email:'owner@example.com',username:'owner',password:'replacement'},channel(),()=>{encrypted=true;return {}}),/专用连接/);
+  assert.equal(encrypted,false);assert.deepEqual(store.read(),withIdentity);assert.deepEqual(store.allCiphers(),{});
+ }finally{store.close()}
+});

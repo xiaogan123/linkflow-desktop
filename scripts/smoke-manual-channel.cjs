@@ -33,7 +33,7 @@ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.query
  check('existing source offers continuation rather than duplicate creation',await evaluate('document.querySelector(".channel-details-row:not([hidden])").innerText.includes("查看已有任务")'));
  check('backend rejects duplicate source',await invoke('site:queue-channel',{id:siteId,channelId:'wordpress-com'}).then(()=>false,()=>true));
  await evaluate('document.querySelector(".channel-details-row:not([hidden]) .channel-task-action").scrollIntoView({block:"center"})');await delay(80);writeFileSync('.evidence/manual-channel-workflow.png',(await win.webContents.capturePage()).toPNG());
- await click('任务');await click('需处理');
+ await click('任务');await click('需你处理');
  await evaluate('document.querySelector(".work-identity").click()');await delay(80);
  check('manual task exposes AI material preparation',await evaluate('document.body.innerText.includes("AI 准备材料")'));
  writeFileSync('.evidence/manual-channel-smoke.json',JSON.stringify({passed:true,checks},null,2));
