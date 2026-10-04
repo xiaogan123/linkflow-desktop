@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CHANNELS} from '../src/integrations/catalog';
-import {applyChannelPolicyDecision,channelPolicyScopeHash,currentChannelPolicyDecision} from '../src/main/channel-policy';
+import {applyChannelPolicyDecision,channelPolicyScopeHash,currentChannelPolicyDecision,supportsOfficialGuidanceReview} from '../src/main/channel-policy';
 import {articleReviewStillValid,reviewArticleDraft} from '../src/main/article-review';
 import {emptyState} from '../src/main/store';
 import {validateBackup} from '../src/main/backup-validation';
@@ -13,17 +13,43 @@ const checks:ArticleChecks={factualAccuracy:'pass',authorRelationship:'pass',aff
 const siteQuote='We operate this website and receive referral commissions.';
 const channelQuote='Telegraph is a publishing tool that lets you create richly formatted posts.';
 const fetchHtml=async(url:string)=>({url,html:url.startsWith('https://policy-fixture.com/')?'<p>'+siteQuote+'</p>':'<p>'+channelQuote+'</p>'});
-function model(values:Record<string,unknown>={}):AiPort{return {json:async()=>({verdict:'unknown',reason:'No applicable content policy is present; content is supported.',checks:{...checks},citations:[{url:'https://policy-fixture.com/',quote:siteQuote},{url:'https://telegram.org/blog/telegraph',quote:channelQuote}],...values}) as never};}
+function model(values:Record<string,unknown>={}):AiPort{return {json:async()=>({knownChannelRestrictions:'pass',verdict:'unknown',reason:'Content and use fit the known official guidance; full policy remains unknown.',checks:{...checks},citations:[{url:'https://policy-fixture.com/',quote:siteQuote},{url:'https://telegram.org/blog/telegraph',quote:channelQuote}],...values}) as never};}
 
-test('API/product guidance alone stops before inference or a hallucinated policy pass',async()=>{
- const state=fixture();let calls=0;const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,{json:async()=>{calls++;throw Error('must not run')}},undefined,{fetchHtml});assert.equal(calls,0);assert.equal(r.status,'failed');assert.equal(r.reasonCode,'policy_not_found');assert.ok(r.evidenceUrls.includes('https://telegra.ph/api'));
+test('official Telegraph guidance runs independent AI review without fabricating a policy decision',async()=>{
+ const state=fixture();let calls=0;const semantic=model();let input:unknown,instruction='';
+ const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,{json:async(...args)=>{calls++;instruction=args[0];input=args[1];return semantic.json(...args)}},undefined,{fetchHtml});
+ assert.equal(calls,1);assert.equal(r.status,'passed');assert.equal(r.reasonCode,'passed');assert.equal(r.checks?.channelRules,'unknown');assert.equal(r.policyDecision,undefined);assert.equal(state.sites[0].channelPolicyDecisions,undefined);assert.match(r.reason,/尚未找到完整适用内容政策/);assert.match(instruction,/knownChannelRestrictions/);
+ assert.deepEqual((input as {draft:unknown}).draft,state.tasks[0].draft);assert.equal(articleReviewStillValid({...state.tasks[0],articleReview:r},state.sites[0],channel,state.settings),true);
+ const sources=(input as {evidence:{kind:string}[]}).evidence;assert.ok(sources.some(item=>item.kind==='api'));assert.ok(sources.some(item=>item.kind==='product_guidance'));assert.equal(sources.some(item=>item.kind==='content_policy'),false);
 });
-test('site-specific confirmed use keeps channelRules unknown while separate content checks pass',async()=>{
- const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model(),undefined,{fetchHtml});assert.equal(r.status,'passed');assert.equal(r.reasonCode,'user_policy_decision');assert.equal(r.checks?.channelRules,'unknown');assert.ok(r.policyDecision);assert.equal(articleReviewStillValid({...state.tasks[0],articleReview:r},state.sites[0],channel,state.settings),true);
+
+test('guidance review requires an explicit independent known-restrictions result',async()=>{
+ for(const update of [{knownChannelRestrictions:'unknown'},{knownChannelRestrictions:'fail'},{knownChannelRestrictions:undefined},{knownChannelRestrictions:'allowed'},{verdict:'pass',checks:{...checks,channelRules:'pass'}}]){
+  const state=fixture(),r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model(update),undefined,{fetchHtml});assert.equal(r.status,'failed');
+  if(update.knownChannelRestrictions==='fail')assert.equal(r.checks?.channelRules,'fail');
+ }
+});
+
+test('missing policy cannot bypass an explicit prohibition even with an old native decision',async()=>{
+ const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);
+ const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model({verdict:'reject',knownChannelRestrictions:'fail',reason:'The fetched official guidance explicitly prohibits this use.'}),undefined,{fetchHtml});
+ assert.equal(r.status,'failed');assert.equal(r.checks?.channelRules,'fail');assert.equal(r.reasonCode,'content_rejected');
+});
+
+test('automatic guidance review is limited to exact trusted built-in Telegraph sources',async()=>{
+ const source=channel.evidenceSources!;
+ const variants=[{...channel,provenance:'custom' as const},{...channel,id:'other'},{...channel,automation:'browser' as const},{...channel,evidenceSources:[source[0]]},{...channel,evidenceSources:[source[0],{...source[1],url:'https://telegra.ph/Terms-01-01'}]},{...channel,evidenceSources:[source[0],{...source[1],appliesTo:'other'}]},{...channel,evidenceSources:[source[0],{...source[1],applicability:'unconfirmed' as const}]}];
+ for(const candidate of variants){
+  assert.equal(supportsOfficialGuidanceReview(candidate),false);const state=fixture();let calls=0;
+  const r=await reviewArticleDraft(state.tasks[0],state.sites[0],candidate,state.settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml});assert.equal(calls,0);assert.equal(r.status,'failed');assert.equal(r.reasonCode,'policy_not_found');
+ }
+});
+test('legacy confirmed use still requires fresh content and known-guidance checks',async()=>{
+ const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model(),undefined,{fetchHtml});assert.equal(r.status,'passed');assert.equal(r.reasonCode,'passed');assert.equal(r.checks?.channelRules,'unknown');assert.equal(r.policyDecision,undefined);assert.equal(articleReviewStillValid({...state.tasks[0],articleReview:r},state.sites[0],channel,state.settings),true);
  const changed={...state.sites[0],channelPolicyDecisions:{}};assert.equal(articleReviewStillValid({...state.tasks[0],articleReview:r},changed,channel,state.settings),false);
 });
 test('confirmed channel cannot override content unknown/fail, explicit policy fail or rejection',async()=>{
- for(const update of [{checks:{...checks,factualAccuracy:'unknown'}},{checks:{...checks,affiliateDisclosure:'fail'}},{checks:{...checks,channelRules:'fail'}},{verdict:'reject'}]){const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model(update),undefined,{fetchHtml});assert.equal(r.status,'failed');}
+ for(const update of [{checks:{...checks,factualAccuracy:'unknown'}},{checks:{...checks,authorRelationship:'unknown'}},{checks:{...checks,affiliateDisclosure:'fail'}},{checks:{...checks,independentValue:'fail'}},{checks:{...checks,financialSafety:'unknown'}},{checks:{...checks,channelRules:'fail'}},{verdict:'reject'}]){const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model(update),undefined,{fetchHtml});assert.equal(r.status,'failed');}
 });
 test('confirmed use cannot override fetch failure, fake citation or a source redirect',async()=>{
  const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);
@@ -43,3 +69,9 @@ test('saving changed AI draft queues an independent review; manual, paused and s
 
  test('channel confirmation never reactivates skipped article tasks',()=>{const state=fixture();state.tasks[0].status='skipped';for(const allow of [true,false]){applyChannelPolicyDecision(state,state.sites[0].id,channel,allow);assert.equal(state.tasks[0].status,'skipped');}});
  test('AI provider failure is separate from evidence fetching failure',async()=>{const state=fixture();applyChannelPolicyDecision(state,state.sites[0].id,channel,true);const r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,{json:async()=>{throw Error('provider unavailable')}},undefined,{fetchHtml});assert.equal(r.reasonCode,'ai_unavailable');});
+
+test('guidance approval still requires real citations from both site and channel',async()=>{
+ for(const citations of [[{url:'https://policy-fixture.com/',quote:siteQuote}],[{url:'https://telegram.org/blog/telegraph',quote:channelQuote}],[{url:'https://policy-fixture.com/',quote:siteQuote},{url:'https://telegra.ph/api',quote:'The API expressly approves all affiliate promotions.'}]]){
+  const state=fixture(),r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model({citations}),undefined,{fetchHtml});assert.equal(r.status,'failed');assert.equal(r.reasonCode,'evidence_invalid');
+ }
+});

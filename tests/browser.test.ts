@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyAccountPage, classifyControl, isAllowedTaskUrl, isDestructiveControl, redactStructuredSecrets, selectPublicUrl } from '../src/integrations/browser';
+import { classifyAccountPage, classifyControl, isAllowedTaskUrl, isDestructiveControl, redactStructuredSecrets, selectPublicUrl, taskBrowserLoadError } from '../src/integrations/browser';
 
 const control = (label: string, type = 'button') => ({ id: 0, tag: 'button', type, label, name: '', href: '', signature: '' });
 
@@ -11,6 +11,15 @@ test('navigation is limited to HTTPS channel hosts', () => {
   assert.equal(isAllowedTaskUrl('https://example.com.evil.test/', hosts), false);
   assert.equal(isAllowedTaskUrl('http://example.com/', hosts), false);
   assert.equal(isAllowedTaskUrl('https://user:pass@example.com/', hosts), false);
+});
+
+test('browser load errors explain blocked redirects without exposing URLs or credentials', () => {
+  const blocked=taskBrowserLoadError(new Error("ERR_BLOCKED_BY_CLIENT (-20) loading 'https://accounts.google.com/?token=fixture-secret'"));
+  assert.match(blocked.message,/允许域名/);
+  assert.doesNotMatch(blocked.message,/accounts\.google|fixture-secret|https:/);
+  const offline=taskBrowserLoadError(new Error("ERR_NAME_NOT_RESOLVED loading 'https://private.example/?password=fixture-secret'"));
+  assert.match(offline.message,/检查网络/);
+  assert.doesNotMatch(offline.message,/private\.example|fixture-secret|https:/);
 });
 
 test('paid paths and submissions are classified before clicking', () => {

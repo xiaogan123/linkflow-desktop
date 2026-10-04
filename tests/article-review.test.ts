@@ -106,3 +106,9 @@ test('review input overflow is explicit and never causes a partial-tail review',
   const review=await reviewArticleDraft(oversized,site,channel,settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml:fetcher()});
   assert.equal(calls,0);assert.equal(review.status,'failed');assert.match(review.reason,/完整稿件与有界证据/);assert.match(review.reason,/稿件未被截断或部分送审/);
 });
+
+test('an actual return promise stops the complete draft before any paid inference',async()=>{
+ let calls=0;const unsafe={...task,draft:{...task.draft!,body:task.draft!.body+' Guaranteed returns are available.'}};
+ const review=await reviewArticleDraft(unsafe,site,channel,settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml:fetcher()});
+ assert.equal(calls,0);assert.equal(review.status,'failed');assert.equal(review.reasonCode,'content_rejected');assert.match(review.reason,/收益或无风险承诺/);
+});

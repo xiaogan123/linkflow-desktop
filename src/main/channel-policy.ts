@@ -13,6 +13,11 @@ export function canConfirmMissingPolicy(channel:Channel){
     new Set(channel.evidenceSources.map(source=>source.kind)).size===2;
 }
 
+/** Evidence coverage only; this does not claim all platform policies are known. */
+export function supportsOfficialGuidanceReview(channel:Channel){
+  return canConfirmMissingPolicy(channel)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
+}
+
 export function channelPolicyScopeHash(site:Site,channel:Channel){
   return createHash('sha256').update(JSON.stringify({version:1,site:{id:site.id,domain:site.domain,url:site.url},channel:{id:channel.id,domain:channel.domain,rulesUrl:channel.rulesUrl,checkedAt:channel.checkedAt,notes:channel.notes,evidenceSources:channelEvidenceSources(channel)}})).digest('hex');
 }

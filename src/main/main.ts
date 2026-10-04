@@ -36,6 +36,7 @@ import {saveSettingsAtomic} from './settings-service';
 import {loginItemReadOptions,withLoginItemPreference} from './login-item';
 import {getArticleReviewMode} from '../shared/article-review-mode';
 import {channelDiscoveryFor} from '../integrations/channel-discovery';
+import {isAllowedTaskUrl} from '../integrations/browser';
 import {applySiteUpdate} from './site-service';
 import {applyChannelPolicyDecision,canConfirmMissingPolicy} from './channel-policy';
 import {saveTaskDraft} from './task-draft';
@@ -139,7 +140,19 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(t.channelId==='github-gist'){forbidBusy();await controller.adoptGist(t.siteId,u.href);break;}
       if(!belongsToSource(u.href,t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const,reviewKind:'manual_url' as const,reviewUntil:new Date(Date.now()+30*86400000).toISOString(),nextCheckAt:new Date().toISOString(),health:'unknown' as const}: {})});await controller.verify(input.id);break;
     }
-    case 'task:open':await controller.manualOpen(getId(p));break;
+    case 'task:open':{
+      const id=getId(p),state=store.read(),task=state.tasks.find(item=>item.id===id);
+      if(!task)throw Error('任务不存在');
+      const channel=controller.channels().find(item=>item.id===task.channelId);
+      if(!channel)throw Error('任务关联的渠道已不存在');
+      if(channel.automation==='manual'){
+        const url=publicUrl(channel.submitUrl);
+        if(!isAllowedTaskUrl(url.href,channel.allowedHosts))throw Error('渠道提交地址不在允许的 HTTPS 域名内');
+        await openInPreferredBrowser(url.href,state.settings.preferredBrowser,value=>shell.openExternal(value));
+        return;
+      }
+      await controller.manualOpen(id);break;
+    }
     case 'task:open-result':{const id=getId(p),task=store.read().tasks.find(item=>item.id===id);if(!task?.publicUrl)throw Error('任务还没有公开结果网址');const url=publicUrl(task.publicUrl);await openInPreferredBrowser(url.href,store.read().settings.preferredBrowser,value=>shell.openExternal(value));return;}
     case 'task:generate':{forbidBusy();await controller.generateDraft(getId(p));break;}
     case 'task:update-draft':{

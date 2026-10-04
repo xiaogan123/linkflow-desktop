@@ -1,8 +1,10 @@
-const {app,BrowserWindow}=require('electron');
+const {app,BrowserWindow,shell}=require('electron');
 const {mkdirSync,writeFileSync}=require('node:fs');
 const {join}=require('node:path');
 const {DatabaseSync}=require('node:sqlite');
 const assert=require('node:assert/strict');
+const openedUrls=[];
+shell.openExternal=async url=>{openedUrls.push(url)};
 const siteId='77777777-7777-4777-8777-777777777777';
 mkdirSync(process.env.LINKFLOW_DATA_DIR,{recursive:true});
 const db=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
@@ -36,6 +38,33 @@ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.query
  await click('任务');await click('需你处理');
  await evaluate('document.querySelector(".work-identity").click()');await delay(80);
  check('manual task exposes AI material preparation',await evaluate('document.body.innerText.includes("AI 准备材料")'));
+ await invoke('site:queue-channel',{id:siteId,channelId:'blogger'});await delay(100);
+ const beforeOpen=await invoke('snapshot'),blogger=beforeOpen.tasks.find(t=>t.siteId===siteId&&t.channelId==='blogger'),windowCount=BrowserWindow.getAllWindows().length;
+ check('Blogger is queued as manual work',blogger?.status==='needs_input');
+ await invoke('task:open',{id:blogger.id});
+ const afterOpen=await invoke('snapshot');
+ check('Blogger opens the catalog submission URL in the preferred external browser',openedUrls.length===1&&openedUrls[0]==='https://www.blogger.com/');
+ check('manual open creates no Electron task window, account, draft or AI usage',BrowserWindow.getAllWindows().length===windowCount&&afterOpen.accounts.length===beforeOpen.accounts.length&&JSON.stringify(afterOpen.tasks.find(t=>t.id===blogger.id))===JSON.stringify(blogger)&&JSON.stringify(afterOpen.usage)===JSON.stringify(beforeOpen.usage));
+ await invoke('site:update',{id:siteId,category:'developer',qualifications:{developer:'https://manual.example/project'}});
+ await invoke('site:queue-channel',{id:siteId,channelId:'github'});
+ await invoke('account:save',{channelId:'github',email:'owner@manual.example',username:'fixture-account',siteIds:[siteId]});
+ const browserTask=(await invoke('snapshot')).tasks.find(t=>t.siteId===siteId&&t.channelId==='github');
+ check('browser automation fixture has a task and imported account',!!browserTask);
+ const originalLoad=BrowserWindow.prototype.loadURL;
+ let loadCalls=0;
+ try{
+  BrowserWindow.prototype.loadURL=async function(){loadCalls++;throw Error("ERR_BLOCKED_BY_CLIENT (-20) loading 'https://accounts.example/?token=fixture-secret'")};
+  const failure=await invoke('task:open',{id:browserTask.id}).then(()=>'',error=>String(error));
+  check('blocked browser redirect reports a redacted error and closes the failed window',failure.includes('允许域名')&&!failure.includes('fixture-secret')&&!failure.includes('accounts.example')&&BrowserWindow.getAllWindows().length===windowCount);
+  BrowserWindow.prototype.loadURL=async function(){loadCalls++};
+  await invoke('task:open',{id:browserTask.id});
+  check('a second open creates a fresh browser window after load failure',loadCalls===2&&BrowserWindow.getAllWindows().length===windowCount+1);
+  await invoke('task:open',{id:browserTask.id});
+  check('loaded automatic browser window is reused without another load',loadCalls===2);
+ }finally{
+  BrowserWindow.prototype.loadURL=originalLoad;
+  BrowserWindow.getAllWindows().find(w=>w.getTitle().includes('· GitHub'))?.close();
+ }
  writeFileSync('.evidence/manual-channel-smoke.json',JSON.stringify({passed:true,checks},null,2));
  console.log('MANUAL CHANNEL SMOKE PASSED: '+checks.length+' checks');await invoke('app:quit').catch(()=>{});
 })().catch(error=>{writeFileSync('.evidence/manual-channel-smoke.json',JSON.stringify({passed:false,error:String(error),checks},null,2));console.error(error);app.exit(1)});

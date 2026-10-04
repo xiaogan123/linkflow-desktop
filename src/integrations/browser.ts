@@ -49,6 +49,11 @@ export function classifyControl(control: Control): 'registration'|'submission'|'
 
 export function partitionFor(channelId: string, identity: string): string { return `persist:linkflow-${createHash('sha256').update(`${channelId}|${identity.toLowerCase()}`).digest('hex').slice(0, 20)}`; }
 function mustContinue(context: ExecutionContext): void { if (context.signal.aborted) throw new Error('任务已取消'); }
+export function taskBrowserLoadError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : '';
+  if (/ERR_BLOCKED_BY_CLIENT\b|\(-20\)/.test(message)) return new Error('渠道页面跳转超出自动浏览器允许域名，请人工检查平台登录流程');
+  return new Error('渠道页面加载失败，请检查网络或平台状态后重试');
+}
 
 async function browserFor(context: ExecutionContext, show = false): Promise<BrowserWindow> {
   const { BrowserWindow, session } = await import('electron');
@@ -83,8 +88,16 @@ async function browserFor(context: ExecutionContext, show = false): Promise<Brow
   const onAbort = () => { if (!window.isDestroyed()) window.close(); };
   context.signal.addEventListener('abort', onAbort, { once: true });
   window.on('closed', () => context.signal.removeEventListener('abort', onAbort));
-  await window.loadURL(context.channel.submitUrl);
-  mustContinue(context);
+  try {
+    await window.loadURL(context.channel.submitUrl);
+    mustContinue(context);
+  } catch (error) {
+    if (windows.get(context.task.id) === window) windows.delete(context.task.id);
+    manualTermsSeen.delete(context.task.id);
+    if (!window.isDestroyed()) window.destroy();
+    if (context.signal.aborted) throw new Error('任务已取消');
+    throw taskBrowserLoadError(error);
+  }
   return window;
 }
 
