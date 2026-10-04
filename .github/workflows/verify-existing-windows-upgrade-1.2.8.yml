@@ -1,0 +1,52 @@
+name: Verify existing Windows 1.2.8 upgrade artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native-upgrade:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37183334701
+          name: linkflow-windows-x64
+          path: release
+          github-token: ${{ github.token }}
+      - name: Verify candidate identity and stage its packaged resources
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -ne '1.2.8') { throw 'Checkout is not the 1.2.8 candidate.' }
+          $run = Invoke-RestMethod -Uri 'https://api.github.com/repos/xiaogan123/linkflow-desktop/actions/runs/37183334701' -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          if ($run.head_sha -ne '3287fe5a67147f6407433eccc71b44d905f4f270') { throw 'Artifact build commit differs from the reviewed run.' }
+          $installer = Join-Path (Resolve-Path release) 'Linkflow-1.2.8-windows-x64-setup.exe'
+          $expected = 'a767eb74af4a7e1efdbe317511bec10d4684d95378fb78a488c72de1f31a1ddb'
+          if (-not (Test-Path -LiteralPath $installer)) { throw 'Candidate installer is missing.' }
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Candidate installer SHA-256 mismatch.' }
+          if ((Get-Content release/SHA256SUMS-windows-x64.txt -Raw).Trim() -ne "$expected  Linkflow-1.2.8-windows-x64-setup.exe") { throw 'Candidate checksum file mismatch.' }
+          $stage = Join-Path $env:RUNNER_TEMP 'linkflow-candidate-stage'
+          $installed = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$stage") -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { throw 'Candidate staging install failed.' }
+          $target = Join-Path (Resolve-Path release) '外链助手-win32-x64'
+          New-Item -ItemType Directory -Path (Join-Path $target 'resources') -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $stage 'resources/app.asar') -Destination (Join-Path $target 'resources/app.asar')
+          Copy-Item -LiteralPath (Join-Path $stage 'LICENSES.chromium.html') -Destination (Join-Path $target 'LICENSES.chromium.html')
+          $uninstalled = Start-Process -FilePath (Join-Path $stage 'Uninstall 外链助手.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($uninstalled.ExitCode -ne 0) { throw 'Candidate staging uninstall failed.' }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Verify published 1.2.7 to exact candidate 1.2.8 native upgrade
+        run: npm run test:update-native
