@@ -1,5 +1,5 @@
 import type { Category, Channel, Site } from '../shared/types.js';
-import {eligibilityFor} from './eligibility';
+import {channelDiscoveryFor} from './channel-discovery';
 
 const checkedAt = '2026-09-27';
 type Entry = Pick<Channel, 'id'|'name'|'domain'|'submitUrl'|'categories'|'kind'|'free'|'freeNote'|'quality'|'qualityReason'|'rulesUrl'|'notes'> &
@@ -25,7 +25,7 @@ function channel(entry: Entry): Channel {
 // 渠道必须面向相关受众，并承载真实的资料页、产品、作品或文章。
 // A/B/C 仅表示编辑适配度，不代表域名权重、流量或预期 SEO 效果。
 export const CHANNELS: Channel[] = [
-  channel({id:'github-gist',name:'GitHub Gist',domain:'gist.github.com',submitUrl:'https://gist.github.com/',categories:['developer','software','ai','education','finance'],languages:['*'],kind:'article',free:'yes',freeNote:'公开 Gist 免费；首次连接已有 GitHub 账号的 Gists 读写令牌。',quality:'B',qualityReason:'适合有实际用途的代码、模板和技术说明，不代表权重或收录保证。',rulesUrl:'https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies',notes:'只发布本人项目相关、可复用的技术材料；不得以广告为主要内容。需要提供本人维护的项目资料，稿件确认后通过官方 API 发布。GitHub 条款要求账号由真人创建；本客户端只导入并复用已有账号，受限时不自动换号。',accountRequired:true,emailRequired:false,articleRequired:true,automation:'api'}),
+  channel({id:'github-gist',name:'GitHub Gist',domain:'gist.github.com',submitUrl:'https://gist.github.com/',categories:['developer','software','ai','education','finance'],languages:['*'],kind:'article',free:'yes',freeNote:'公开 Gist 免费；首次连接已有 GitHub 账号的 Gists 读写令牌。',quality:'B',qualityReason:'适合有实际用途的代码、模板和技术说明，不代表权重或收录保证。',rulesUrl:'https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies',notes:'只发布本人项目相关、可复用的技术材料；不得以广告为主要内容。需要有本站公开的可复用代码、计算工具或技术模板材料，稿件独立核对后通过官方 API 发布。GitHub 条款要求账号由真人创建；本客户端只导入并复用已有账号，受限时不自动换号。',accountRequired:true,emailRequired:false,articleRequired:true,automation:'api'}),
   channel({id:'telegraph',name:'Telegraph',domain:'telegra.ph',submitUrl:'https://telegra.ph/',categories:['general','content','education','finance','ai','developer'],languages:['*'],kind:'article',free:'yes',freeNote:'官方发布接口无需付费，使用自动创建的作者令牌。',quality:'C',qualityReason:'可独立阅读的公开文章；不代表编辑背书或搜索引擎收录。',rulesUrl:'https://telegra.ph/api',evidenceSources:[{url:'https://telegra.ph/api',kind:'api',appliesTo:'telegraph',applicability:'verified'},{url:'https://telegram.org/blog/telegraph',kind:'product_guidance',appliesTo:'telegraph',applicability:'verified'}],notes:'通过官方 API 创建作者和文章，令牌仅加密保存在本机。现有官方来源为接口文档，不代表已确认所有内容或返佣推广规则；AI 无法核实时会交给用户。文章须有独立价值，明确作者与网站关系，不批量复制或堆放链接。',emailRequired:false,accountRequired:true,articleRequired:true,automation:'api'}),
   channel({ id:'product-hunt', name:'Product Hunt', domain:'producthunt.com', submitUrl:'https://www.producthunt.com/posts/new', categories:['software','ai','developer','design','business'], kind:'directory', free:'yes', freeNote:'普通产品发布免费；个人账号还需满足平台的发布权限要求。', quality:'A', qualityReason:'适合已经可用的数字产品，并由平台审核发布内容。', rulesUrl:'https://help.producthunt.com/en/articles/479557-how-to-post-a-product', notes:'每个真实产品只做一次有意义的发布；需完成个人账号引导并满足账号时长等要求，禁止拉票。', allowedHosts:['producthunt.com','www.producthunt.com'] }),
   channel({ id:'alternativeto', name:'AlternativeTo', domain:'alternativeto.net', submitUrl:'https://alternativeto.net/', categories:['software','ai','developer','design'], kind:'directory', free:'yes', freeNote:'可以自行提交新应用，但须通过邮箱验证和编辑审核。', quality:'A', qualityReason:'软件对比目录，提交项需有真实产品网址并进入审核队列。', rulesUrl:'https://alternativeto.net/faq/', notes:'邮箱验证后使用“Suggest new application”；待审条目不会公开。' }),
@@ -78,7 +78,7 @@ export const CHANNELS: Channel[] = [
   channel({id:'packagist',name:'Packagist',domain:'packagist.org',submitUrl:'https://packagist.org/packages/submit',categories:['developer','software'],languages:['*'],kind:'directory',free:'unknown',freeNote:'公开包有官方提交入口；此处不把私有托管订阅费用与公开仓库条件混记，提交前确认。',quality:'A',qualityReason:'真实 Composer 包的主页、说明和仓库信息服务 PHP 开发者。',rulesUrl:'https://packagist.org/about',notes:'需要可安装的真实项目和仓库根目录 composer.json。验证包名、许可及分发权；不提交没有软件功能的外链占位包。',checkedAt:'2026-09-28'}),
   channel({id:'pub-dev',name:'pub.dev',domain:'pub.dev',submitUrl:'https://pub.dev/',categories:['developer','software'],languages:['*'],kind:'directory',free:'unknown',freeNote:'官方文档提供 Dart 包发布流程；费用未单独核实。',quality:'A',qualityReason:'真实 Dart/Flutter 包的版本、文档和项目网址对使用者有直接价值。',rulesUrl:'https://dart.dev/tools/pub/publishing',notes:'需要 Google 身份、可用包、LICENSE 与分发权；使用 dart pub publish。已发布版本通常不能撤下，需本人确认制品后发布。',checkedAt:'2026-09-28'}),
   channel({id:'rubygems',name:'RubyGems',domain:'rubygems.org',submitUrl:'https://rubygems.org/sign_up',categories:['developer','software'],languages:['*'],kind:'directory',free:'unknown',freeNote:'官方说明了 gem 发布与账号流程；费用与当前账号安全要求需在发布前确认。',quality:'A',qualityReason:'真实 Ruby gem 的项目主页与说明可帮助开发者使用和维护软件。',rulesUrl:'https://guides.rubygems.org/publishing/',notes:'必须有可安装的真实 gem、唯一包名及维护权限。使用正式包发布流程，不创建推广占位包。',checkedAt:'2026-09-28'}),
-  channel({id:'blogger',name:'Blogger',domain:'blogspot.com',submitUrl:'https://www.blogger.com/',categories:['content','education','business','design','finance','ai','developer','general'],languages:['*'],kind:'article',free:'unknown',freeNote:'官方提供个人博客创建与管理流程；费用未在本轮资料单独确认，按当前账号界面核对。',quality:'C',qualityReason:'适合持续经营的原创出版物；自建文章页面不等于第三方编辑推荐。',rulesUrl:'https://www.blogger.com/content-policy',notes:'仅用于本人真实运营且具有独立价值的出版物；不得建立重复促销或垃圾博客。金融稿件、商业关系与引用须人工核对，不进行无人值守发布。',articleRequired:true,allowedHosts:['blogspot.com','blogger.com','www.blogger.com'],checkedAt:'2026-09-28'}),
+  channel({id:'blogger',name:'Blogger',domain:'blogspot.com',submitUrl:'https://www.blogger.com/',categories:['content','education','business','design','finance','ai','developer','general'],languages:['*'],kind:'article',free:'conditional',freeNote:'使用已连接账号下的既有博客发布文字；不购买自定义域名、模板或付费服务。需一次Google授权并绑定博客。',quality:'C',qualityReason:'适合持续经营的原创出版物；自建文章页面不等于第三方编辑推荐。',rulesUrl:'https://www.blogger.com/content-policy',evidenceSources:[{url:'https://www.blogger.com/content-policy',kind:'content_policy',appliesTo:'blogger',applicability:'verified'}],notes:'需在账号页连接Google桌面OAuth并为网站绑定本人博客，之后通过Blogger官方API保存草稿、发布并公开核验。仅用于本人真实运营且具有独立价值的出版物；不得建立重复促销或垃圾博客。金融稿件保留事实与风险核对，清楚披露作者和商业关系，回链带nofollow。授权失效时先推进其他可执行渠道，不复制浏览器登录态或自动注册Google身份。',automation:'api',emailRequired:false,articleRequired:true,allowedHosts:['blogspot.com','blogger.com','www.blogger.com'],checkedAt:'2026-10-04'}),
   channel({id:'hackernoon',name:'HackerNoon',domain:'hackernoon.com',submitUrl:'https://app.hackernoon.com/',categories:['developer','software','ai','business','finance','education'],kind:'article',free:'conditional',freeNote:'个人与品牌发布方式不同，品牌免费额度和后续收费需在账号内确认；不能当成无限免费投稿。',quality:'B',qualityReason:'技术文章可服务 AI、区块链与软件读者，受编辑审核与链接规则约束。',rulesUrl:'https://help.hackernoon.com/backlinks-guideline',notes:'只提交有深度的真实技术内容，品牌故事使用品牌身份。商业关系明确披露；遵守来源多样性和链接密度要求，不在通过审核后偷换推广链接。先由本人核对稿件。',articleRequired:true,allowedHosts:['hackernoon.com','app.hackernoon.com'],checkedAt:'2026-09-28'}),
   channel({id:'paragraph',name:'Paragraph',domain:'paragraph.com',submitUrl:'https://app.paragraph.com/',categories:['content','education','business','developer','ai','finance'],languages:['*'],kind:'article',free:'unknown',freeNote:'产品提供出版物功能；方案与费用需在账号中核对，不将试用等同于永久免费。',quality:'C',qualityReason:'适合本人持续运营的原创出版物，不代表第三方编辑背书。',rulesUrl:'https://paragraph.com/content-guidelines',notes:'禁止以第三方促销、获取佣金或外部销售引流为主要目的的出版物。只允许实质原创内容中相关且明确披露的附带商业链接；仅向主动订阅者发信，人工核对后发布。',articleRequired:true,allowedHosts:['paragraph.com','app.paragraph.com'],checkedAt:'2026-09-28'}),
 
@@ -115,22 +115,10 @@ const categoryLabel: Record<Category, string> = {
 };
 
 export function matchChannels(site: Site, channels: Channel[]): Array<{channel: Channel; score: number; reason: string}> {
-  return channels.flatMap(channel => {
-    if (!eligibilityFor(site,channel).eligible) return [];
-    const direct = channel.categories.includes(site.category);
-    const adjacent = !direct && (related[site.category] ?? []).some(category => channel.categories.includes(category));
-    const general = channel.categories.includes('general');
-    const relevance = direct ? 70 : adjacent ? 42 : general ? (channel.id==='telegraph'?55:site.category === 'general' ? 55 : 20) : 0;
-    if (relevance < 35) return [];
-    const language = site.language.toLowerCase().split('-')[0];
-    const languageFit = channel.languages.includes(language) || channel.languages.includes('*');
-    // 英文编辑渠道不能仅凭类别相关，就推荐给其他语言的网站。
-    if (!languageFit && language !== 'und') return [];
-    const score = Math.min(100, relevance + (languageFit ? 15 : 0) +
-      (channel.quality === 'A' ? 8 : channel.quality === 'B' ? 4 : 0) +
-      (channel.free === 'yes' ? 5 : channel.free === 'conditional' ? 1 : 0));
-    const label = categoryLabel[site.category];
-    const reason = direct ? `适合${label}类受众` : adjacent ? `与${label}类受众相关` : '覆盖面较广，需人工确认适配度';
-    return [{ channel, score, reason: `${reason}；${eligibilityFor(site,channel).reason}；${channel.qualityReason}` }];
-  }).sort((a, b) => b.score - a.score || a.channel.name.localeCompare(b.channel.name));
+  return channels.flatMap(channel=>{
+    const candidate=channelDiscoveryFor(site,channel);
+    // Discovery and planning share relevance; real asset requirements remain hard.
+    if(!candidate.canQueue||candidate.status==='needs_preparation')return [];
+    return [{channel,score:candidate.score,reason:candidate.reason}];
+  }).sort((a,b)=>b.score-a.score||a.channel.name.localeCompare(b.channel.name));
 }

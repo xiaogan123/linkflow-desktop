@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {CHANNELS,matchChannels} from '../src/integrations/catalog';
 import {channelDiscoveryFor,discoverChannels} from '../src/integrations/channel-discovery';
 import {eligibilityFor,requirementsFor} from '../src/integrations/eligibility';
+import {channelExecutionReadiness} from '../src/main/account-bindings';
+import {emptyState} from '../src/main/store';
 import type {Site} from '../src/shared/types';
 
 const channel=(id:string)=>CHANNELS.find(item=>item.id===id)!;
@@ -12,11 +14,24 @@ test('finance publication without qualification form gets several honest candida
  const rows=discoverChannels(site(),CHANNELS),byId=new Map(rows.map(item=>[item.channel.id,item]));
  for(const id of ['telegraph','blogger','gravatar','linktree'])assert.notEqual(byId.get(id)?.status,'blocked',id);
  assert.equal(byId.get('telegraph')?.executionReady,true);
- assert.equal(byId.get('blogger')?.executionReady,false);
+ assert.equal(byId.get('blogger')?.channel.automation,'api');
  assert.equal(byId.get('blogger')?.canQueue,true);
  assert.equal(byId.get('gravatar')?.status,'worth_trying');
  assert.equal(byId.get('linktree')?.status,'worth_trying');
  for(const id of ['gravatar','linktree','blogger'])assert.deepEqual(requirementsFor(channel(id)),[],id);
+});
+
+test('Blogger stays a base candidate but requires OAuth identity and blog binding before execution',()=>{
+ const s=site(),blogger=channel('blogger'),state=emptyState();
+ state.sites=[s];
+ assert.equal(channelDiscoveryFor(s,blogger).canQueue,true);
+ assert.equal(channelExecutionReadiness(state,s.id,blogger).kind,'handoff_required');
+ state.accounts.push({id:'account',channelId:'blogger',email:'owner@gmail.com',username:'google-subject',createdAt:'2026-10-01',status:'registered',hasPassword:true,credentialKind:'oauth'});
+ assert.equal(channelExecutionReadiness(state,s.id,blogger).kind,'handoff_required','OAuth without a site binding is not ready');
+ state.accountBindings.push({id:'binding',siteId:s.id,channelId:'blogger',accountId:'account',createdAt:'2026-10-01',updatedAt:'2026-10-01'});
+ assert.equal(channelExecutionReadiness(state,s.id,blogger).kind,'handoff_required','an account binding without a selected blog is not ready');
+ s.blogger={blogId:'123456789',url:'https://fixture.blogspot.com/'};
+ assert.equal(channelExecutionReadiness(state,s.id,blogger).kind,'ready');
 });
 
 test('real developer proof stays visible for a finance tool while topic only affects ranking',()=>{
@@ -26,7 +41,7 @@ test('real developer proof stays visible for a finance tool while topic only aff
  assert.equal(github.status,'worth_trying');
  assert.equal(github.executionReady,true);
  assert.equal(github.canQueue,true);
- assert.equal(matchChannels(s,[channel('github')]).length,0,'automatic planner remains strict about topic fit');
+ assert.equal(matchChannels(s,[channel('github')]).length,1,'real qualification permits adjacent topics; relevance only affects ranking');
 });
 
 test('tool wording never invents package or product qualification',()=>{
@@ -62,11 +77,13 @@ test('disabled channels and missing hard business facts remain blocked',()=>{
 });
 
 test('translation is a ranking note and paid manual work never becomes automatic',()=>{
- const englishManual={...channel('blogger'),id:'english-manual',languages:['en'],categories:['finance' as const]};
- const translated=channelDiscoveryFor(site(),englishManual);
+ const translatedSite=site();translatedSite.qualifications={techContent:'https://publisher.example/guide'};
+ const translated=channelDiscoveryFor(translatedSite,channel('hackernoon'));
+ assert.equal(translated.channel.automation,'manual');
  assert.equal(translated.status,'worth_trying');
  assert.equal(translated.canQueue,true);
  assert.equal(translated.executionReady,false);
+ assert.match(translated.reason,/语言.*不同/);
  const paid=channelDiscoveryFor(site(),channel('ghost-pro'));
  assert.equal(paid.channel.free,'paid');
  assert.equal(paid.channel.automation,'manual');

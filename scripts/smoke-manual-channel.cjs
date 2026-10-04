@@ -9,7 +9,7 @@ const siteId='77777777-7777-4777-8777-777777777777';
 mkdirSync(process.env.LINKFLOW_DATA_DIR,{recursive:true});
 const db=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
 db.exec('CREATE TABLE state (id INTEGER PRIMARY KEY, body TEXT NOT NULL)');
-db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[{id:siteId,domain:'manual.example',url:'https://manual.example/',email:'owner@manual.example',name:'Manual fixture',description:'Original educational publication',category:'content',language:'en',monthlyTarget:1,status:'ready',createdAt:new Date().toISOString()}],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'codex',codexPath:join(process.env.LINKFLOW_DATA_DIR,'not-installed-cli'),model:'',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
+db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[{id:siteId,domain:'manual.example',url:'https://manual.example/',email:'owner@manual.example',name:'Manual fixture',description:'Original educational publication',category:'content',language:'en',monthlyTarget:1,topics:[{url:'https://manual.example/guide',discoveredAt:new Date().toISOString()}],topicsCheckedAt:new Date().toISOString(),status:'ready',createdAt:new Date().toISOString()}],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'codex',codexPath:join(process.env.LINKFLOW_DATA_DIR,'not-installed-cli'),model:'',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
 require('../dist-electron/main.cjs');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 let win;const checks=[];
@@ -40,7 +40,7 @@ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.query
  check('manual task exposes AI material preparation',await evaluate('document.body.innerText.includes("AI 准备材料")'));
  await invoke('site:queue-channel',{id:siteId,channelId:'blogger'});await delay(100);
  const beforeOpen=await invoke('snapshot'),blogger=beforeOpen.tasks.find(t=>t.siteId===siteId&&t.channelId==='blogger'),windowCount=BrowserWindow.getAllWindows().length;
- check('Blogger is queued as manual work',blogger?.status==='needs_input');
+ check('Blogger API work stays queued while execution is paused',blogger?.status==='queued'&&!blogger.submittedAt&&beforeOpen.settings.autoRun===false);
  await invoke('task:open',{id:blogger.id});
  const afterOpen=await invoke('snapshot');
  check('Blogger opens the catalog submission URL in the preferred external browser',openedUrls.length===1&&openedUrls[0]==='https://www.blogger.com/');

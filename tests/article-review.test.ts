@@ -95,6 +95,42 @@ test('a full near-limit saved draft reaches review without truncating its tail',
   assert.equal(review.status,'passed');assert.equal(observed,body);assert.equal(observed.endsWith(marker),true);assert.ok(body.length<=30_000);
 });
 
+test('a long homepage keeps its tail disclosure in the bounded review excerpt and drops navigation noise',async()=>{
+  const disclosure='The operator participates in an affiliate referral program and may receive a commission at the TAIL DISCLOSURE MARKER.',navigation='NAVIGATION-NOISE-MARKER '.repeat(4_000),content='Useful public comparison material. '.repeat(4_000),baseFetch=fetcher();let observed:unknown;
+  const review=await reviewArticleDraft(task,site,channel,settings,{json:async(_instruction,data)=>{observed=data;return aiResult({citations:[{url:site.url,quote:disclosure},{url:channel.rulesUrl,quote:'Articles must be original, useful, accurate, and disclose commercial relationships.'}]}).json('',{})}},undefined,{fetchHtml:async url=>url===site.url?{url,html:`<html><body><nav>${navigation}</nav><main><p>${content}</p></main><footer><p>${disclosure}</p></footer></body></html>`}:baseFetch(url)});
+  const home=(observed as {evidence:{url:string;text:string;truncated:boolean;coverage:string}[]}).evidence.find(item=>item.url===site.url)!;
+  assert.equal(review.status,'passed');assert.equal(home.truncated,true);assert.equal(home.coverage,'head_tail_relevant_segments');assert.match(home.text,/TAIL DISCLOSURE MARKER/);assert.doesNotMatch(home.text,/NAVIGATION-NOISE-MARKER/);
+});
+
+test('complete channel rules retain a prohibition at the tail instead of head truncating it',async()=>{
+  const prohibition='Articles must not solicit deposits or promise risk-free profits.',rules=`${'General publication policy applies to submitted articles. '.repeat(700)}${prohibition}`,baseFetch=fetcher();let observed:unknown;
+  const semantic=aiResult({verdict:'reject',reason:'The tail rule prohibits this framing.',checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'fail'},citations:[{url:'https://product.example.org/disclaimer.html',quote:'The operator participates in an affiliate referral program and may receive a commission.'},{url:channel.rulesUrl,quote:prohibition}]});
+  const review=await reviewArticleDraft(task,site,channel,settings,{json:async(_instruction,data)=>{observed=data;return semantic.json('',{})}},undefined,{fetchHtml:async url=>url===channel.rulesUrl?{url,html:`<html><body><main><p>${rules}</p></main></body></html>`}:baseFetch(url)});
+  const sentRules=(observed as {evidence:{url:string;text:string;truncated:boolean;coverage:string;sourceCharacters:number}[]}).evidence.find(item=>item.url===channel.rulesUrl)!;
+  assert.equal(review.status,'failed');assert.equal(sentRules.truncated,false);assert.equal(sentRules.coverage,'complete');assert.equal(sentRules.text.endsWith(prohibition),true);assert.equal(sentRules.text.length,sentRules.sourceCharacters);
+});
+
+test('the complete draft tail reaches semantic financial-safety review',async()=>{
+  const risk=' TAIL-RISK-MARKER: Readers are urged to borrow money for speculative trading.',body=(task.draft!.body+' '+'.'.repeat(30_000)).slice(0,30_000-risk.length)+risk,longTask={...task,draft:{...task.draft!,body}};let observed='';
+  const semantic=aiResult({verdict:'reject',reason:'The draft tail encourages unsafe borrowing.',checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'fail',channelRules:'pass'}});
+  const review=await reviewArticleDraft(longTask,site,channel,settings,{json:async(_instruction,data)=>{observed=(data as {draft:{body:string}}).draft.body;return semantic.json('',{})}},undefined,{fetchHtml:fetcher()});
+  assert.equal(review.status,'failed');assert.equal(observed,body);assert.equal(observed.endsWith(risk),true);assert.match(review.reason,/unsafe borrowing/);
+});
+
+test('a quote present only in omitted source text cannot pass citation validation',async()=>{
+  const omittedQuote='Archived neutral metric row exactly zero one two.',homeText=`Head facts about the public product. ${'Ordinary unrelated material. '.repeat(2_500)}${omittedQuote} ${'More unrelated material. '.repeat(2_500)}The operator participates in an affiliate referral program and may receive a commission.`,baseFetch=fetcher(),checks={factualAccuracy:'pass' as const,authorRelationship:'pass' as const,affiliateDisclosure:'pass' as const,independentValue:'pass' as const,financialSafety:'pass' as const,channelRules:'pass' as const};let observed:unknown;
+  const semantic=aiResult({checks,citations:[{url:site.url,quote:omittedQuote},{url:channel.rulesUrl,quote:'Articles must be original, useful, accurate, and disclose commercial relationships.'}]});
+  const review=await reviewArticleDraft(task,site,channel,settings,{json:async(_instruction,data)=>{observed=data;return semantic.json('',{})}},undefined,{fetchHtml:async url=>url===site.url?{url,html:`<html><body><main><p>${homeText}</p></main></body></html>`}:baseFetch(url)});
+  const sentHome=(observed as {evidence:{url:string;text:string;truncated:boolean}[]}).evidence.find(item=>item.url===site.url)!;
+  assert.match(homeText,new RegExp(omittedQuote.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.equal(sentHome.truncated,true);assert.equal(sentHome.text.includes(omittedQuote),false);assert.equal(review.status,'failed');assert.equal(review.reasonCode,'evidence_invalid');assert.deepEqual(review.checks,checks);assert.match(review.reason,/实际送审证据片段/);
+});
+
+test('channel rules too large to send in full stop before inference',async()=>{
+  const baseFetch=fetcher(),oversizedRules='R'.repeat(70_000)+' Tail prohibition must remain complete.';let calls=0;
+  const review=await reviewArticleDraft(task,site,channel,settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml:async url=>url===channel.rulesUrl?{url,html:`<html><body><p>${oversizedRules}</p></body></html>`}:baseFetch(url)});
+  assert.equal(calls,0);assert.equal(review.status,'failed');assert.equal(review.reasonCode,'input_too_long');assert.match(review.reason,/完整渠道规则/);assert.match(review.reason,/渠道规则也未被截断或部分送审/);
+});
+
 test('non-English author and commercial disclosures reach semantic review',async()=>{
   const spanish={...task,draft:{...task.draft!,body:'Somos los propietarios y operadores de este sitio web. Mantenemos el proyecto y participamos en su programa de afiliados, por lo que podemos recibir una comisión. Esta guía explica un proceso reproducible.'}},spanishSite={...site,language:'es'};
   let calls=0;const semantic=aiResult();const review=await reviewArticleDraft(spanish,spanishSite,channel,settings,{json:async(...args)=>{calls++;return semantic.json(...args)}},undefined,{fetchHtml:fetcher()});
@@ -111,4 +147,10 @@ test('an actual return promise stops the complete draft before any paid inferenc
  let calls=0;const unsafe={...task,draft:{...task.draft!,body:task.draft!.body+' Guaranteed returns are available.'}};
  const review=await reviewArticleDraft(unsafe,site,channel,settings,{json:async()=>{calls++;return {} as never}},undefined,{fetchHtml:fetcher()});
  assert.equal(calls,0);assert.equal(review.status,'failed');assert.equal(review.reasonCode,'content_rejected');assert.match(review.reason,/收益或无风险承诺/);
+});
+
+test('selected topic uses its discovered URL when the planner normalizes tracking and slashes',async()=>{
+ const url=new URL('/original-guide/?utm_source=menu',site.url).href;const calls:string[]=[];
+ const evidence=await collectArticleEvidence({...site,topics:[{url,discoveredAt:'2026-10-01T00:00:00Z'}]},channel,undefined,{fetchHtml:async requested=>{calls.push(requested);return {url:requested,html:'<p>Original public guide with enough text to independently verify the selected topic.</p>'}}},new URL('/original-guide',site.url).href);
+ assert.ok(calls.includes(url));assert.ok(evidence.some(e=>e.url===url&&e.kind==='site_detail'));
 });

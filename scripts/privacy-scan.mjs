@@ -1,3 +1,4 @@
+import {hasPersonalMacPath} from './lib/privacy-paths.mjs';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readFile,readdir,realpath,readlink,writeFile,lstat} from 'node:fs/promises';
@@ -11,7 +12,7 @@ if(!['source','dist'].includes(mode))throw Error('Usage: privacy-scan.mjs source
 const findings=[];let inspected=0,historyBlobs=0,archives=0;
 const forbiddenPath=/(?:^|\/)(?:\.evidence|\.test-data|\.git|memory|界面设计稿|node_modules|user[- ]?data|session[- ]?logs|automatic-backups)(?:\/|$)|(?:^|\/)(?:AGENTS|MEMORY|auth)\.(?:md|json)$|\.(?:sqlite(?:-(?:wal|shm))?|db|lfb|lfa|pem|p12|pfx|log)$/i;
 const rules=[
- ['personal-mac-path',/\/Users\/(?!runner\/)[a-z0-9._-]+\//i],
+ ['personal-mac-path',{test:hasPersonalMacPath}],
  ['personal-windows-path',/[A-Z]:\\(?:\\)?Users\\(?:\\)?(?!runneradmin\\)[a-z0-9._-]+\\/i],
  ['private-key',new RegExp('-----BEGIN '+'(?:RSA |EC |OPENSSH )?PRIVATE KEY-----')],
  ['github-token',/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/],

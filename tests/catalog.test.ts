@@ -37,6 +37,19 @@ test('Show HN account creation does not require an email address', () => {
   assert.equal(CHANNELS.find(channel => channel.id === 'show-hn')?.emailRequired, false);
 });
 
+test('Blogger is an official API candidate with explicit OAuth and blog binding prerequisites', () => {
+  const blogger = CHANNELS.find(channel => channel.id === 'blogger');
+  assert.ok(blogger);
+  assert.equal(blogger.automation, 'api');
+  assert.equal(blogger.accountRequired, true);
+  assert.equal(blogger.articleRequired, true);
+  assert.equal(blogger.emailRequired, false);
+  assert.equal(blogger.checkedAt, '2026-10-04');
+  assert.match(blogger.freeNote, /Google授权/);
+  assert.match(blogger.notes, /OAuth/);
+  assert.match(blogger.notes, /绑定.*博客/);
+});
+
 test('Flathub stays disabled because its submission policy prohibits AI assistance', () => {
   const flathub = CHANNELS.find(channel => channel.id === 'flathub');
   assert.equal(flathub?.enabled, false);

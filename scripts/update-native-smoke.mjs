@@ -10,15 +10,18 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.7',candidateVersion:'1.2.8',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.7/Linkflow-1.2.7-windows-x64-setup.exe',sha256:'2d072cd9392b75c118fca5fc84982c8582c2c8532bf0895d6567bf376ef53d31'};
+const windowsUpgrade={sourceVersion:'1.2.8',candidateVersion:'1.2.9',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.8/Linkflow-1.2.8-windows-x64-setup.exe',sha256:'a767eb74af4a7e1efdbe317511bec10d4684d95378fb78a488c72de1f31a1ddb'};
+const macPublishedUpgrade={sourceVersion:'1.2.8',candidateVersion:'1.2.9',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.8/Linkflow-1.2.8-mac-arm64.zip',sha256:'94016ddff82efc439fe44705315ec2a5cf83509435ec3a8babca7364374adbc0'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
 const alive=pid=>{try{process.kill(pid,0);return true}catch{return false}};
 const asarVersion=path=>{uncache(path);const version=JSON.parse(extractFile(path,'package.json').toString('utf8')).version;if(typeof version!=='string')throw Error('Packaged ASAR version is invalid');return version};
-const probePlan=(platform,arch,candidateVersion)=>{
+const probePlan=(platform,arch,candidateVersion,sourceMode='candidate')=>{
  if(!((platform==='darwin'&&arch==='arm64')||(platform==='win32'&&arch==='x64')))throw Error('Native supported platform required');
- if(platform==='win32'){if(candidateVersion!==windowsUpgrade.candidateVersion)throw Error(`Windows upgrade fixture is frozen for candidate ${windowsUpgrade.candidateVersion}`);return {...windowsUpgrade,platform,arch,sourceArtifact:'published-release',evidenceDirectory:`.evidence/release-${candidateVersion}/native-probe`}}
+ if(platform==='win32'){if(sourceMode!=='candidate')throw Error('Windows native probe does not accept a Mac source mode');if(candidateVersion!==windowsUpgrade.candidateVersion)throw Error(`Windows upgrade fixture is frozen for candidate ${windowsUpgrade.candidateVersion}`);return {...windowsUpgrade,platform,arch,sourceArtifact:'published-release',evidenceDirectory:`.evidence/release-${candidateVersion}/native-probe`}}
+ if(sourceMode==='published-source'){if(candidateVersion!==macPublishedUpgrade.candidateVersion)throw Error(`Mac published upgrade fixture is frozen for candidate ${macPublishedUpgrade.candidateVersion}`);return {...macPublishedUpgrade,platform,arch,sourceArtifact:'published-release',originalPublishedUpdater:true,evidenceDirectory:`.evidence/release-${candidateVersion}/native-probe`}}
+ if(sourceMode!=='candidate')throw Error('Unknown Mac source mode');
  return {platform,arch,sourceVersion:candidateVersion,candidateVersion,sourceArtifact:'candidate',evidenceDirectory:`.evidence/release-${candidateVersion}/native-probe`};
 };
 const download=async(url,path)=>{const response=await fetch(url,{redirect:'follow',signal:AbortSignal.timeout(300000),headers:{'user-agent':'linkflow-native-upgrade-probe'}});if(!response.ok||!response.body)throw Error(`Published installer download failed with HTTP ${response.status}`);await pipeline(Readable.fromWeb(response.body),createWriteStream(path,{flags:'wx',mode:0o600}))};
@@ -26,6 +29,13 @@ const download=async(url,path)=>{const response=await fetch(url,{redirect:'follo
 async function main(){
 const packageMetadata=JSON.parse(await readFile('package.json','utf8')),version=packageMetadata.version,plan=probePlan(process.platform,process.arch,version);
 const bridgeIndex=process.argv.indexOf('--mac-bridge');
+const publishedSourceIndex=process.argv.indexOf('--mac-published-source');
+if(bridgeIndex>=0&&publishedSourceIndex>=0)throw Error('Choose either --mac-published-source or --mac-bridge');
+if(publishedSourceIndex>=0){
+ if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.8-zip]');
+ Object.assign(plan,probePlan(process.platform,process.arch,version,'published-source'));
+ const [path]=process.argv.slice(publishedSourceIndex+1);if(path)plan.sourcePath=resolve(path);
+}
 if(bridgeIndex>=0){
  if(process.platform!=='darwin'||process.argv.length!==bridgeIndex+4)throw Error('Usage: --mac-bridge <zip> <sha256> <source-version>');
  const [path,sha,sourceVersion]=process.argv.slice(bridgeIndex+1);
@@ -47,7 +57,10 @@ let sourceArtifact=releaseArtifact,candidateAsarSha256;
 if(process.platform==='darwin'){
  const candidateAsar=resolve('release',`${packageMetadata.productName}-darwin-arm64`,'外链助手.app','Contents','Resources','app.asar');
  assert.equal(asarVersion(candidateAsar),version);candidateAsarSha256=sha256(await readFile(candidateAsar));
- if(plan.sourcePath){sourceArtifact=plan.sourcePath;assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Bound Mac source archive SHA-256 mismatch')}
+ if(plan.sourceArtifact==='published-release'){
+  sourceArtifact=plan.sourcePath??join(directory,`Linkflow-${plan.sourceVersion}-mac-arm64.zip`);if(!plan.sourcePath)await download(plan.url,sourceArtifact);
+  assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,`Published Mac v${plan.sourceVersion} archive SHA-256 mismatch`);
+ }else if(plan.sourcePath){sourceArtifact=plan.sourcePath;assert.equal(sha256(await readFile(sourceArtifact)),plan.sha256,'Bound Mac source archive SHA-256 mismatch')}
 }
 if(process.platform==='win32'){
  const candidateAsar=resolve('release',`${packageMetadata.productName}-win32-x64`,'resources','app.asar');
@@ -96,6 +109,7 @@ if(process.platform==='win32'){
  assert(!attributes.includes('com.apple.quarantine'),'Installed candidate must have zero quarantine attributes');
  await run('/usr/bin/codesign',['--verify','--deep','--strict',application]);
  report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256,sourceArtifactKind:plan.sourceArtifact,originalPublishedUpdater:plan.originalPublishedUpdater??false};
+ if(plan.sourceArtifact==='published-release'){report.limitations=`Published Mac v${sourceVersion}-to-v${version} replacement exercises the original released updater and an isolated authenticated candidate GUI. Synthetic sidecar data does not prove production profile migration.`;report.checks.push(`published Mac v${sourceVersion} archive matched its fixed release SHA-256`)}
  report.checks.push('native installed Mac tree has zero quarantine attributes and valid strict signature');
 }
 await writeFile(resultPath,JSON.stringify(report,null,2));
@@ -104,6 +118,6 @@ console.log('NATIVE_UPDATE_RESULT '+JSON.stringify(report));
 if(process.platform==='win32')await run(join(application,'Uninstall 外链助手.exe'),['/S']);
 }
 
-if(process.argv[2]==='--describe-plan')console.log(JSON.stringify(probePlan(process.argv[3],process.argv[4],process.argv[5])));
+if(process.argv[2]==='--describe-plan')console.log(JSON.stringify(probePlan(process.argv[3],process.argv[4],process.argv[5],process.argv[6])));
 else if(process.argv[2]==='--verify-asar-replacement'){const before=asarVersion(process.argv[3]);await copyFile(process.argv[4],process.argv[3]);console.log(JSON.stringify({before,after:asarVersion(process.argv[3])}))}
 else await main();

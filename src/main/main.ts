@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, Tray, nativeImage, safeStorage, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, Tray, nativeImage, safeStorage, systemPreferences, powerMonitor } from 'electron';
 import { dirname, join } from 'node:path';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -8,10 +8,13 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { Store, defaultSettings } from './store';
 import { Vault, encryptBackup, decryptBackup } from './vault';
+import {connectBlogger,listBloggerBlogs,bindBloggerBlog,disconnectBlogger} from './blogger-management';
 import { Controller } from './controller';
 import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
-import { recoverInterrupted } from './planner';
+import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
+import {publicationOpportunity,hasBloggerDraftReceipt} from '../shared/publication';
+import {resumeDeferredTask} from './task-recovery';
 import { IPC_COMMANDS, type Site, type Account } from '../shared/types';
 import {CHANNELS} from '../integrations/catalog';
 import {belongsToSource} from '../integrations/web';
@@ -22,7 +25,7 @@ import { codexEnvironment, resolveCodexLaunch } from '../integrations/codex-proc
 import { testMail, testMailbox } from '../integrations/mail';
 import {deleteMailbox,prepareMailboxTest} from './mail-settings';
 import { prepareSelfTest, runPackagedSelfTest } from './self-test';
-import {bindAccount,unbindAccount} from './account-bindings';
+import {bindAccount,unbindAccount,channelExecutionReadiness} from './account-bindings';
 import {deleteCustomChannel,importChannelMetrics,saveCustomChannel} from '../integrations/channel-library';
 import {openInPreferredBrowser} from './external-browser';
 import {LocalBackups} from './maintenance';
@@ -48,6 +51,7 @@ const single=app.requestSingleInstanceLock();
 if(!single)app.quit();
 let win:BrowserWindow|null=null,tray:Tray|null=null,quitting=false,restoring=false,updating=false,runtimeStarted=false,controller:Controller,localBackups:LocalBackups,updater:UpdateManager,maintenanceTimer:ReturnType<typeof setInterval>|undefined;
 const activeCommands=new Set<symbol>();
+let bloggerConnect:AbortController|undefined;
 const root=join(__dirname,'..');
 const file=join(root,'dist/index.html');
 const devUrl=!app.isPackaged?process.env.LINKFLOW_DEV_URL:undefined;
@@ -109,10 +113,27 @@ async function command(name:string,p:unknown):Promise<unknown>{
       forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).parse(p);const s=store.read(),site=s.sites.find(x=>x.id===d.id),channel=controller.channels().find(c=>c.id===d.channelId);
       if(!site||!channel)throw Error('网站或渠道不存在');if(site.status!=='ready')throw Error('请先完成网站分析并恢复计划');
       const fit=eligibilityFor(site,channel),candidate=channelDiscoveryFor(site,channel);if(channel.automation==='manual'?!candidate.canQueue:!fit.eligible)throw Error(channel.automation==='manual'?candidate.nextStep:fit.reason);if(channel.automation!=='manual'&&(channel.free==='unknown'||channel.free==='paid'))throw Error('该渠道不符合自动免费计划条件');
-      if(s.tasks.some(t=>t.siteId===site.id&&t.sourceDomain===channel.domain))throw Error('该来源已有任务，请查看已有记录');
-      const now=new Date().toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:now,updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:channel.automation==='manual'?`${candidate.reason} ${candidate.nextStep}`:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));void controller.tick();break;
+      const opportunity=publicationOpportunity(site,channel.automation==='manual'?{...channel,free:'yes'}:channel,s.tasks,new Date(),s.settings.timezone,{officialApiConnected:channelExecutionReadiness(s,site.id,channel).kind==='ready'});if(!opportunity.allowed)throw Error(opportunity.reason);
+      const instant=new Date(),scheduled=earliestPublicationAt(site.id,channel.id,s.tasks,new Date(opportunity.scheduledAt??instant.toISOString()));if(monthKey(scheduled,s.settings.timezone)!==monthKey(instant,s.settings.timezone))throw Error('本月发布间隔已排满，最早可于 '+scheduled.toLocaleDateString('zh-CN',{timeZone:s.settings.timezone})+' 安排；系统将按新月目标继续。');
+      const now=instant.toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.id==='blogger'&&site.blogger?new URL(site.blogger.url).hostname:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:scheduled.toISOString(),...(opportunity.topicUrl?{topicUrl:opportunity.topicUrl}:{}),updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:channel.automation==='manual'?`${candidate.reason} ${candidate.nextStep}`:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));void controller.tick();break;
     }
     case 'site:adopt-gist':{forbidBusy();const d=z.object({id:z.string().uuid(),url:z.string().trim().max(2048),accountId:z.string().uuid().optional()}).parse(p);await controller.adoptGist(d.id,d.url,d.accountId);break;}
+    case 'account:connect-blogger':{
+      z.object({}).strict().parse(p??{});if(bloggerConnect)throw Error('Blogger连接正在进行');
+      return controller.manageIdentity(async()=>{const abort=new AbortController();bloggerConnect=abort;
+        try{const chosen=await dialog.showOpenDialog(win!,{title:'选择Google OAuth桌面客户端配置',properties:['openFile'],filters:[{name:'Google OAuth JSON',extensions:['json']}]});
+          if(chosen.canceled||!chosen.filePaths[0]||abort.signal.aborted)return undefined;
+          const info=await stat(chosen.filePaths[0]);if(!info.isFile()||info.size>65536)throw Error('客户端配置文件无效或过大');
+          const config=await readFile(chosen.filePaths[0],'utf8');
+          const result=await connectBlogger(store,vault,config,{signal:abort.signal,openExternal:url=>openInPreferredBrowser(url,store.read().settings.preferredBrowser,value=>shell.openExternal(value))});
+          return result.account;
+        }finally{if(bloggerConnect===abort)bloggerConnect=undefined}
+      });
+    }
+    case 'account:cancel-blogger':z.object({}).strict().parse(p??{});bloggerConnect?.abort();return {cancelled:true};
+    case 'account:blogger-blogs':{const d=z.object({accountId:z.string().uuid()}).strict().parse(p);return controller.manageIdentity(()=>listBloggerBlogs(store,vault,d.accountId));}
+    case 'site:bind-blogger':{const d=z.object({siteId:z.string().uuid(),accountId:z.string().uuid(),blogId:z.string().regex(/^\d{1,64}$/)}).strict().parse(p);return controller.manageIdentity(()=>bindBloggerBlog(store,vault,d.siteId,d.accountId,d.blogId));}
+    case 'account:disconnect-blogger':{const d=z.object({accountId:z.string().uuid()}).strict().parse(p);return controller.manageIdentity(async()=>{await disconnectBlogger(store,vault,d.accountId);return {disconnected:true}});}
     case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512),accountId:z.string().uuid().optional()}).parse(p);return await controller.connectGist(d.token,d.accountId);}
     case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
     case 'search:bing':await controller.checkSearch(getId(p));break;
@@ -125,11 +146,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||task.submittedAt||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||(task.submittedAt&&!hasBloggerDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
-      if(t.submittedAt||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error('已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if(t.submittedAt&&!hasBloggerDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error('已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if(t.deferredAt){store.update(state=>resumeDeferredTask(state.tasks,id,state.settings));void controller.tick();break;}
       if(t.attempts>=store.read().settings.maxAttempts)throw Error('已达重试上限，请检查原因或跳过此渠道。');
       controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;
     }
@@ -145,7 +167,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(!task)throw Error('任务不存在');
       const channel=controller.channels().find(item=>item.id===task.channelId);
       if(!channel)throw Error('任务关联的渠道已不存在');
-      if(channel.automation==='manual'){
+      if(channel.automation!=='browser'){
         const url=publicUrl(channel.submitUrl);
         if(!isAllowedTaskUrl(url.href,channel.allowedHosts))throw Error('渠道提交地址不在允许的 HTTPS 域名内');
         await openInPreferredBrowser(url.href,state.settings.preferredBrowser,value=>shell.openExternal(value));
@@ -192,13 +214,13 @@ async function command(name:string,p:unknown):Promise<unknown>{
       forbidBusy();const {items}=z.object({items:z.array(MailboxPayload).min(1).max(100)}).parse(p);importMailboxesAtomic(store,items,secrets=>vault.encryptSecrets(secrets));return controller.snapshot();
     }
     case 'account:save':{
-      forbidBusy();const input=AccountInput.parse(p);if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
+      forbidBusy();const input=AccountInput.parse(p);if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
       const channel=controller.channels().find(item=>item.id===input.channelId)!;saveAccountAtomic(store,input,channel,secrets=>vault.encryptSecrets(secrets));break;
     }
-    case 'account:bind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p),channel=controller.channels().find(item=>item.id===d.channelId);if(!channel)throw Error('渠道不存在');store.update(state=>bindAccount(state,d.accountId,d.siteId,channel));break;}
+    case 'account:bind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p),channel=controller.channels().find(item=>item.id===d.channelId);if(!channel)throw Error('渠道不存在');if(channel.id==='blogger')throw Error('请使用Blogger专用入口绑定博客');store.update(state=>bindAccount(state,d.accountId,d.siteId,channel));break;}
     case 'account:unbind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p);store.update(state=>unbindAccount(state,d.accountId,d.siteId,d.channelId));break;}
     case 'account:set-bindings':{
-      forbidBusy();const d=z.object({accountId:z.string().uuid(),mailboxId:z.string().uuid().nullable(),siteIds:z.array(z.string().uuid()).max(1000)}).parse(p),state=store.read(),account=state.accounts.find(item=>item.id===d.accountId);if(!account)throw Error('账号不存在');if(d.mailboxId&&!state.mailboxes.some(item=>item.id===d.mailboxId))throw Error('收件箱不存在');const channel=controller.channels().find(item=>item.id===account.channelId);if(!channel)throw Error('渠道不存在');const selected=new Set(d.siteIds);if([...selected].some(id=>!state.sites.some(site=>site.id===id)))throw Error('绑定的网站不存在');
+      forbidBusy();const d=z.object({accountId:z.string().uuid(),mailboxId:z.string().uuid().nullable(),siteIds:z.array(z.string().uuid()).max(1000)}).parse(p),state=store.read(),account=state.accounts.find(item=>item.id===d.accountId);if(!account)throw Error('账号不存在');if(d.mailboxId&&!state.mailboxes.some(item=>item.id===d.mailboxId))throw Error('收件箱不存在');const channel=controller.channels().find(item=>item.id===account.channelId);if(!channel)throw Error('渠道不存在');if(account.credentialKind==='oauth')throw Error('请使用Blogger专用入口管理授权和博客绑定');const selected=new Set(d.siteIds);if([...selected].some(id=>!state.sites.some(site=>site.id===id)))throw Error('绑定的网站不存在');
       store.update(draft=>{const current=draft.accounts.find(item=>item.id===d.accountId);if(!current)throw Error('账号不存在');current.mailboxId=d.mailboxId??undefined;current.updatedAt=new Date().toISOString();for(const siteId of selected)bindAccount(draft,current.id,siteId,channel);draft.accountBindings=draft.accountBindings.filter(binding=>binding.accountId!==current.id||binding.channelId!==current.channelId||selected.has(binding.siteId));});break;
     }
     case 'account:retry':{
@@ -211,8 +233,8 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(account.diagnostic&&!account.diagnostic.retryable&&account.status!=='draft')throw Error('该账号异常需要人工处理');
       const now=new Date().toISOString();store.update(s=>{const a=s.accounts.find(a=>a.id===id);if(a){a.updatedAt=now;a.diagnostic=undefined}const sites=new Set(s.accountBindings.filter(binding=>binding.accountId===id).map(binding=>binding.siteId));for(const task of s.tasks){if((task.accountId===id||!task.accountId&&sites.has(task.siteId)&&task.channelId===account.channelId)&&!task.submittedAt&&['needs_input','failed'].includes(task.status)){task.accountId=id;task.status='queued';task.scheduledAt=now;task.updatedAt=now;task.message=account.status==='needs_verification'?'准备继续验证账号':'准备重试未提交的注册草稿';}}});void controller.tick();break;
     }
-    case 'account:reveal':{const id=getId(p);if(store.read().accounts.find(a=>a.id===id)?.credentialKind==='api_token')throw Error('API 令牌不支持明文显示，请通过连接入口更新');await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
-    case 'account:delete':{forbidBusy();const id=getId(p),state=store.read();if(state.tasks.some(task=>task.accountId===id))throw Error('该账号已归属历史任务，不能删除');if(state.accountBindings.some(binding=>binding.accountId===id))throw Error('该账号仍绑定网站，请先解除绑定');await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}
+    case 'account:reveal':{const id=getId(p);if(['api_token','oauth'].includes(store.read().accounts.find(a=>a.id===id)?.credentialKind??''))throw Error('API 令牌不支持明文显示，请通过连接入口更新');await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
+    case 'account:delete':{forbidBusy();const id=getId(p),state=store.read();if(state.accounts.find(a=>a.id===id)?.credentialKind==='oauth')throw Error('请使用Blogger专用入口断开授权，身份和历史记录会保留');if(state.tasks.some(task=>task.accountId===id))throw Error('该账号已归属历史任务，不能删除');if(state.accountBindings.some(binding=>binding.accountId===id))throw Error('该账号仍绑定网站，请先解除绑定');await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}
     case 'channel:save':{forbidBusy();const d=z.object({channel:z.unknown()}).parse(p);store.update(state=>{state.customChannels=saveCustomChannel(state.customChannels??[],d.channel,CHANNELS)});break;}
     case 'channel:delete':{forbidBusy();const {id}=z.object({id:z.string().regex(/^custom-[0-9a-f-]{36}$/)}).parse(p);store.update(state=>{state.customChannels=deleteCustomChannel(state.customChannels??[],id,state.tasks.map(task=>task.channelId))});break;}
     case 'channel:import-metrics':{forbidBusy();const d=z.object({rows:z.array(z.unknown()).min(1).max(1000)}).parse(p);const channels=controller.channels();store.update(state=>{state.channelMetrics=importChannelMetrics(state.channelMetrics??{},d.rows,channels)});break;}
@@ -287,8 +309,9 @@ app.whenReady().then(async()=>{
       return {ok:true,value:await command(name,payload)};
     }catch(e){return {ok:false,error:safeMessage(e)}}finally{if(tracked)activeCommands.delete(operation)}
   });
+  powerMonitor.on('resume',()=>{if(runtimeStarted&&!updating&&!quitting)void controller.tick()});
   createWindow();if(selfTest){void runPackagedSelfTest(win!,controller);return;}await detectAi();runtimeStarted=true;if(!updating&&!quitting)controller.start();maintenanceTimer=setInterval(()=>{if(!updating&&!controller.hasPendingWork())void localBackups.run().catch(()=>broadcast())},10*60_000);maintenanceTimer.unref();
 });
 app.on('activate',()=>{if(!win)createWindow();else win.show()});
-app.on('before-quit',()=>{quitting=true;if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();updater?.dispose()});
+app.on('before-quit',()=>{quitting=true;bloggerConnect?.abort();if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();updater?.dispose()});
 app.on('window-all-closed',()=>{if(!tray){quitting=true;app.quit()}});

@@ -34,7 +34,7 @@ function relevance(site:Site,channel:Channel){
   if(channel.categories.includes('general'))return 38;
   return 18;
 }
-function missingRequirements(site:Site,channel:Channel){return requirementsFor(channel).filter(requirement=>!validQualificationUrl(site.qualifications?.[requirement]))}
+function missingRequirements(site:Site,channel:Channel){if(channel.id==='github-gist'&&eligibilityFor(site,channel).eligible)return [];return requirementsFor(channel).filter(requirement=>!validQualificationUrl(site.qualifications?.[requirement]))}
 function inferredRequirement(site:Site,requirement:Qualification){
   if(requirement==='publication')return true;
   if(requirement==='techContent')return hasTechnicalContentShape(site);

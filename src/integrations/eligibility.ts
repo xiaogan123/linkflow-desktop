@@ -20,6 +20,7 @@ export function validQualificationUrl(proof:string|undefined):boolean{
 }
 export function eligibilityFor(site:Site,channel:Channel):{eligible:boolean;reason:string;requirement?:Qualification}{
  if(!channel.enabled)return {eligible:false,reason:'该渠道目前停用，请查看官方规则'};
+ if(channel.id==='github-gist'&&(validQualificationUrl(site.qualifications?.developer)||validQualificationUrl(site.qualifications?.techContent)))return {eligible:true,reason:'有公开技术材料；发布前仍独立核对真实性、可复用价值和与本站关系',requirement:validQualificationUrl(site.qualifications?.developer)?'developer':'techContent'};
  const required=requirementsFor(channel);
  const missing=required.find(q=>!validQualificationUrl(site.qualifications?.[q]));
  if(missing)return {eligible:false,reason:`需要确认${qualificationLabels[missing]}并提供资料网址；一般软件或网站网址不能替代对应资格`,requirement:missing};

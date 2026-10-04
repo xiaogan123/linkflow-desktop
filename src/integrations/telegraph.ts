@@ -8,10 +8,16 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_CONTENT_BYTES = 64 * 1024;
 const MIN_ARTICLE_CHARACTERS = 500;
 const MIN_ARTICLE_BLOCKS = 3;
+const RECONCILE_LIST_PAGE_SIZE = 50;
+const RECONCILE_MAX_LIST_PAGES = 2;
+const RECONCILE_MAX_PAGES = RECONCILE_LIST_PAGE_SIZE * RECONCILE_MAX_LIST_PAGES;
+const RECONCILE_MAX_TITLE_CANDIDATES = 8;
 
 type TelegraphTag = 'a' | 'blockquote' | 'h3' | 'h4' | 'hr' | 'li' | 'ol' | 'p' | 'pre' | 'ul';
 export type TelegraphNode = string | { tag: TelegraphTag; attrs?: { href: string }; children?: TelegraphNode[] };
 export type TelegraphTransport = (input: string, init: RequestInit) => Promise<Response>;
+export type TelegraphReconcileResult = { status: 'found'; publicUrl: string } | { status: 'unknown' };
+export interface TelegraphReconcileDependencies { transport?: TelegraphTransport }
 
 type ApiSuccess = Record<string, unknown>;
 type ApiResponse = { ok: boolean; result?: unknown; error?: unknown };
@@ -67,7 +73,7 @@ async function readBoundedJson(response: Response): Promise<ApiResponse> {
 }
 
 async function apiCall(
-  method: 'createAccount' | 'getAccountInfo' | 'createPage' | 'getPage',
+  method: 'createAccount' | 'getAccountInfo' | 'createPage' | 'getPage' | 'getPageList',
   fields: Record<string, string>,
   context: ExecutionContext,
   transport: TelegraphTransport,
@@ -104,6 +110,39 @@ async function apiCall(
     clearTimeout(timer);
     context.signal.removeEventListener('abort', abort);
   }
+}
+
+function canonicalTelegraphContent(value: unknown): string | undefined {
+  const visit = (node: unknown): unknown => {
+    if (typeof node === 'string') return node.normalize('NFC');
+    if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('invalid_node');
+    const raw = node as Record<string, unknown>;
+    if (Object.keys(raw).some(key => !['tag', 'attrs', 'children'].includes(key))) throw new Error('invalid_node');
+    if (typeof raw.tag !== 'string' || !/^[a-z][a-z0-9]{0,15}$/.test(raw.tag)) throw new Error('invalid_node');
+    const normalized: { tag: string; attrs?: Record<string, string>; children?: unknown[] } = { tag: raw.tag };
+    if (raw.attrs !== undefined) {
+      if (!raw.attrs || typeof raw.attrs !== 'object' || Array.isArray(raw.attrs)) throw new Error('invalid_node');
+      const attrs = raw.attrs as Record<string, unknown>;
+      const keys = Object.keys(attrs).sort();
+      if (keys.some(key => !['href', 'src'].includes(key))) throw new Error('invalid_node');
+      const clean: Record<string, string> = {};
+      for (const key of keys) {
+        if (typeof attrs[key] !== 'string') throw new Error('invalid_node');
+        clean[key] = attrs[key].normalize('NFC');
+      }
+      if (keys.length) normalized.attrs = clean;
+    }
+    if (raw.children !== undefined) {
+      if (!Array.isArray(raw.children)) throw new Error('invalid_node');
+      const children = raw.children.map(visit);
+      if (children.length) normalized.children = children;
+    }
+    return normalized;
+  };
+  try {
+    if (!Array.isArray(value)) return undefined;
+    return JSON.stringify(value.map(visit));
+  } catch { return undefined; }
 }
 
 function sourceUrl(value: string): string {
@@ -372,6 +411,98 @@ async function verifyPage(context: ExecutionContext, path: string, expectedUrl: 
     const identity = pageIdentity(result);
     return !!identity && identity.url === expectedUrl && Array.isArray(result.content) && countTargetLinks(result.content, target) === 1;
   } catch { return false; }
+}
+
+/**
+ * Positively identifies a page after an uncertain createPage response. An
+ * unknown result is intentionally inconclusive and must never authorize a
+ * second publication attempt.
+ */
+export async function reconcileTelegraphTask(
+  context: ExecutionContext,
+  dependencies: TelegraphReconcileDependencies = {},
+): Promise<TelegraphReconcileResult> {
+  const unknown: TelegraphReconcileResult = { status: 'unknown' };
+  const task = context.task;
+  if (context.signal.aborted || context.channel.id !== 'telegraph' || context.channel.automation !== 'api'
+    || task.channelId !== 'telegraph' || task.publicUrl || !task.draft || !task.accountId
+    || !task.submittedAt || !Number.isFinite(Date.parse(task.submittedAt))
+    || !['telegraph_publish_submitting', 'telegraph_publish_uncertain'].includes(task.checkpoint ?? '')) return unknown;
+
+  const account = context.getAccount();
+  if (!account || account.id !== task.accountId || account.channelId !== 'telegraph'
+    || account.status !== 'registered' || !account.hasPassword || account.credentialKind !== 'api_token') return unknown;
+
+  let token: string | undefined;
+  try { token = await context.secrets.get(`account:${account.id}`); }
+  catch { return unknown; }
+  if (!token || token.length < 20 || token.length > 256) return unknown;
+
+  let expectedContent: string | undefined;
+  let expectedTitle: string;
+  let expectedAuthor: string;
+  try {
+    const target = sourceUrl(context.site.url);
+    expectedContent = canonicalTelegraphContent(articleToTelegraphNodes(task.draft.body, context.site.name, target, context.site.language));
+    expectedTitle = plainInline(task.draft.title).slice(0, 256).normalize('NFC');
+    expectedAuthor = `${plainInline(context.site.name).slice(0, 108)} site owner`.slice(0, 128).normalize('NFC');
+  } catch { return unknown; }
+  if (!expectedContent || expectedTitle.length < 4 || !expectedAuthor) return unknown;
+
+  const transport = dependencies.transport ?? ((input: string, init: RequestInit) => fetch(input, init));
+  const listed: Array<{ path: string; url: string; title: string }> = [];
+  let totalCount: number | undefined;
+  try {
+    for (let pageIndex = 0; pageIndex < RECONCILE_MAX_LIST_PAGES; pageIndex++) {
+      const offset = pageIndex * RECONCILE_LIST_PAGE_SIZE;
+      const result = await apiCall('getPageList', {
+        access_token: token,
+        offset: String(offset),
+        limit: String(RECONCILE_LIST_PAGE_SIZE),
+      }, context, transport);
+      if (!Number.isSafeInteger(result.total_count) || (result.total_count as number) < 0 || !Array.isArray(result.pages)) return unknown;
+      const currentTotal = result.total_count as number;
+      if (totalCount === undefined) {
+        totalCount = currentTotal;
+        if (totalCount > RECONCILE_MAX_PAGES) return unknown;
+      } else if (currentTotal !== totalCount) return unknown;
+      const expectedPageCount = Math.min(RECONCILE_LIST_PAGE_SIZE, Math.max(0, totalCount - offset));
+      if (result.pages.length !== expectedPageCount) return unknown;
+      for (const raw of result.pages) {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return unknown;
+        const page = raw as ApiSuccess;
+        const identity = pageIdentity(page);
+        if (!identity || typeof page.title !== 'string' || page.title.length < 1 || page.title.length > 256) return unknown;
+        listed.push({ ...identity, title: page.title.normalize('NFC') });
+      }
+      if (listed.length === totalCount) break;
+    }
+  } catch { return unknown; }
+  if (totalCount === undefined || listed.length !== totalCount || new Set(listed.map(page => page.path)).size !== listed.length) return unknown;
+
+  const candidates = listed.filter(page => page.title === expectedTitle);
+  if (!candidates.length || candidates.length > RECONCILE_MAX_TITLE_CANDIDATES) return unknown;
+  const matches: string[] = [];
+  try {
+    for (const candidate of candidates) {
+      const result = await apiCall('getPage', {
+        access_token: token,
+        return_content: 'true',
+      }, context, transport, candidate.path);
+      const identity = pageIdentity(result);
+      if (!identity || identity.path !== candidate.path || identity.url !== candidate.url
+        || result.can_edit !== true || typeof result.title !== 'string'
+        || result.title.normalize('NFC') !== candidate.title) return unknown;
+      const content = canonicalTelegraphContent(result.content);
+      if (!content) return unknown;
+      const author = typeof result.author_name === 'string' ? result.author_name.normalize('NFC') : '';
+      if (result.title.normalize('NFC') === expectedTitle && author === expectedAuthor && content === expectedContent) {
+        matches.push(identity.url);
+        if (matches.length > 1) return unknown;
+      }
+    }
+  } catch { return unknown; }
+  return matches.length === 1 ? { status: 'found', publicUrl: matches[0] } : unknown;
 }
 
 async function runWithTransport(context: ExecutionContext, transport: TelegraphTransport): Promise<ExecutionResult> {

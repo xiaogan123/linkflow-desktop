@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {hasShortageMessage, monthlyReset, planningStatus} from '../src/ui/planning-status';
-import type {Site, Task} from '../src/shared/types';
+import {hasShortageMessage,monthlyReset,planningStatus,remainingMonthlyPages} from '../src/ui/planning-status';
+import type {CapacityBlockReason,Site, SiteCapacity, Task} from '../src/shared/types';
 
 const site:Site={id:'site-1',domain:'example.com',url:'https://example.com',email:'hello@example.com',name:'Example',description:'Example',category:'software',language:'zh',monthlyTarget:2,status:'ready',createdAt:'2026-09-01T00:00:00Z'};
 const task=(status:Task['status'],scheduledAt='2026-09-30T02:00:00Z'):Task=>({id:'task-1',siteId:site.id,channelId:'channel-1',sourceDomain:'source.example',status,createdAt:'2026-09-30T00:00:00Z',scheduledAt,updatedAt:'2026-09-30T00:00:00Z',attempts:0,message:''});
 const context=(autoRun=true)=>({autoRun,now:new Date('2026-09-30T01:00:00Z'),timeZone:'Asia/Singapore'});
+const capacity=(blockingReason?:CapacityBlockReason,extra:Partial<SiteCapacity>={}):SiteCapacity=>({siteId:site.id,currentLive:0,firstVerifiedThisMonth:0,currentSources:0,monthlySources:0,missing:0,eligibleUnused:99,automaticUnused:99,manualUnused:0,eligiblePages:0,automaticPages:0,monthsAtTarget:0,...(blockingReason?{blockingReason}:{}),...extra});
 
 test('September 30 keeps the configured timezone when displaying a future task',()=>assert.equal(planningStatus(site,[task('queued')],context()).next,'今天 10:00'));
 test('global pause is explicit even when work is already queued',()=>assert.equal(planningStatus(site,[task('queued')],context(false)).state,'global_paused'));
@@ -16,8 +17,16 @@ test('manual article review uses the real needs-input status and makes human con
 test('a queued task keeps its real next time when another task needs human attention',()=>{const blocked={...task('needs_input'),checkpoint:'article_review'};const queued={...task('queued'),id:'task-2',sourceDomain:'second.example'};const result=planningStatus(site,[blocked,queued],context());assert.deepEqual([result.label,result.next],['有稿件待人工审核','今天 10:00'])});
 test('a queued task due today is ready to execute',()=>assert.equal(planningStatus(site,[task('queued','2026-09-30T00:30:00Z')],context()).state,'due'));
 test('source shortage is separate from a task failure',()=>{const result=planningStatus({...site,error:'当前渠道来源不足'},[],context());assert.deepEqual([result.state,result.next],['source_shortage','暂无可排渠道'])});
-test('monthly target completion counts first-live work from earlier in the same month',()=>{const live={...task('live'),firstLiveAt:'2026-09-02T00:20:00Z'};const second={...task('live'),id:'task-2',sourceDomain:'second.example',firstLiveAt:'2026-09-20T00:20:00Z'};assert.equal(planningStatus(site,[live,second],context()).state,'target_met')});
+test('monthly target counts verified public pages even when they use the same source',()=>{const live={...task('live'),publicUrl:'https://source.example/first',firstLiveAt:'2026-09-02T00:20:00Z'};const second={...task('live'),id:'task-2',publicUrl:'https://source.example/second',firstLiveAt:'2026-09-20T00:20:00Z'};assert.equal(planningStatus(site,[live,second],context()).state,'target_met')});
+test('duplicate records for one public page do not count twice',()=>{const live={...task('live'),publicUrl:'https://source.example/one',firstLiveAt:'2026-09-02T00:20:00Z'};const duplicate={...task('live'),id:'task-2',publicUrl:'https://source.example/one?utm_source=fixture',firstLiveAt:'2026-09-20T00:20:00Z'};assert.notEqual(planningStatus(site,[live,duplicate],context()).state,'target_met')});
 test('monthly reset is a timezone-aware statistic boundary, not a start date',()=>assert.deepEqual(monthlyReset('Asia/Singapore',new Date('2026-09-30T15:30:00Z')),{date:'2026年10月1日',label:'月度目标重置',detail:'这是月度统计的重置时间；新网站分析完成并有任务后会立即开始，无需等到这一天。'}));
+
+test('an October queued task does not cover the remaining September page',()=>{
+ const now=new Date('2026-09-30T01:00:00Z');
+ const live={...task('live'),publicUrl:'https://source.example/september',firstLiveAt:'2026-09-02T00:20:00Z'};
+ const october={...task('queued','2026-09-30T16:00:00Z'),id:'task-october',sourceDomain:'october.example'};
+ assert.equal(remainingMonthlyPages(site,[live,october],now,'Asia/Singapore'),1);
+});
 
 for(const blocked of ['failed','expired','review'] as const)test(`${blocked} does not hide a separate queued task`,()=>{
  const waiting={...task(blocked),id:'other'},queued=task('queued');
@@ -35,7 +44,7 @@ test('temporary review outages remain scheduled system work',()=>{
  assert.deepEqual([result.state,result.label,result.next],['system_retry','系统将自动重试','今天 10:00']);
 });
 test('exhausted system work does not advertise its stored date as an automatic retry',()=>{
- const stopped={...task('failed'),checkpoint:'system_wait',nextCheckAt:'2026-10-01T02:00:00Z',articleReview:{status:'failed' as const,reason:'retry limit reached',reasonCode:'ai_unavailable' as const,reviewedAt:'2026-09-30T00:00:00Z',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+ const stopped={...task('failed'),checkpoint:'system_wait',nextCheckAt:'2026-10-01T02:00:00Z',recoveryAttempts:1,cost:{aiCalls:5},articleReview:{status:'failed' as const,reason:'retry limit reached',reasonCode:'ai_unavailable' as const,reviewedAt:'2026-09-30T00:00:00Z',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
  const result=planningStatus({...site,articleReviewMode:'ai'},[stopped],{...context(),articleReviewMode:'ai' as const});
  assert.deepEqual([result.state,result.label,result.next],['system_retry','系统处理已暂停','当前未安排自动重试']);
 });
@@ -43,4 +52,51 @@ test('source shortage classification remains independent of paused or review sta
  const s={...site,error:'适合的自动渠道不足，还缺1个来源'};
  assert.equal(planningStatus(s,[task('needs_input')],context(false)).state,'global_paused');
  assert.equal(hasShortageMessage(s.error),true);assert.equal(hasShortageMessage('网站暂时无法读取'),false);
+});
+
+test('page capacity ignores legacy unused-source counts and shows the concrete blocker',()=>{
+ const result=planningStatus(site,[],{...context(),capacity:capacity('topics_exhausted',{eligibleUnused:99,automaticUnused:99,reason:'没有尚未使用的真实选题页。'})});
+ assert.deepEqual([result.state,result.label,result.next],['source_shortage','暂无机会 · 选题已用完','等待网站新页面']);
+});
+
+test('only timed automatic blockers expose their next available time',()=>{
+ const cadence=planningStatus(site,[],{...context(),capacity:capacity('cadence_wait',{nextAvailableAt:'2026-10-03T02:00:00Z'})});
+ const budget=planningStatus(site,[],{...context(),capacity:capacity('budget_exhausted',{nextAvailableAt:'2026-10-03T02:00:00Z'})});
+ assert.equal(cadence.next,'10月3日 10:00');
+ assert.equal(budget.next,'当前没有自动后续');
+});
+
+test('every capacity blocker has a specific truthful label',()=>{
+ const expected:Record<CapacityBlockReason,string>={topics_unknown:'暂无机会 · 选题待取得',topics_exhausted:'暂无机会 · 选题已用完',cadence_wait:'发布间隔未到',account_required:'暂无机会 · 账号未连接',cooldown:'渠道冷却中',budget_exhausted:'暂无机会 · 任务预算已用完',no_automatic_channel:'暂无机会 · 没有自动渠道'};
+ for(const [reason,label] of Object.entries(expected) as [CapacityBlockReason,string][])assert.equal(planningStatus(site,[],{...context(),capacity:capacity(reason)}).label,label,reason);
+});
+
+test('a stopped waiting task does not hide another automatic page opportunity',()=>{
+ const stopped={...task('failed'),checkpoint:'system_wait',nextCheckAt:'2026-10-01T02:00:00Z',recoveryAttempts:1,cost:{aiCalls:6},articleReview:{status:'failed' as const,reason:'retry limit reached',reasonCode:'ai_unavailable' as const,reviewedAt:'2026-09-30T00:00:00Z',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+ const result=planningStatus(site,[stopped],{...context(),capacity:capacity(undefined,{eligiblePages:2,automaticPages:1})});
+ assert.equal(result.state,'unplanned');assert.match(result.detail,/自动发布机会/);
+});
+
+test('an eligible final recovery displays its real automatic time',()=>{
+ const recoverable={...task('failed'),checkpoint:'system_wait',nextCheckAt:'2026-10-01T02:00:00Z',recoveryAttempts:0,cost:{aiCalls:5},articleReview:{status:'failed' as const,reason:'temporary',reasonCode:'ai_unavailable' as const,reviewedAt:'2026-09-30T00:00:00Z',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+ const result=planningStatus(site,[recoverable],context());
+ assert.deepEqual([result.state,result.label,result.next],['system_retry','等待最后一次自动恢复','10月1日 10:00']);
+});
+
+test('disabled Telegraph is a result-confirmation task instead of an automatic query',()=>{
+ const uncertain={...task('needs_input'),channelId:'telegraph',checkpoint:'telegraph_publish_uncertain',submittedAt:'2026-09-30T00:00:00Z',reconcileAttempts:1};
+ const result=planningStatus({...site,articleReviewMode:'ai'},[uncertain],{...context(),articleReviewMode:'ai' as const,channelEnabled:()=>false});
+ assert.deepEqual([result.state,result.label,result.next],['needs_input','需要确认发布结果','等待你的操作']);
+});
+
+test('disabled channel does not advertise the final execution recovery',()=>{
+ const recoverable={...task('failed'),checkpoint:'system_wait',nextCheckAt:'2026-10-01T02:00:00Z',recoveryEligible:true,recoveryAttempts:0,cost:{aiCalls:2}};
+ const result=planningStatus({...site,articleReviewMode:'ai'},[recoverable],{...context(),articleReviewMode:'ai' as const,channelEnabled:()=>false});
+ assert.deepEqual([result.state,result.label,result.next],['system_retry','系统处理已暂停','当前未安排自动重试']);
+});
+
+test('disabled queued work is not presented as the next automatic execution',()=>{
+ const disabled=task('queued','2026-09-30T02:00:00Z');
+ const result=planningStatus(site,[disabled],{...context(),channelEnabled:()=>false});
+ assert.deepEqual([result.state,result.next],['unplanned','暂无已排任务']);
 });

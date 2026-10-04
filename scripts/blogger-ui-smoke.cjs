@@ -1,0 +1,197 @@
+const {join}=require('node:path');
+const {mkdtempSync,mkdirSync,writeFileSync}=require('node:fs');
+const {tmpdir}=require('node:os');
+const assert=require('node:assert/strict');
+
+if(!process.versions.electron){
+  (async()=>{
+    const dir=mkdtempSync(join(tmpdir(),'linkflow-blogger-ui-'));
+    const root=process.cwd();
+    await require('esbuild').build({
+      stdin:{
+        contents:`
+          import React,{useState} from 'react';
+          import {createRoot} from 'react-dom/client';
+          import {AccountsPage} from ${JSON.stringify(join(root,'src/ui/pages/AccountsPage.tsx'))};
+          import ${JSON.stringify(join(root,'src/ui/styles.css'))};
+          const now='2026-10-04T00:00:00.000Z';
+          const channel=(id,name)=>({id,name,domain:id+'.example',url:'https://'+id+'.example',submitUrl:'https://'+id+'.example/new',categories:['general'],languages:['zh'],kind:'article',emailRequired:false,accountRequired:true,articleRequired:true,free:'yes',freeNote:'fixture',automation:id==='github'?'browser':'api',quality:'A',qualityReason:'fixture',rulesUrl:'https://'+id+'.example/rules',checkedAt:now,notes:'',allowedHosts:[id+'.example'],enabled:true});
+          const initial={
+            sites:[
+              {id:'site-1',domain:'one.example',url:'https://one.example',email:'owner@one.example',name:'One',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now},
+              {id:'site-2',domain:'two.example',url:'https://two.example',email:'owner@two.example',name:'Two',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now},
+            ],
+            tasks:[],channels:[channel('blogger','Blogger'),channel('github','GitHub')],
+            accounts:[
+              {id:'oauth-existing',channelId:'blogger',email:'owner@gmail.com',username:'existing-owner',createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'},
+              {id:'oauth-empty',channelId:'blogger',email:'empty@gmail.com',username:'no-blog-owner',createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'},
+              {id:'oauth-error',channelId:'blogger',email:'error@gmail.com',username:'retry-owner',createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'},
+              {id:'password-account',channelId:'github',email:'login@example.com',username:'password-owner',createdAt:now,status:'registered',hasPassword:true,credentialKind:'password',source:'imported'},
+            ],
+            mailboxes:[],accountBindings:[{id:'bind-existing',siteId:'site-1',channelId:'blogger',accountId:'oauth-existing',createdAt:now,updatedAt:now}],events:[],
+            settings:{provider:'codex',codexPath:'codex',model:'',apiBase:'',hasApiKey:false,autoRun:false,articleReviewMode:'manual',launchAtLogin:false,notify:true,timezone:'Asia/Singapore',maxAttempts:3,maxSteps:30,dailyAiLimit:50,channelOverrides:{},mail:{host:'',port:993,user:'',secure:true,hasPassword:false}},
+            runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:true,version:'fixture',platform:'darwin-arm64',dataPath:'fixture',aiCallsToday:0},
+          };
+          const actions=[];
+          const callbacks={imports:0,edits:0,deletes:0};
+          let connectionCancelled=false;
+          let connectionSerial=0;
+          let errorReads=0;
+          const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+          function Harness(){
+            const [data,setData]=useState(initial);
+            const [pending,setPending]=useState(false);
+            const action=async(command,payload)=>{
+              actions.push({command,payload:payload===undefined?'__undefined__':payload});
+              setPending(true);
+              try{
+                if(command==='account:connect-blogger'){
+                  connectionCancelled=false;
+                  const serial=++connectionSerial;
+                  await pause(220);
+                  if(connectionCancelled)return undefined;
+                  const account={id:'oauth-connected-'+serial,channelId:'blogger',email:'connected'+serial+'@gmail.com',username:'connected-google-'+serial,createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'};
+                  setData(current=>({...current,accounts:[account,...current.accounts]}));
+                  return account;
+                }
+                if(command==='account:cancel-blogger'){
+                  connectionCancelled=true;
+                  return {ok:true};
+                }
+                if(command==='account:blogger-blogs'){
+                  await pause(90);
+                  if(payload.accountId==='oauth-empty')return [];
+                  if(payload.accountId==='oauth-error'&&errorReads++===0)return undefined;
+                  return [{id:'blog-'+payload.accountId,name:'Fixture Blog',url:'https://fixture.blogspot.com/'}];
+                }
+                if(command==='site:bind-blogger'){
+                  await pause(70);
+                  setData(current=>({...current,
+                    sites:current.sites.map(site=>site.id===payload.siteId?{...site,blogger:{blogId:payload.blogId,url:'https://fixture.blogspot.com/'}}:site),
+                    accountBindings:[...current.accountBindings.filter(binding=>!(binding.siteId===payload.siteId&&binding.channelId==='blogger')),{id:'binding-'+payload.siteId,siteId:payload.siteId,channelId:'blogger',accountId:payload.accountId,createdAt:now,updatedAt:now}],
+                  }));
+                  return {ok:true};
+                }
+                if(command==='account:disconnect-blogger'){
+                  await pause(70);
+                  setData(current=>({...current,accounts:current.accounts.filter(account=>account.id!==payload.accountId),accountBindings:current.accountBindings.filter(binding=>binding.accountId!==payload.accountId)}));
+                  return {ok:true};
+                }
+                if(command==='external:open')return {ok:true};
+                return {ok:true};
+              }finally{setPending(false)}
+            };
+            Object.assign(window,{__bloggerFixture:{actions,callbacks,data}});
+            return <AccountsPage data={data} disabled={pending} onImport={()=>callbacks.imports++} onEdit={()=>callbacks.edits++} onDelete={()=>callbacks.deletes++} onAction={action} onSetup={()=>{}}/>;
+          }
+          createRoot(document.getElementById('root')).render(<Harness/>);
+        `,
+        resolveDir:root,
+        loader:'tsx',
+      },
+      outfile:join(dir,'ui.js'),bundle:true,platform:'browser',jsx:'automatic',
+    });
+    writeFileSync(join(dir,'index.html'),'<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="ui.css"></head><body><div id="root"></div><script src="ui.js"></script></body></html>');
+    const child=require('node:child_process').spawn(require('electron'),[__filename,dir],{stdio:'inherit',env:{...process.env,ELECTRON_RUN_AS_NODE:undefined}});
+    const deadline=setTimeout(()=>child.kill(),60000);
+    child.once('exit',code=>{clearTimeout(deadline);process.exitCode=code??1});
+  })().catch(error=>{console.error(error);process.exitCode=1});
+}else{
+  const {app,BrowserWindow}=require('electron');
+  const dir=process.argv[2];
+  const evidence=join(process.cwd(),'.evidence','blogger-ui-2026-10-04');
+  mkdirSync(evidence,{recursive:true});
+  app.setPath('userData',join(dir,'profile'));
+  const checks=[];
+  const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const check=(label,condition)=>{assert(condition,label);checks.push(label)};
+  let win;
+  const evaluate=source=>win.webContents.executeJavaScript(source,true);
+  const waitFor=async source=>{const deadline=Date.now()+8000;while(Date.now()<deadline){if(await evaluate(source))return;await delay(35)}throw new Error('UI readiness deadline: '+source)};
+  const clickText=async text=>{const clicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.trim()===${JSON.stringify(text)}&&!item.disabled);if(!button)return false;button.click();return true})()`);assert(clicked,'button: '+text);await delay(35)};
+  const clickLabel=async label=>{const clicked=await evaluate(`(()=>{const button=document.querySelector('button[aria-label=${JSON.stringify(label)}]');if(!button||button.disabled)return false;button.click();return true})()`);assert(clicked,'button label: '+label);await delay(35)};
+  const select=async(label,value)=>{const changed=await evaluate(`(()=>{const element=document.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!element||element.disabled)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);assert(changed,'select: '+label);await delay(35)};
+  const actionCount=command=>evaluate(`window.__bloggerFixture.actions.filter(action=>action.command===${JSON.stringify(command)}).length`);
+
+  app.whenReady().then(async()=>{try{
+    win=new BrowserWindow({width:1260,height:800,useContentSize:true,show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
+    await win.loadFile(join(dir,'index.html'));
+    await waitFor('document.body.innerText.includes("existing-owner")');
+
+    check('Blogger OAuth identity is labelled explicitly',await evaluate('document.body.innerText.includes("已连接的 Blogger OAuth 身份")&&document.body.innerText.includes("Google OAuth 身份无需保存密码")'));
+    check('OAuth identity has no password reveal or generic account controls',await evaluate('!document.querySelector("button[aria-label=\\"查看 existing-owner 的密码\\"]")&&!document.querySelector("button[aria-label=\\"绑定 existing-owner\\"]")&&!document.querySelector("button[aria-label=\\"更新 existing-owner\\"]")&&!document.querySelector("button[aria-label=\\"移除 existing-owner\\"]")'));
+    check('ordinary password identity keeps its existing controls',await evaluate('!!document.querySelector("button[aria-label=\\"查看 password-owner 的密码\\"]")&&!!document.querySelector("button[aria-label=\\"更新 password-owner\\"]")'));
+
+    await clickText('连接 Blogger');
+    await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("选择 Google 桌面客户端配置并连接")');
+    const guide=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return {text:dialog.innerText,passwords:dialog.querySelectorAll('input[type=password]').length,textInputs:dialog.querySelectorAll('input').length}})()`);
+    check('connection guide explains one-time desktop config and system browser account selection',guide.text.includes('已启用 Blogger API')&&guide.text.includes('7 天后过期')&&guide.text.includes('系统浏览器中选择 Google 账号'));
+    check('connection UI contains no plaintext credential fields or registration claim',guide.passwords===0&&guide.textInputs===0&&guide.text.includes('不会自动注册 Google 账号'));
+    writeFileSync(join(evidence,'blogger-connect-drawer.png'),(await win.capturePage()).toPNG());
+    const connectedBefore=await actionCount('account:connect-blogger');
+    const doubleClicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.includes('选择 Google 桌面客户端配置并连接'));if(!button)return false;button.click();button.click();return true})()`);
+    assert(doubleClicked,'double connect click');
+    await waitFor('document.body.innerText.includes("等待浏览器授权…")');
+    check('connect exposes a truthful loading state',await evaluate('document.body.innerText.includes("关闭本抽屉可取消本次连接")'));
+    await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")');
+    check('rapid connect clicks dispatch only once',await actionCount('account:connect-blogger')===connectedBefore+1);
+    const connectAction=await evaluate('window.__bloggerFixture.actions.find(action=>action.command==="account:connect-blogger")');
+    check('connect command carries no payload',connectAction.payload==='__undefined__');
+    await select('绑定网站','site-2');
+    await clickText('绑定博客');
+    await waitFor('!document.querySelector("[role=dialog]")');
+    const bindAction=await evaluate('window.__bloggerFixture.actions.find(action=>action.command==="site:bind-blogger")');
+    check('binding submits the selected site, OAuth identity, and blog',bindAction.payload.siteId==='site-2'&&bindAction.payload.accountId==='oauth-connected-1'&&bindAction.payload.blogId==='blog-oauth-connected-1');
+
+    await clickLabel('管理 no-blog-owner 的 Blogger 绑定');
+    await clickText('读取该身份的博客');
+    await waitFor('document.body.innerText.includes("还没有 Blogger 博客")');
+    check('empty Blogger identity offers a manual external creation path',await evaluate('document.body.innerText.includes("去 Blogger 创建博客")&&!document.body.innerText.includes("自动创建 Blogger 博客")'));
+    await clickText('去 Blogger 创建博客');
+    const openAction=await evaluate('window.__bloggerFixture.actions.findLast(action=>action.command==="external:open")');
+    check('creation button opens the official Blogger site',openAction.payload.url==='https://www.blogger.com/');
+    await clickText('取消');
+    await clickText('连接 Blogger');
+    check('closing and reopening clears transient blog results',await evaluate('!document.querySelector("[role=dialog]").innerText.includes("还没有 Blogger 博客")'));
+    await clickText('取消');
+
+    await clickLabel('管理 retry-owner 的 Blogger 绑定');
+    await clickText('读取该身份的博客');
+    await waitFor('document.querySelector("[role=alert]")?.innerText.includes("暂未读取到博客列表")');
+    check('blog loading failure stays recoverable in the drawer',await evaluate('document.querySelector("[role=dialog]")!==null&&document.body.innerText.includes("已有选择不会被提交")'));
+    await clickText('读取该身份的博客');
+    await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")');
+    await clickText('取消');
+
+    await clickText('连接 Blogger');
+    await clickText('选择 Google 桌面客户端配置并连接');
+    await waitFor('document.body.innerText.includes("取消连接")');
+    await clickText('取消连接');
+    await waitFor('!document.querySelector("[role=dialog]")');
+    await delay(260);
+    check('closing an active OAuth flow dispatches cancellation and leaves no half-created identity',await actionCount('account:cancel-blogger')===1&&await evaluate('!document.body.innerText.includes("connected-google-2")'));
+
+    await clickLabel('断开 existing-owner 的 Blogger 授权');
+    await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("已公开的博客文章不会被删除")');
+    const disconnectBefore=await actionCount('account:disconnect-blogger');
+    await clickText('取消');
+    check('disconnect confirmation can be cancelled without mutation',await actionCount('account:disconnect-blogger')===disconnectBefore&&await evaluate('document.body.innerText.includes("existing-owner")'));
+    await clickLabel('断开 existing-owner 的 Blogger 授权');
+    const disconnectDouble=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.trim()==='确认断开');if(!button)return false;button.click();button.click();return true})()`);
+    assert(disconnectDouble,'double disconnect click');
+    await waitFor('!document.querySelector("[role=dialog]")');
+    check('confirmed disconnect is guarded against duplicate clicks',await actionCount('account:disconnect-blogger')===disconnectBefore+1);
+    check('OAuth identities never enter generic edit or delete callbacks',await evaluate('window.__bloggerFixture.callbacks.edits===0&&window.__bloggerFixture.callbacks.deletes===0'));
+
+    const image=await win.capturePage();
+    writeFileSync(join(evidence,'accounts-blogger.png'),image.toPNG());
+    const actions=await evaluate('window.__bloggerFixture.actions');
+    writeFileSync(join(evidence,'result.json'),JSON.stringify({passed:true,checks,actions},null,2));
+    console.log('BLOGGER UI PASSED: '+checks.length+' checks');
+    app.exit(0);
+  }catch(error){
+    writeFileSync(join(evidence,'result.json'),JSON.stringify({passed:false,error:String(error),checks},null,2));
+    console.error(error);
+    app.exit(1);
+  }});
+}

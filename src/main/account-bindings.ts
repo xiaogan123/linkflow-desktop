@@ -39,9 +39,14 @@ export function boundAccount(state:State,task:Task):Account|undefined{
 /** Classify whether an automatic channel can run before spending generation or review calls. */
 export function channelExecutionReadiness(state:State,siteId:string,channel:Channel,accountId?:string):{kind:ChannelExecutionReadiness;account?:Account}{
   if(channel.automation==='manual')return {kind:'manual'};
+  if(channel.id==='blogger'){
+    const site=state.sites.find(item=>item.id===siteId),binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='blogger');
+    const account=state.accounts.find(item=>item.id===(accountId??binding?.accountId)&&item.channelId==='blogger');
+    return {kind:site?.blogger&&binding&&account&&binding.accountId===account.id&&account.credentialKind==='oauth'&&account.status==='registered'&&account.hasPassword?'ready':'handoff_required',account};
+  }
   if(!channel.accountRequired)return {kind:'ready'};
   const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
-  const compatible=(candidate:Account)=>channel.automation==='api'?candidate.credentialKind==='api_token':candidate.credentialKind!=='api_token';
+  const compatible=(candidate:Account)=>channel.automation==='api'?candidate.credentialKind==='api_token':candidate.credentialKind!=='api_token'&&candidate.credentialKind!=='oauth';
   let account=accountForSiteChannel(state,siteId,channel.id,accountId);
   if(!accountId&&!binding){
     const candidates=candidateAccounts(state,siteId,channel.id).filter(compatible);

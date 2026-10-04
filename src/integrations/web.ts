@@ -34,6 +34,20 @@ export interface PublicFetchDependencies {
   timeoutMs?: number;
 }
 
+export interface PublicTextFetchOptions {
+  /** Sitemaps may be served as application/xml or text/xml. HTML remains accepted. */
+  allowXml?: boolean;
+  /** Runs before a redirect target is resolved or requested. */
+  allowRedirect?: (from: URL, to: URL) => boolean;
+}
+
+export interface PublicTextFetchResult {
+  url: string;
+  text: string;
+  contentType: string;
+  bytes: number;
+}
+
 export function nextHtmlByteCount(current: number, chunkBytes: number): number {
   const next = current + chunkBytes;
   if (!Number.isSafeInteger(next) || next > MAX_HTML_BYTES) throw new Error('HTML response exceeds size limit');
@@ -269,7 +283,12 @@ export function normalizePublicUrl(input: string): URL {
 
 // The injected transport is for deterministic tests. Production callers always use
 // the pinned native request below; host and DNS checks run in both paths.
-export async function fetchPublicHtml(input: string, signal?: AbortSignal, dependencies?: PublicFetchDependencies): Promise<{ url: string; html: string }> {
+export async function fetchPublicText(
+  input: string,
+  signal?: AbortSignal,
+  dependencies?: PublicFetchDependencies,
+  options: PublicTextFetchOptions = {},
+): Promise<PublicTextFetchResult> {
   let current = normalizePublicUrl(input);
   const timeoutMs = dependencies?.timeoutMs ?? REQUEST_TIMEOUT_MS;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
@@ -342,20 +361,31 @@ export async function fetchPublicHtml(input: string, signal?: AbortSignal, depen
       if (redirect === MAX_REDIRECTS) throw new Error('Too many redirects');
       const location = response.headers.location;
       if (!location) throw new Error('Redirect has no location');
-      current = normalizePublicUrl(new URL(location, current).href);
+      const next = normalizePublicUrl(new URL(location, current).href);
+      if (options.allowRedirect && !options.allowRedirect(current, next)) {
+        throw new Error('Redirect target is not allowed');
+      }
+      current = next;
       continue;
     }
     if (response.status !== 200) throw new Error(`Public page returned HTTP ${response.status}`);
     const contentType = String(response.headers['content-type'] ?? '').toLowerCase();
-    if (!/^(text\/html|application\/xhtml\+xml)(;|\s|$)/.test(contentType)) {
-      throw new Error('Public page is not HTML');
+    const accepted = /^(text\/html|application\/xhtml\+xml)(;|\s|$)/.test(contentType) ||
+      (options.allowXml === true && /^(application|text)\/xml(;|\s|$)/.test(contentType));
+    if (!accepted) {
+      throw new Error(options.allowXml ? 'Public resource is not HTML or XML' : 'Public page is not HTML');
     }
     if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') {
       throw new Error('Compressed response is unsupported');
     }
-    return { url: current.href, html: response.body.toString('utf8') };
+    return { url: current.href, text: response.body.toString('utf8'), contentType, bytes: response.body.length };
   }
   throw new Error('Too many redirects');
+}
+
+export async function fetchPublicHtml(input: string, signal?: AbortSignal, dependencies?: PublicFetchDependencies): Promise<{ url: string; html: string }> {
+  const result = await fetchPublicText(input, signal, dependencies);
+  return { url: result.url, html: result.text };
 }
 
 function clean(value: string | undefined, max = 240): string {
