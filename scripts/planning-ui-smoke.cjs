@@ -51,7 +51,7 @@ if(!process.versions.electron){
     task('task-october','site-repeat','github-gist','queued',{scheduledAt:future,message:'已排入十月，不占用九月目标。'}),
   ];
   const apiAccountId='11111111-1111-4111-8111-111111111111';
-  const state={sites,tasks,channels,accounts:[{id:apiAccountId,channelId:'telegraph',email:'owner@repeat.example',username:'fixture-api',createdAt:stamp,updatedAt:stamp,status:'registered',hasPassword:true,credentialKind:'api_token',source:'imported'}],mailboxes:[],accountBindings:[{id:'22222222-2222-4222-8222-222222222222',siteId:'site-repeat',channelId:'telegraph',accountId:apiAccountId,createdAt:stamp,updatedAt:stamp}],events:[],settings:{provider:'codex',codexPath:'codex',model:'',apiBase:'',hasApiKey:false,autoRun:true,articleReviewMode:'ai',launchAtLogin:false,notify:true,timezone:'Asia/Singapore',maxAttempts:3,maxSteps:30,dailyAiLimit:50,channelOverrides:{},mail:{host:'',port:993,user:'',secure:true,hasPassword:false}},runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'win32-x64',dataPath:dir,aiCallsToday:0},channelPolicyStatus:{'site-policy':{telegraph:'unconfirmed'}},capacity:sites.map(item=>({siteId:item.id,currentLive:item.id==='site-repeat'?1:0,firstVerifiedThisMonth:0,currentSources:item.id==='site-repeat'?1:0,monthlySources:0,missing:0,eligiblePages:item.id==='site-system'||item.id==='site-repeat'?1:0,automaticPages:item.id==='site-system'||item.id==='site-repeat'?1:0,eligibleUnused:item.id==='site-no-auto'?0:2,automaticUnused:item.id==='site-no-auto'?0:1,manualUnused:item.id==='site-no-auto'?0:1,monthsAtTarget:item.id==='site-no-auto'?0:1,...(item.id==='site-system'||item.id==='site-repeat'?{}:{blockingReason:'no_automatic_channel',reason:'当前没有符合条件且可执行的页面机会。'})}))};
+  let state={sites,tasks,channels,accounts:[{id:apiAccountId,channelId:'telegraph',email:'owner@repeat.example',username:'fixture-api',createdAt:stamp,updatedAt:stamp,status:'registered',hasPassword:true,credentialKind:'api_token',source:'imported'}],mailboxes:[],accountBindings:[{id:'22222222-2222-4222-8222-222222222222',siteId:'site-repeat',channelId:'telegraph',accountId:apiAccountId,createdAt:stamp,updatedAt:stamp}],events:[],settings:{provider:'codex',codexPath:'codex',model:'',apiBase:'',hasApiKey:false,autoRun:true,articleReviewMode:'ai',launchAtLogin:false,notify:true,timezone:'Asia/Singapore',maxAttempts:3,maxSteps:30,dailyAiLimit:50,channelOverrides:{},mail:{host:'',port:993,user:'',secure:true,hasPassword:false}},runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'win32-x64',dataPath:dir,aiCallsToday:0},channelPolicyStatus:{'site-policy':{telegraph:'unconfirmed'}},capacity:sites.map(item=>({siteId:item.id,currentLive:item.id==='site-repeat'?1:0,firstVerifiedThisMonth:0,currentSources:item.id==='site-repeat'?1:0,monthlySources:0,missing:0,eligiblePages:item.id==='site-system'||item.id==='site-repeat'?1:0,automaticPages:item.id==='site-system'||item.id==='site-repeat'?1:0,eligibleUnused:item.id==='site-no-auto'?0:2,automaticUnused:item.id==='site-no-auto'?0:1,manualUnused:item.id==='site-no-auto'?0:1,monthsAtTarget:item.id==='site-no-auto'?0:1,...(item.id==='site-system'||item.id==='site-repeat'?{}:{blockingReason:'no_automatic_channel',reason:'当前没有符合条件且可执行的页面机会。'})}))};
   const actions=[];
   const clone=value=>JSON.parse(JSON.stringify(value));
   ipcMain.handle('fixture',(_event,name,payload)=>{if(name==='snapshot')return clone(state);actions.push({name,payload:clone(payload)});return {ok:true}});
@@ -78,8 +78,8 @@ if(!process.versions.electron){
     check('overview identifies account handoff as a real user action',overviewRows['handoff.example'].status==='需要连接账号');
     check('overview explicitly states no automatic channel when page opportunities are absent',overviewRows['no-auto.example'].status==='暂无机会 · 没有自动渠道');
     check('overview human todo count excludes system and channel waits',await evaluate('document.body.innerText.includes("查看全部 2 项")'));
-    check('overview page-gap copy does not request invented qualifications',await evaluate('document.body.innerText.includes("已核验页面")&&document.body.innerText.includes("自动发布机会")&&!document.body.innerText.includes("需补充资格或渠道")'));
-    check('next-month queued work does not cover the current-month page gap',await evaluate('document.querySelector(".capacity-note").innerText.includes("本月还差 11 个已核验页面")'));
+    check('overview page-gap copy does not request invented qualifications',await evaluate('document.body.innerText.includes("页面尚未核验")&&document.body.innerText.includes("尚待建立计划")&&!document.body.innerText.includes("需补充资格或渠道")'));
+    check('next-month queued work does not cover the current-month page gap',await evaluate('document.querySelector(".capacity-note").innerText.includes("本月还有 11 个页面尚未核验")&&document.querySelector(".capacity-note").innerText.includes("0 个已排期或在途，11 个尚待建立计划")'));
 
     await clickText('任务');
     await waitFor('document.querySelectorAll(".work-identity").length===5');
@@ -135,6 +135,34 @@ if(!process.versions.electron){
     check('manual-mode draft remains an explicit human approval task',await evaluate('document.querySelector(".task-card").innerText.includes("稿件待人工审核")&&[...document.querySelectorAll(".task-card button")].some(button=>button.innerText.includes("已核对稿件，继续发布"))'));
 
     await capture('planning-statuses.png');
+    await clickText('返回总览');
+    const productionSites=['alpha.example','beta.example','gamma.example','delta.example','gan.example'].map((domain,index)=>site(`prod-${index+1}`,domain,'ai',{monthlyTarget:2,...(domain==='gan.example'?{error:'本月还差 1 个页面；其他可执行任务会继续。'}:{})}));
+    const productionLive=productionSites.slice(0,4).map((item,index)=>task(`prod-live-${index+1}`,item.id,'github-gist','live',{scheduledAt:`2026-09-${String(index+2).padStart(2,'0')}T00:00:00.000Z`,publicUrl:`https://gist.github.com/fixture/live-${index+1}`,firstLiveAt:`2026-09-${String(index+2).padStart(2,'0')}T00:05:00.000Z`,verifiedAt:`2026-09-${String(index+2).padStart(2,'0')}T00:10:00.000Z`,lastCheckedAt:stamp,health:'healthy',linkCheck:'found'}));
+    const productionQueued=productionSites.map((item,index)=>task(`prod-queued-${index+1}`,item.id,'telegraph','queued',{scheduledAt:`2026-09-30T0${index+2}:00:00.000Z`,message:'已按发布间隔排入自动计划。'}));
+    const productionTasks=[...productionLive,...productionQueued];
+    state={...state,sites:productionSites,tasks:productionTasks,accounts:[],accountBindings:[],channelPolicyStatus:{},capacity:productionSites.map((item,index)=>({siteId:item.id,currentLive:index<4?1:0,firstVerifiedThisMonth:index<4?1:0,currentSources:index<4?1:0,monthlySources:index<4?1:0,missing:0,eligiblePages:0,automaticPages:0,eligibleUnused:0,automaticUnused:0,manualUnused:0,monthsAtTarget:0}))};
+    win.webContents.send('fixture-change');
+    await waitFor('document.querySelector(".metric-number strong")?.innerText==="4"&&document.body.innerText.includes("gan.example")');
+    check('4 of 10 overview separates six unverified pages from five planned and one unplanned',await evaluate('document.querySelector(".metric-number").innerText.includes("4")&&document.querySelector(".metric-number").innerText.includes("10")&&document.querySelector(".capacity-note").innerText.includes("本月还有 6 个页面尚未核验")&&document.querySelector(".capacity-note").innerText.includes("5 个已排期或在途，1 个尚待建立计划")&&!document.querySelector(".capacity-note").innerText.includes("本月还差 1 个已核验页面")'));
+    const productionRows=await evaluate(`Object.fromEntries([...document.querySelectorAll('.site-row')].map(row=>[row.querySelector('.site-name strong').innerText,{status:row.querySelector('.badge').innerText,next:row.querySelector('.next-date').innerText}]))`);
+    check('queued gan work remains scheduled despite its informational capacity text',productionRows['gan.example'].status==='已排计划'&&productionRows['gan.example'].next.includes('今天'));
+    check('queued capacity text is not promoted to a cross-site user action',await evaluate('document.querySelector(".attention-main h2").innerText==="当前没有需要你处理的任务"'));
+    await capture('monthly-progress.png');
+    await clickSite('gan.example');
+    check('queued capacity text does not offer website reanalysis',await evaluate(`![...document.querySelectorAll('.banner.warning button')].some(button=>button.innerText==='重新分析')`));
+
+    await clickText('返回总览');
+    const actionableSites=productionSites.map((item,index)=>index===0?{...item,status:'attention',error:'网站暂时无法读取，请检查域名和网络后重新分析。'}:index===1?{...item,articleReviewMode:'manual'}:item);
+    const manualAction=task('prod-manual-review','prod-2','manual-publication','needs_input',{checkpoint:'article_review',message:'稿件等待人工核对。'});
+    state={...state,sites:actionableSites,tasks:[...productionTasks,manualAction]};win.webContents.send('fixture-change');
+    await waitFor('document.querySelector(".attention-main h2")?.innerText==="稿件待人工审核"');
+    check('a real manual review remains a user action',await evaluate('document.querySelector(".attention-main").innerText.includes("查看全部 1 项")'));
+    state={...state,tasks:productionTasks};win.webContents.send('fixture-change');
+    await waitFor('document.querySelector(".attention-main h2")?.innerText==="网站资料需要处理"');
+    check('a genuine analysis failure remains a cross-site action',await evaluate('document.querySelector(".attention-main").innerText.includes("alpha.example")&&document.querySelector(".attention-main").innerText.includes("网站暂时无法读取")'));
+    await clickText('查看网站');await waitFor('[...document.querySelectorAll(".banner.warning button")].some(button=>button.innerText==="重新分析")');
+    check('analysis failure detail retains the reanalysis action',await evaluate('document.querySelector(".banner.warning").innerText.includes("网站暂时无法读取")'));
+    await capture('actionable-analysis.png');
     writeFileSync(join(evidence,'result.json'),JSON.stringify({passed:true,viewport:{width:1280,height:800},checks,actions},null,2));
     console.log(`PLANNING UI PASSED: ${checks.length} checks`);
     app.exit(0);

@@ -7,6 +7,7 @@ export type PlanningState='global_paused'|'site_paused'|'analyzing'|'running'|'n
 
 export interface PlanningStatus {state:PlanningState; label:string; tone:PlanningTone; next:string; detail:string}
 export interface PlanningContext {autoRun:boolean; now:Date; timeZone:string; capacity?:SiteCapacity;articleReviewMode?:ArticleReviewMode;channelEnabled?:(task:Task)=>boolean}
+export interface MonthlyPageProgress {verified:number;unverified:number;planned:number;unplanned:number}
 
 const parts=(date:Date,timeZone:string)=>{
   try{return Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).filter(part=>part.type!=='literal').map(part=>[part.type,part.value]))}
@@ -17,11 +18,14 @@ const validDate=(value:string)=>{const date=new Date(value);return Number.isNaN(
 const bySchedule=(a:Task,b:Task)=>(validDate(a.scheduledAt)?.getTime()??Number.MAX_SAFE_INTEGER)-(validDate(b.scheduledAt)?.getTime()??Number.MAX_SAFE_INTEGER);
 export const hasShortageMessage=(value?:string)=>Boolean(value&&/(渠道|来源|资格|可用).{0,8}(不足|短缺|没有|无)|不足.{0,8}(渠道|来源|资格|可用)/.test(value));
 
-export function remainingMonthlyPages(site:Site,tasks:Task[],now:Date,timeZone:string){
-  const completed=publicationCounts(site.id,tasks,now,timeZone).monthlyPages;
+export function monthlyPageProgress(site:Site,tasks:Task[],now:Date,timeZone:string):MonthlyPageProgress{
+  const verified=publicationCounts(site.id,tasks,now,timeZone).monthlyPages;
+  const unverified=Math.max(0,site.monthlyTarget-verified);
   const reserved=tasks.filter(task=>task.siteId===site.id&&reservesMonthlySlot(task,now,timeZone)).length;
-  return Math.max(0,site.monthlyTarget-completed-reserved);
+  const planned=Math.min(unverified,reserved);
+  return {verified,unverified,planned,unplanned:unverified-planned};
 }
+export function remainingMonthlyPages(site:Site,tasks:Task[],now:Date,timeZone:string){return monthlyPageProgress(site,tasks,now,timeZone).unplanned}
 
 const capacityCopy:Record<CapacityBlockReason,{label:string;next:string;detail:string;tone:PlanningTone}>={
   topics_unknown:{label:'暂无机会 · 选题待取得',next:'等待网站选题',detail:'尚未取得可去重的真实页面；取得选题后会自动继续。',tone:'muted'},
@@ -54,6 +58,7 @@ export function planningStatus(site:Site,tasks:Task[],context:PlanningContext):P
   const status=(state:PlanningState,label:string,tone:PlanningTone,nextText:string,detail:string):PlanningStatus=>({state,label,tone,next:nextText,detail});
   const queuedNext=(state:PlanningState,label:string,tone:PlanningTone,detail:string)=>{const nextAt=next&&validDate(next.scheduledAt);return nextAt&&nextAt.getTime()<=now.getTime()?status(state==='scheduled'?'due':state,label,tone,'已到期，即将执行',detail):next?status(state,label,tone,formatScheduledAt(next.scheduledAt,now,context.timeZone),detail):undefined};
   if(site.status==='paused')return status('site_paused','网站已暂停','muted','网站计划已暂停','恢复该网站后，已排任务才会继续检查。');
+  if(site.status==='attention')return status('blocked','资料需处理','amber','网站资料需要处理',site.error||'网站分析未完成，请重新分析。');
   if(!context.autoRun)return status('global_paused','自动已暂停','muted','全局自动计划已暂停','恢复自动执行后，系统会继续检查已排任务。');
   if(site.status==='analyzing')return status('analyzing','分析中','blue','正在分析网站','分析完成后会立即建立可用任务，不必等到下月。');
   if(siteTasks.some(task=>task.status==='running'))return status('running','正在执行','blue','正在执行任务','当前任务完成或需要人工接续后，会更新下一步。');
@@ -75,14 +80,13 @@ export function planningStatus(site:Site,tasks:Task[],context:PlanningContext):P
   if(reviewing.length)return status('review','等待平台结果','blue','等待渠道确认','已提交任务正在等待平台结果，暂不重复创建相同来源。');
   const counts=publicationCounts(site.id,tasks,now,context.timeZone);
   if(counts.monthlyPages>=site.monthlyTarget)return status('target_met','本月完成','green','本月目标已达','本月新发布且已核验的页面数已达到目标。');
-  const gap=remainingMonthlyPages(site,tasks,now,context.timeZone);
-  if(site.error&&!hasShortageMessage(site.error)&&!context.capacity?.blockingReason)return status('blocked','资料需处理','amber','网站资料需要处理',site.error);
-  const capacity=context.capacity;
-  if((capacity?.automaticPages??0)>0){const at=capacity?.nextAvailableAt&&validDate(capacity.nextAvailableAt);return status('unplanned','等待建立计划','blue',at?formatScheduledAt(at.toISOString(),now,context.timeZone):'即将检查可排机会',`本月还差 ${gap} 个已核验页面；当前有 ${capacity?.automaticPages} 个自动发布机会。`)}
+  const progress=monthlyPageProgress(site,tasks,now,context.timeZone),gap=progress.unplanned,capacity=context.capacity;
+  if(site.error&&!hasShortageMessage(site.error)&&!capacity)return status('blocked','资料需处理','amber','网站资料需要处理',site.error);
+  if((capacity?.automaticPages??0)>0){const at=capacity?.nextAvailableAt&&validDate(capacity.nextAvailableAt);return status('unplanned','等待建立计划','blue',at?formatScheduledAt(at.toISOString(),now,context.timeZone):'即将检查可排机会',`本月还有 ${progress.unverified} 个页面尚未核验；${gap} 个尚待建立计划，当前有 ${capacity?.automaticPages} 个自动发布机会。`)}
   if(capacity?.blockingReason){const copy=capacityCopy[capacity.blockingReason],automaticTime=['cadence_wait','cooldown'].includes(capacity.blockingReason),at=automaticTime&&capacity.nextAvailableAt?validDate(capacity.nextAvailableAt):undefined;return status('source_shortage',copy.label,copy.tone,at?formatScheduledAt(at.toISOString(),now,context.timeZone):copy.next,capacity.reason||copy.detail)}
   if(!capacity&&hasShortageMessage(site.error))return status('source_shortage','等待可用渠道','muted','暂无可排渠道',site.error||'当前没有可排的自动发布机会。');
   if(systemWaiting.length){const first=systemWaiting[0];return status('system_retry','系统处理已暂停','muted','当前未安排自动重试',first.message||'当前任务不会自动重试；其他可执行渠道仍会继续。')}
   if(channelWaiting.length){const first=channelWaiting[0],presentation=taskPresentation(first,reviewMode,channelEnabled(first));return status('channel_wait',presentation.label,'muted','当前未安排自动复查',first.message||'当前来源未发布且未安排自动复查；出现新证据后可重新评估。')}
-  if(site.error)return status('blocked','资料需处理','amber','网站资料需要处理',site.error);
-  return status('unplanned','等待计划','muted','暂无已排任务',`本月还差 ${gap} 个已核验页面；当前尚未取得可排机会。`);
+  if(site.error&&!capacity)return status('blocked','资料需处理','amber','网站资料需要处理',site.error);
+  return status('unplanned','等待计划','muted','暂无已排任务',`本月还有 ${progress.unverified} 个页面尚未核验；${gap} 个尚待建立计划。`);
 }

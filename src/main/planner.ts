@@ -224,7 +224,7 @@ export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Chan
   const blocker=gap>0&&eligiblePages===0&&automaticPages===0?priority.map(reason=>blocked.find(item=>item.blockingReason===reason)).find((item):item is NonNullable<typeof item>=>!!item):undefined;
   const deferredAt=blocked.map(item=>item.nextAvailableAt).filter((value):value is string=>!!value).sort()[0];
   const nextAvailableAt=gap>0?(automaticSchedule.scheduled[0]??eligibleSchedule.scheduled[0]??automaticSchedule.deferredAt??eligibleSchedule.deferredAt??deferredAt):undefined;
-  const noAutomaticReason=eligiblePages>0?'当前有可人工安排的页面机会，但没有可自动执行的渠道。':'当前没有符合条件且可执行的页面机会。';
+  const noAutomaticReason=eligiblePages>0?'当前有可人工安排的页面机会，但暂无可新增自动排期。':'当前没有符合条件且可执行的页面机会。';
   const cadenceReason=automaticSchedule.deferredAt?'受跨平台 7 天发布间隔限制，下一个页面机会已超出本自然月；下月会重新评估。':undefined;
   const reason=gap===0?undefined:cadenceReason??blocker?.reason??(automaticPages===0?noAutomaticReason:undefined);
   const blockingReason=gap>0&&automaticPages===0?(automaticSchedule.deferredAt?'cadence_wait':eligiblePages>0?'no_automatic_channel':blocker?.blockingReason??'no_automatic_channel'):undefined;

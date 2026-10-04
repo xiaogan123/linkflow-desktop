@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {hasShortageMessage,monthlyReset,planningStatus,remainingMonthlyPages} from '../src/ui/planning-status';
+import {hasShortageMessage,monthlyPageProgress,monthlyReset,planningStatus,remainingMonthlyPages} from '../src/ui/planning-status';
 import type {CapacityBlockReason,Site, SiteCapacity, Task} from '../src/shared/types';
 
 const site:Site={id:'site-1',domain:'example.com',url:'https://example.com',email:'hello@example.com',name:'Example',description:'Example',category:'software',language:'zh',monthlyTarget:2,status:'ready',createdAt:'2026-09-01T00:00:00Z'};
@@ -26,6 +26,25 @@ test('an October queued task does not cover the remaining September page',()=>{
  const live={...task('live'),publicUrl:'https://source.example/september',firstLiveAt:'2026-09-02T00:20:00Z'};
  const october={...task('queued','2026-09-30T16:00:00Z'),id:'task-october',sourceDomain:'october.example'};
  assert.equal(remainingMonthlyPages(site,[live,october],now,'Asia/Singapore'),1);
+});
+
+test('verified deficit stays separate from planned work and the unscheduled gap',()=>{
+ const actual={...site,monthlyTarget:10};
+ const live=Array.from({length:4},(_,index)=>({...task('live'),id:`live-${index}`,publicUrl:`https://source.example/live-${index}`,firstLiveAt:`2026-09-${String(index+2).padStart(2,'0')}T00:20:00Z`}));
+ const queued=Array.from({length:5},(_,index)=>({...task('queued',`2026-09-30T0${index+2}:00:00Z`),id:`queued-${index}`,sourceDomain:`queued-${index}.example`}));
+ assert.deepEqual(monthlyPageProgress(actual,[...live,...queued],context().now,context().timeZone),{verified:4,unverified:6,planned:5,unplanned:1});
+});
+
+test('structured planning context keeps queued capacity text informational',()=>{
+ const queued=task('queued'),withCapacityText={...site,error:'本月还差 1 个页面；其他可执行任务会继续。'};
+ const result=planningStatus(withCapacityText,[queued],{...context(),capacity:capacity(undefined,{automaticPages:0})});
+ assert.deepEqual([result.state,result.label,result.next],['scheduled','已排计划','今天 10:00']);
+});
+
+test('a genuine analysis failure remains actionable even if old queued work exists',()=>{
+ const failed={...site,status:'attention' as const,error:'网站暂时无法读取，请检查域名和网络后重新分析。'};
+ const result=planningStatus(failed,[task('queued')],{...context(false),capacity:capacity('no_automatic_channel')});
+ assert.deepEqual([result.state,result.label,result.next],['blocked','资料需处理','网站资料需要处理']);
 });
 
 for(const blocked of ['failed','expired','review'] as const)test(`${blocked} does not hide a separate queued task`,()=>{
