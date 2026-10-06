@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import type { Site, SiteTopic } from '../shared/types.js';
+import { isArticleTopicUrl } from '../shared/topic-policy.js';
 import { fetchPublicText, normalizePublicUrl } from './web.js';
 
 const MAX_CHILD_SITEMAPS = 2;
@@ -304,23 +305,11 @@ function parseSitemap(xml: string, maxEntries: number): ParsedSitemap {
   return { kind: isIndex ? 'index' : 'urlset', entries };
 }
 
-const NON_TOPIC_SEGMENT = /^(?:about(?:-us)?|contact(?:-us)?|privacy(?:-policy)?|terms(?:-of-(?:use|service))?|legal|disclaimer|cookies?(?:-policy)?|login|log-in|signin|sign-in|signup|sign-up|register|account|profile|authors?|tags?|categories?|archives?|search|feed|rss|sitemap|wp-json|cart|checkout|page)$/i;
-const NON_TOPIC_EXTENSION = /\.(?:xml|json|txt|pdf|jpe?g|png|gif|webp|svg|ico|css|js|zip|gz|mp[34]|avi|mov|woff2?|ttf)$/i;
-
 function isEligibleTopicUrl(input: string, site: SiteIdentity): boolean {
-  if (!isSameSite(input, site)) return false;
-  let parsed: URL;
-  try { parsed = normalizePublicUrl(input); }
-  catch { return false; }
-  const decodedPath = (() => {
-    try { return decodeURIComponent(parsed.pathname); }
-    catch { return parsed.pathname; }
-  })();
-  if (decodedPath === '/' || NON_TOPIC_EXTENSION.test(decodedPath)) return false;
-  const segments = decodedPath.split('/').filter(Boolean);
-  if (segments.some((segment) => NON_TOPIC_SEGMENT.test(segment))) return false;
-  if (parsed.searchParams.has('page') || parsed.searchParams.has('paged')) return false;
-  return true;
+  return isSameSite(input, site) && isArticleTopicUrl(input, {
+    url: site.baseUrl.href,
+    domain: site.host,
+  });
 }
 
 function toTopic(entry: SitemapEntry, site: SiteIdentity, discoveredAt: string): SiteTopic | undefined {
@@ -488,9 +477,10 @@ export async function readTopicEvidence(
   return runWithOverallDeadline(signal, EVIDENCE_DEADLINE_MS, async (boundedSignal) => {
     const identity = identifySite(site);
     const requestedKey = canonicalUrlKey(topicUrl);
-    if (!requestedKey || !isSameSite(topicUrl, identity)) throw new TopicDiscoveryError('invalid_topic', false);
+    const policySite = { url: identity.baseUrl.href, domain: identity.host };
+    if (!requestedKey || !isArticleTopicUrl(topicUrl, policySite)) throw new TopicDiscoveryError('invalid_topic', false);
     const approved = site.topics?.find((topic) => canonicalUrlKey(topic.url) === requestedKey);
-    if (!approved || !isSameSite(approved.url, identity)) throw new TopicDiscoveryError('invalid_topic', false);
+    if (!approved || !isArticleTopicUrl(approved.url, policySite)) throw new TopicDiscoveryError('invalid_topic', false);
     const budget: FetchBudget = { requests: 0, bytes: 0 };
     const fetched = await fetchBounded(
       approved.url,
@@ -500,6 +490,7 @@ export async function readTopicEvidence(
       transport ?? defaultTransport(identity),
       budget,
     );
+    if (!isArticleTopicUrl(fetched.url, site)) throw new TopicDiscoveryError('invalid_topic', false);
     return extractEvidence(fetched.body, fetched.url);
   });
 }

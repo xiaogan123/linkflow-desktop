@@ -9,6 +9,17 @@ const channel=(id:string,automation:Channel['automation'],accountRequired=true):
 const task=(status:Task['status']='queued'):Task=>({id:'task-1',siteId:site.id,channelId:'telegraph',sourceDomain:'telegra.ph',status,createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'fixture'});
 const failedReview=(reasonCode:ArticleReviewReasonCode)=>({status:'failed' as const,reason:'fixture failure',reasonCode,reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)});
 
+test('terminal invalid topic has a precise label without offering a generic paid retry',()=>{
+  const invalid={...task('failed'),checkpoint:'invalid_topic'};
+  assert.equal(taskPresentation(invalid,'ai').label,'需要新的文章选题');
+  assert.equal(isUserActionTask(invalid,'ai'),false);
+  assert.equal(canRetryTaskManually(invalid,'ai'),false);
+  const stopped={...invalid,checkpoint:'topic_recovery_budget'};
+  assert.equal(taskPresentation(stopped,'ai').label,'自动处理额度不足');
+  assert.equal(isUserActionTask(stopped,'ai'),false);
+  assert.equal(canRetryTaskManually(stopped,'ai'),false);
+});
+
 test('policy and evidence dispositions never become human review labels',()=>{
   for(const reasonCode of ['policy_unknown','policy_not_found','evidence_invalid','input_too_long','content_rejected'] as const){
     const value={...task('failed'),checkpoint:'channel_wait',articleReview:failedReview(reasonCode)};

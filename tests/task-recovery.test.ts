@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {maintainWaitingTasks,resumeDeferredTask} from '../src/main/task-recovery';
+import {maintainWaitingTasks,recoverWithAlternativeTopic,resumeDeferredTask} from '../src/main/task-recovery';
 import {defaultSettings} from '../src/main/store';
 import {CHANNELS} from '../src/integrations/catalog';
 import type {Site,Task} from '../src/shared/types';
@@ -45,4 +45,50 @@ test('failed unknown submission blocks recovery of a separate earlier task',()=>
  const old=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp});
  const uncertain=task({id:'uncertain',status:'failed',checkpoint:'telegraph_publish_uncertain',submittedAt:stamp});
  maintainWaitingTasks([old,uncertain],[site],[channel],settings,now);assert.equal(old.status,'failed');assert.equal(old.nextCheckAt,undefined);assert.equal(old.recoveryEligible,false);assert.equal(uncertain.status,'failed');
+});
+
+test('one rejected article switches topic on the same task and archives the prior draft and review',()=>{
+ const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:'2026-10-02T00:00:00.000Z'}]};
+ const review={status:'failed' as const,reason:'Unsupported claim remains',reasonCode:'content_rejected' as const,checks:{factualAccuracy:'fail',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'} as const,evidenceUrls:['https://example.com/guide-one'],draftRevision:2,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
+ const rejected=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',draftRevision:2,articleRepairAttempts:1,articleReview:review,cost:{aiCalls:4}}),id=rejected.id;
+ maintainWaitingTasks([rejected],[aiSite],[channel],settings,now);
+ assert.equal(rejected.id,id);assert.equal(rejected.status,'queued');assert.equal(rejected.topicUrl,'https://example.com/guide-two');assert.equal(rejected.topicSwitchAttempts,1);assert.equal(rejected.cost?.aiCalls,4);
+ assert.equal(rejected.draft,undefined);assert.equal(rejected.articleReview,undefined);assert.equal(rejected.articleRepairAttempts,0);assert.equal(rejected.articleAttempts?.length,1);assert.equal(rejected.articleAttempts?.[0].topicUrl,'https://example.com/guide-one');assert.equal(rejected.articleAttempts?.[0].draft?.body,'Original');assert.equal(rejected.articleAttempts?.[0].articleReview?.reasonCode,'content_rejected');
+ Object.assign(rejected,{status:'failed',checkpoint:'channel_wait',draft:{title:'B',description:'B',body:'Second'},articleReview:{...review,draftRevision:3},cost:{aiCalls:6}});
+ maintainWaitingTasks([rejected],[aiSite],[channel],settings,now);assert.equal(rejected.status,'failed');assert.equal(rejected.topicUrl,'https://example.com/guide-two');assert.equal(rejected.topicSwitchAttempts,1);assert.equal(rejected.checkpoint,'article_rejected');
+});
+
+test('an invalid topic with only one AI call left stops before a replacement draft or review',()=>{
+ const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/privacy.html',discoveredAt:stamp},{url:'https://example.com/guides/safe-checklist',discoveredAt:stamp}]};
+ const invalid=task({status:'failed',checkpoint:'system_wait',topicUrl:'https://example.com/privacy.html',articleReview:{status:'failed',reason:'Source evidence did not match',reasonCode:'evidence_invalid',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)},cost:{aiCalls:5},recoveryEligible:true,nextCheckAt:stamp});
+ maintainWaitingTasks([invalid],[aiSite],[channel],settings,now);
+ assert.equal(invalid.status,'failed');assert.equal(invalid.checkpoint,'topic_recovery_budget');assert.equal(invalid.topicUrl,'https://example.com/privacy.html');assert.equal(invalid.topicSwitchAttempts,undefined);assert.equal(invalid.cost?.aiCalls,5);assert.equal(invalid.nextCheckAt,undefined);assert.match(invalid.message,/不足两次.*付费前停止/);
+});
+
+test('topic switching respects pause, manual mode, disabled channels and uncertain submission boundaries',()=>{
+ const baseSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp}]};
+ const review={status:'failed' as const,reason:'Rejected',reasonCode:'content_rejected' as const,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
+ const cases=[
+  {site:{...baseSite,status:'paused' as const},channel,settings,task:task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review})},
+  {site:baseSite,channel,settings:{...settings,autoRun:false},task:task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review})},
+  {site:{...baseSite,articleReviewMode:'manual' as const},channel,settings,task:task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review})},
+  {site:baseSite,channel:{...channel,enabled:false},settings,task:task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review})},
+  {site:baseSite,channel,settings,task:task({status:'failed',checkpoint:'telegraph_publish_uncertain',topicUrl:'https://example.com/guide-one',articleReview:review})},
+ ];
+ for(const value of cases){const before=structuredClone(value.task),result=recoverWithAlternativeTopic(value.task,value.site,value.channel,[value.task],value.settings,now);assert.equal(result.kind,'ineligible');assert.deepEqual(value.task,before)}
+});
+
+test('an alternative never reuses a topic archived by another task',()=>{
+ const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp},{url:'https://example.com/guide-three',discoveredAt:stamp}]};
+ const review={status:'failed' as const,reason:'Rejected',reasonCode:'content_rejected' as const,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
+ const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review,cost:{aiCalls:2}});
+ const historical=task({id:'other',status:'failed',topicUrl:'https://example.com/old',articleAttempts:[{topicUrl:'https://example.com/guide-two',recordedAt:stamp,reason:'Previously rejected'}]});
+ const result=recoverWithAlternativeTopic(current,aiSite,channel,[current,historical],settings,now);
+ assert.equal(result.kind,'switched');assert.equal(current.topicUrl,'https://example.com/guide-three');
+});
+
+test('an alternative softly prefers an ASCII locale prefix matching the site language',()=>{
+ const aiSite:Site={...site,language:'zh-CN',articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/en/guides/newer',discoveredAt:'2026-10-02T00:00:00.000Z'},{url:'https://example.com/zh-hans/guides/older',discoveredAt:stamp}]};
+ const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:{status:'failed',reason:'Rejected',reasonCode:'content_rejected',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}});
+ assert.equal(recoverWithAlternativeTopic(current,aiSite,channel,[current],settings,now).kind,'switched');assert.equal(current.topicUrl,'https://example.com/zh-hans/guides/older');
 });

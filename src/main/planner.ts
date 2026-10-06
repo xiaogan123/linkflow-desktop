@@ -219,14 +219,14 @@ export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Chan
   const eligibleSchedule=fittingSchedule(site,candidates,candidate=>candidate.eligible,gap,related,now,timeZone);
   const automaticSchedule=fittingSchedule(site,candidates,candidate=>candidate.automatic,gap,related,now,timeZone);
   const eligiblePages=eligibleSchedule.scheduled.length,automaticPages=automaticSchedule.scheduled.length;
-  const priority:CapacityBlockReason[]=['budget_exhausted','topics_unknown','topics_exhausted','cadence_wait','cooldown','account_required','no_automatic_channel'];
-  const blocked=candidates.map(candidate=>candidate.opportunity).filter(opportunity=>!opportunity.allowed);
-  const blocker=gap>0&&eligiblePages===0&&automaticPages===0?priority.map(reason=>blocked.find(item=>item.blockingReason===reason)).find((item):item is NonNullable<typeof item>=>!!item):undefined;
-  const deferredAt=blocked.map(item=>item.nextAvailableAt).filter((value):value is string=>!!value).sort()[0];
+  const priority:CapacityBlockReason[]=['budget_exhausted','invalid_topic','article_rejected','topics_unknown','topics_exhausted','cadence_wait','cooldown','account_required','no_automatic_channel'];
+  const automaticBlocked=candidates.filter(candidate=>candidate.channel.automation!=='manual'&&!candidate.opportunity.allowed).map(candidate=>candidate.opportunity);
+  const blocker=gap>0&&automaticPages===0?priority.map(reason=>automaticBlocked.find(item=>item.blockingReason===reason)).find((item):item is NonNullable<typeof item>=>!!item):undefined;
+  const deferredAt=automaticBlocked.map(item=>item.nextAvailableAt).filter((value):value is string=>!!value).sort()[0];
   const nextAvailableAt=gap>0?(automaticSchedule.scheduled[0]??eligibleSchedule.scheduled[0]??automaticSchedule.deferredAt??eligibleSchedule.deferredAt??deferredAt):undefined;
   const noAutomaticReason=eligiblePages>0?'当前有可人工安排的页面机会，但暂无可新增自动排期。':'当前没有符合条件且可执行的页面机会。';
   const cadenceReason=automaticSchedule.deferredAt?'受跨平台 7 天发布间隔限制，下一个页面机会已超出本自然月；下月会重新评估。':undefined;
-  const reason=gap===0?undefined:cadenceReason??blocker?.reason??(automaticPages===0?noAutomaticReason:undefined);
-  const blockingReason=gap>0&&automaticPages===0?(automaticSchedule.deferredAt?'cadence_wait':eligiblePages>0?'no_automatic_channel':blocker?.blockingReason??'no_automatic_channel'):undefined;
+  const reason=gap===0?undefined:blocker?.reason??cadenceReason??(automaticPages===0?noAutomaticReason:undefined);
+  const blockingReason=gap>0&&automaticPages===0?(blocker?.blockingReason??(automaticSchedule.deferredAt?'cadence_wait':'no_automatic_channel')):undefined;
   return {siteId:site.id,currentLive:counts.currentPages,firstVerifiedThisMonth:counts.monthlyPages,currentSources:counts.currentSources,monthlySources:counts.monthlySources,missing:new Set(related.filter(task=>task.health==='missing').map(task=>sourceKey(task.sourceDomain))).size,eligibleUnused:remaining.total,automaticUnused,manualUnused,eligiblePages,automaticPages,monthsAtTarget,...(blockingReason?{blockingReason}:{}),...(nextAvailableAt?{nextAvailableAt}:{}),...(reason?{reason}:{})};
 }

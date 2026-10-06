@@ -139,6 +139,29 @@ test('capacity does not promise the same remaining topic to two channels',()=>{
   assert.equal(capacity.eligiblePages,1);assert.equal(capacity.automaticPages,1);
 });
 
+test('invalid cached pages are excluded before planning and remain the automatic blocker beside manual capacity',()=>{
+  const state=emptyState();state.settings.timezone='UTC';const target=site([{url:'https://example.com/privacy.html',title:'Privacy',discoveredAt:'2026-08-01T00:00:00.000Z'}]);state.sites.push(target);
+  const telegraph=article('telegraph'),manual=generic('manual','manual');connect(state,target,telegraph);
+  const matches=[{channel:telegraph,score:100,reason:'article'},{channel:manual,score:10,reason:'manual'}];
+  const opportunity=publicationOpportunity(target,telegraph,[],at('2026-09-15'),'UTC',{officialApiConnected:true});
+  assert.equal(opportunity.allowed,false);assert.equal(opportunity.blockingReason,'invalid_topic');assert.equal(makePlan(state,target,matches,at('2026-09-15')).length,0);
+  const capacity=capacityFor(target,state.tasks,matches,[telegraph,manual],at('2026-09-15'),'UTC',state);
+  assert.equal(capacity.eligiblePages,1);assert.equal(capacity.automaticPages,0);assert.equal(capacity.blockingReason,'invalid_topic');
+});
+
+test('structured article rejection is not reclassified as budget exhaustion by its human message',()=>{
+  const target=site(),channel=article('telegraph');
+  const stopped=task(target.id,channel,{status:'failed',checkpoint:'article_rejected',topicUrl:'https://example.com/topic-2',topicSwitchAttempts:1,cost:{aiCalls:4},message:'备用选题仍未通过，已达到一次换题上限。',articleReview:{status:'failed',reason:'still rejected',reasonCode:'content_rejected',evidenceUrls:[],draftRevision:3,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}});
+  const result=publicationOpportunity(target,channel,[stopped],at('2026-09-15'),'UTC',{officialApiConnected:true});
+  assert.equal(result.allowed,false);assert.equal(result.blockingReason,'article_rejected');
+});
+
+test('planning softly prefers a topic path matching the site language locale',()=>{
+  const target=site([{url:'https://example.com/en/guides/newer',discoveredAt:'2026-09-10T00:00:00.000Z'},{url:'https://example.com/zh-hans/guides/older',discoveredAt:'2026-09-01T00:00:00.000Z'}]);target.language='zh-CN';const channel=article('telegraph');
+  const result=publicationOpportunity(target,channel,[],at('2026-09-15'),'UTC',{officialApiConnected:true});
+  assert.equal(result.topicUrl,'https://example.com/zh-hans/guides/older');
+});
+
 test('capacity explains when the cross-platform interval pushes all work past month end',()=>{
   const state=emptyState();state.settings.timezone='UTC';const target=site();target.monthlyTarget=2;state.sites.push(target);
   const oldChannel=generic('old'),nextChannel=generic('next');state.tasks.push(live(target.id,oldChannel,'2026-09-25','https://old.example/page'));

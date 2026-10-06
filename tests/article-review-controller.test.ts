@@ -9,6 +9,7 @@ import type {Vault} from '../src/main/vault';
 import {validateBackup} from '../src/main/backup-validation';
 import {runGistTask} from '../src/integrations/gist';
 import {dateKey,nextTask,reservesSlot} from '../src/main/planner';
+import {TopicDiscoveryError} from '../src/integrations/topics';
 
 const siteId='11111111-1111-4111-8111-111111111111',taskId='22222222-2222-4222-8222-222222222222',defaultAccountId='44444444-4444-4444-8444-444444444444';
 function site():Site{return {topics:[{url:'https://review-fixture.com/guide-one',discoveredAt:new Date().toISOString()}],topicsCheckedAt:new Date().toISOString(),id:siteId,domain:'review-fixture.com',url:'https://review-fixture.com/',email:'owner@review-fixture.com',name:'Review Fixture',description:'Financial comparison and affiliate referral program',category:'finance',language:'en',monthlyTarget:1,status:'ready',createdAt:'2026-09-01T00:00:00.000Z',analyzedAt:'2026-09-01T00:00:00.000Z',qualifications:{developer:'https://review-fixture.com/project'}}}
@@ -210,4 +211,32 @@ test('pausing repair before a paid call or after saving the new revision resumes
     controller.generateDraft=async(id,_signal,repair)=>{repairs++;if(savedRevision||repairs>1)controller.patch(id,{draft:{...repair!.draft,body:repair!.draft.body+' Fixed'},draftRevision:2,articleReview:undefined});if(repairs===1){controller.pause();throw Error('任务已暂停')}};
     try{await controller.tick();await controller.tick();const paused=store.read().tasks[0];assert.equal(paused.status,'queued');assert.equal(paused.articleRepairAttempts,savedRevision?1:0);assert.equal(paused.checkpoint,savedRevision?'article_review':'article_repair');assert.equal(executions,0);store.update(s=>{s.settings.autoRun=true});await controller.tick();assert.equal(executions,1);assert.equal(repairs,savedRevision?1:2);assert.equal(reviews,2);assert.equal(store.read().tasks[0].articleRepairAttempts,1)}finally{store.close()}
   }
+});
+
+test('a rejected unpublished topic keeps its task and cost, generates one alternate draft, then requires a fresh review',async()=>{
+  const store=fixture({status:'failed'});store.update(state=>{const t=state.tasks[0];state.sites[0].topics=[{url:'https://review-fixture.com/guide-one',discoveredAt:'2026-09-01T00:00:00.000Z'},{url:'https://review-fixture.com/guide-two',discoveredAt:'2026-09-02T00:00:00.000Z'}];t.topicUrl='https://review-fixture.com/guide-one';t.checkpoint='channel_wait';t.articleRepairAttempts=1;t.cost={aiCalls:4};t.draftRevision=2;t.articleReview={...passed(t,state.sites[0],state.settings),status:'failed',reasonCode:'content_rejected',reason:'The repaired draft still conflicts with evidence.'};});
+  let providerCalls=0,reviews=0,executions=0;
+  const controller=new Controller(store,fakeVault,'fixture',{
+    readTopicEvidence:async(_site,url)=>({url,title:'Guide two',text:'A verified guide with enough source text for a new article.',contentHash:'c'.repeat(64)}),
+    collectArticleEvidence:async()=>[],
+    aiFactory:(_settings,_vault,onCall)=>({json:async<T>()=>{onCall?.();providerCalls++;return {title:'Alternate guide',description:'A fresh evidence-based guide.',body:'A new article based only on the second verified topic.'} as T}}),
+    reviewArticle:async(t,s,_c,settings,ai)=>{reviews++;await ai.json('independent review',{});return passed(t,s,settings)},
+    executeTask:async context=>{executions++;assert.equal(context.task.topicUrl,'https://review-fixture.com/guide-two');assert.equal(context.task.articleReview?.status,'passed');return {status:'review',message:'submitted'}},
+  });controller.runtime.aiReady=true;
+  try{
+    controller.plan();const switched=store.read().tasks[0];assert.equal(switched.id,taskId);assert.equal(switched.topicUrl,'https://review-fixture.com/guide-two');assert.equal(switched.cost?.aiCalls,4);assert.equal(switched.draft,undefined);assert.equal(switched.articleReview,undefined);assert.equal(switched.articleAttempts?.[0].topicUrl,'https://review-fixture.com/guide-one');
+    await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.id,taskId);assert.equal(saved.cost?.aiCalls,6);assert.equal(saved.topicSwitchAttempts,1);assert.equal(saved.draftRevision,3);assert.equal(saved.status,'review');assert.equal(providerCalls,2);assert.equal(reviews,1);assert.equal(executions,1);
+  }finally{store.close()}
+});
+
+test('a same-site topic that redirects to an administrative page switches before any AI call',async()=>{
+  const store=fixture();store.update(state=>{state.sites[0].topics=[{url:'https://review-fixture.com/guides/redirect',discoveredAt:'2026-09-01T00:00:00.000Z'},{url:'https://review-fixture.com/guides/usable',discoveredAt:'2026-09-02T00:00:00.000Z'}];const t=state.tasks[0];t.topicUrl='https://review-fixture.com/guides/redirect';t.draft=undefined;t.draftRevision=0;t.checkpoint=undefined;});let providerCalls=0;
+  const controller=new Controller(store,fakeVault,'fixture',{readTopicEvidence:async()=>{throw new TopicDiscoveryError('invalid_topic',false)},collectArticleEvidence:async()=>{throw Error('topic evidence must be checked first')},aiFactory:(_settings,_vault,onCall)=>({json:async<T>()=>{onCall?.();providerCalls++;return {} as T}})});controller.runtime.aiReady=true;
+  try{await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.id,taskId);assert.equal(saved.status,'queued');assert.equal(saved.topicUrl,'https://review-fixture.com/guides/usable');assert.equal(saved.topicSwitchAttempts,1);assert.equal(saved.articleAttempts?.[0].topicUrl,'https://review-fixture.com/guides/redirect');assert.equal(saved.cost?.aiCalls??0,0);assert.equal(providerCalls,0)}finally{store.close()}
+});
+
+test('an invalid-topic review result switches an existing draft without spending reviewer AI budget',async()=>{
+  const store=fixture();store.update(state=>{state.sites[0].topics=[{url:'https://review-fixture.com/guides/redirect',discoveredAt:'2026-09-01T00:00:00.000Z'},{url:'https://review-fixture.com/guides/usable',discoveredAt:'2026-09-02T00:00:00.000Z'}];const t=state.tasks[0];t.topicUrl='https://review-fixture.com/guides/redirect';t.cost={aiCalls:4};});let reviews=0,executions=0;
+  const controller=new Controller(store,fakeVault,'fixture',{reviewArticle:async(t,s,_c,settings)=>{reviews++;return {...passed(t,s,settings),status:'failed',reasonCode:'invalid_topic',reason:'Final topic redirect is administrative.'}},executeTask:async()=>{executions++;return {status:'review',message:'unexpected'}}});controller.runtime.aiReady=true;
+  try{await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.status,'queued');assert.equal(saved.topicUrl,'https://review-fixture.com/guides/usable');assert.equal(saved.topicSwitchAttempts,1);assert.equal(saved.cost?.aiCalls,4);assert.equal(saved.draft,undefined);assert.equal(saved.articleAttempts?.[0].articleReview?.reasonCode,'invalid_topic');assert.equal(reviews,1);assert.equal(executions,0)}finally{store.close()}
 });

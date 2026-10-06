@@ -1,4 +1,5 @@
-import type {CapacityBlockReason,Channel,Site,Task} from './types';
+import type {CapacityBlockReason,Channel,Site,SiteTopic,Task} from './types';
+import {isArticleTopicUrl} from './topic-policy';
 
 const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger']);
 export const PUBLICATION_GAP_MS=10*24*60*60*1000;
@@ -45,6 +46,20 @@ export function canonicalPublicPageUrl(value:string|undefined):string|undefined{
     if(url.pathname.length>1)url.pathname=url.pathname.replace(/\/+$/,'');
     return url.href;
   }catch{return undefined}
+}
+
+/** Soft preference only: a locale-prefixed path outranks script inference, but never changes eligibility. */
+export function articleTopicLanguageScore(topic:SiteTopic,language:string):number{
+  let path='',first='';try{path=decodeURIComponent(new URL(topic.url).pathname);first=path.split('/').filter(Boolean)[0]?.toLowerCase()??''}catch{path=topic.url}
+  const normalized=language.toLowerCase().replace(/_/g,'-'),root=normalized.split('-')[0];
+  if(first&&first===normalized)return 4;
+  if(first&&(first===root||first.startsWith(root+'-')))return 3;
+  const sample=`${topic.title??''} ${path}`;
+  if(root==='zh')return /[\u3400-\u9fff]/u.test(sample)?2:0;
+  if(root==='ja')return /[\u3040-\u30ff]/u.test(sample)?2:0;
+  if(root==='ko')return /[\uac00-\ud7af]/u.test(sample)?2:0;
+  if(['ru','uk','bg'].includes(root))return /[\u0400-\u04ff]/u.test(sample)?2:0;
+  return /[a-z]/i.test(sample)?1:0;
 }
 
 function validDate(value:string|undefined):Date|undefined{
@@ -137,17 +152,19 @@ function taskReservesTopic(task:Task):boolean{
   return !!(task.firstLiveAt||task.submittedAt||canonicalPublicPageUrl(task.publicUrl)||!['failed','skipped'].includes(task.status));
 }
 
-function topicCandidates(site:Site,tasks:Task[]):{known:boolean;available:string[]}{
+function topicCandidates(site:Site,tasks:Task[]):{known:boolean;available:string[];invalid:boolean}{
   const known=Array.isArray(site.topics);
-  if(!known)return {known:false,available:[]};
+  if(!known)return {known:false,available:[],invalid:false};
   const used=new Set(tasks.filter(task=>task.siteId===site.id&&task.topicUrl&&taskReservesTopic(task)).map(task=>canonicalPublicPageUrl(task.topicUrl)).filter((value):value is string=>!!value));
-  const unique=new Map<string,{url:string;updated:number;index:number}>();
+  for(const task of tasks.filter(task=>task.siteId===site.id))for(const attempt of task.articleAttempts??[]){const canonical=canonicalPublicPageUrl(attempt.topicUrl);if(canonical)used.add(canonical)}
+  const unique=new Map<string,{url:string;updated:number;index:number;language:number}>();
+  let valid=0;
   for(const [index,topic] of (site.topics??[]).entries()){
     const canonical=canonicalPublicPageUrl(topic.url);
     const modified=validDate(topic.lastModified)?.getTime()??validDate(topic.discoveredAt)?.getTime()??0;
-    if(canonical&&!used.has(canonical)&&!unique.has(canonical))unique.set(canonical,{url:canonical,updated:modified,index});
+    if(canonical&&isArticleTopicUrl(canonical,site)){valid++;if(!used.has(canonical)&&!unique.has(canonical))unique.set(canonical,{url:canonical,updated:modified,index,language:articleTopicLanguageScore(topic,site.language)})}
   }
-  return {known:true,available:[...unique.values()].sort((a,b)=>b.updated-a.updated||a.index-b.index).map(topic=>topic.url)};
+  return {known:true,available:[...unique.values()].sort((a,b)=>b.language-a.language||b.updated-a.updated||a.index-b.index).map(topic=>topic.url),invalid:(site.topics?.length??0)>0&&valid===0};
 }
 
 function originalTaskCanRecover(task:Task):boolean{
@@ -164,9 +181,11 @@ function terminalBlock(task:Task):PublicationOpportunity|undefined{
   if(hasUnresolvedExternalAttempt(task))return {allowed:false,repeat:false,blockingReason:'cooldown',reason:'已有提交或公开结果尚未核清；为避免重复发布，不会建立替代任务。'};
   if(!['failed','skipped'].includes(task.status))return;
   if(originalTaskCanRecover(task))return {allowed:false,repeat:false,blockingReason:'cooldown',nextAvailableAt:validDate(task.nextCheckAt)!.toISOString(),reason:'原任务仍有一次明确预算内的恢复机会；到期只恢复原任务，不新建替代任务。'};
+  const explicit:CapacityBlockReason|undefined=task.checkpoint==='topic_recovery_budget'?'budget_exhausted':task.checkpoint==='invalid_topic'?'invalid_topic':task.checkpoint==='article_rejected'?'article_rejected':undefined;
   const budget=(task.cost?.aiCalls??0)>=6||(task.recoveryAttempts??0)>=1||(task.checkpoint==='budget_or_duplicate'&&/预算/.test(task.message))||/\b(?:budget|quota)\b|额度|上限|不会重复付费/i.test(`${task.message} ${task.articleReview?.reason??''}`);
-  const reason:CapacityBlockReason=budget?'budget_exhausted':'cooldown';
-  return {allowed:false,repeat:false,blockingReason:reason,reason:budget?'已有未提交任务达到自动处理或付费上限，不会新建任务绕过。':'已有未提交的终止记录；没有明确恢复元数据时不会按旧复查日期承诺重试。'};
+  const reason:CapacityBlockReason=explicit??(budget?'budget_exhausted':task.articleReview?.reasonCode==='content_rejected'?'article_rejected':'cooldown');
+  const message=reason==='budget_exhausted'?'已有未提交任务达到自动处理或付费上限，不会新建任务绕过。':reason==='invalid_topic'?'缓存选题不是可用正文页面，且没有尚未尝试的有效备用选题。':reason==='article_rejected'?'稿件未通过独立核对，且同一任务内的一次备用选题机会不可用或已用完。':'已有未提交的终止记录；没有明确恢复元数据时不会按旧复查日期承诺重试。';
+  return {allowed:false,repeat:false,blockingReason:reason,reason:message};
 }
 
 function activeBlock(task:Task,now:Date):PublicationOpportunity|undefined{
@@ -231,7 +250,7 @@ export function publicationOpportunity(site:Site,channel:Channel,tasks:Task[],no
   let topicUrl:string|undefined;
   let topicBlock:PublicationOpportunity|undefined;
   if(topics.available.length)topicUrl=topics.available[0];
-  else topicBlock={allowed:false,repeat,blockingReason:topics.known?'topics_exhausted':'topics_unknown',reason:topics.known?'\u6ca1\u6709\u5c1a\u672a\u7528\u4e8e\u5176\u4ed6\u53d1\u5e03\u4efb\u52a1\u7684\u771f\u5b9e\u4e3b\u9898\u9875\u3002':'\u5c1a\u672a\u83b7\u5f97\u53ef\u53bb\u91cd\u7684\u771f\u5b9e\u4e3b\u9898\u9875\uff0c\u4e0d\u5efa\u7acb\u6587\u7ae0\u53d1\u5e03\u4efb\u52a1\u3002'};
+  else topicBlock={allowed:false,repeat,blockingReason:topics.invalid?'invalid_topic':topics.known?'topics_exhausted':'topics_unknown',reason:topics.invalid?'已缓存的页面都不是可用的文章选题正文，未建立需要付费生成的任务。':topics.known?'\u6ca1\u6709\u5c1a\u672a\u7528\u4e8e\u5176\u4ed6\u53d1\u5e03\u4efb\u52a1\u7684\u771f\u5b9e\u4e3b\u9898\u9875\u3002':'\u5c1a\u672a\u83b7\u5f97\u53ef\u53bb\u91cd\u7684\u771f\u5b9e\u4e3b\u9898\u9875\uff0c\u4e0d\u5efa\u7acb\u6587\u7ae0\u53d1\u5e03\u4efb\u52a1\u3002'};
 
   const month=localMonthKey(now,timeZone),eventsThisMonth=events.filter(event=>localMonthKey(event.at,timeZone)===month).length;
   const lastEvent=events.map(event=>event.at).sort((a,b)=>b.getTime()-a.getTime())[0];

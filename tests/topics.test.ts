@@ -30,6 +30,12 @@ function response(url: string, body: string, contentType = 'application/xml'): T
   return { url, body, contentType };
 }
 
+test('a cached article redirecting to an administrative page cannot supply generation evidence', async () => {
+  const url='https://example.com/guides/first';
+  const site={domain:'example.com',url:'https://example.com/',topics:[{url,discoveredAt:'2026-10-01T00:00:00Z'}]};
+  await assert.rejects(readTopicEvidence(site,url,undefined,fixtures({[url]:response('https://example.com/en/privacy.html','<main>'+('Privacy policy text. '.repeat(60))+'</main>','text/html')})),error=>error instanceof TopicDiscoveryError&&error.code==='invalid_topic');
+});
+
 test('safe public text fetch accepts XML and blocks a cross-site redirect before requesting it', async () => {
   const resolved: string[] = [];
   const xml = await fetchPublicText('https://example.com/sitemap.xml', undefined, {
@@ -76,6 +82,24 @@ test('discovers at most 200 same-site content URLs and keeps tools and tutorials
   assert.equal(result.topics[0].title, '手续费工具');
   assert.equal(result.topics.some((topic) => topic.url.includes('/about') || topic.url.includes('/tag/')), false);
   assert.ok(result.topics.every((topic) => topic.discoveredAt === result.checkedAt));
+});
+
+test('discovery drops administrative HTML routes and keeps article slugs containing those words', async () => {
+  const sitemap = `<urlset>
+    <url><loc>https://example.com/en/privacy.html</loc></url>
+    <url><loc>https://example.com/%63ontact.php</loc></url>
+    <url><loc>https://example.com/articles/privacy-guide.html</loc></url>
+  </urlset>`;
+  const result = await discoverTopics(
+    { url: 'https://example.com/', domain: 'example.com' },
+    undefined,
+    fixtures({
+      'https://example.com/sitemap.xml': response('https://example.com/sitemap.xml', sitemap),
+    }),
+  );
+  assert.deepEqual(result.topics.map((topic) => topic.url), [
+    'https://example.com/articles/privacy-guide.html',
+  ]);
 });
 
 test('sitemap indexes fetch only two same-site child maps and reject cross-site candidates', async () => {
@@ -184,7 +208,10 @@ test('reads bounded evidence only from an already discovered same-site topic', a
   const site = {
     url: 'https://example.com/',
     domain: 'example.com',
-    topics: [{ url: 'https://example.com/tutorial/full', discoveredAt: '2026-10-04T00:00:00.000Z' }],
+    topics: [
+      { url: 'https://example.com/tutorial/full', discoveredAt: '2026-10-04T00:00:00.000Z' },
+      { url: 'https://example.com/en/privacy.html', discoveredAt: '2026-10-04T00:00:00.000Z' },
+    ],
   };
   const evidence = await readTopicEvidence(site, 'https://www.example.com/tutorial/full/#section', undefined, transport);
   assert.equal(evidence.url, 'https://example.com/tutorial/full');
@@ -194,6 +221,10 @@ test('reads bounded evidence only from an already discovered same-site topic', a
   assert.match(evidence.contentHash, /^[a-f0-9]{64}$/);
   await assert.rejects(
     readTopicEvidence(site, 'https://example.com/tutorial/unknown', undefined, transport),
+    (error: unknown) => error instanceof TopicDiscoveryError && error.code === 'invalid_topic',
+  );
+  await assert.rejects(
+    readTopicEvidence(site, 'https://example.com/en/privacy.html', undefined, transport),
     (error: unknown) => error instanceof TopicDiscoveryError && error.code === 'invalid_topic',
   );
   assert.equal(requests, 1, 'unapproved topics fail before network access');

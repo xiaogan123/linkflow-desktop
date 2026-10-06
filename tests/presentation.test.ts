@@ -25,7 +25,7 @@ test('only one bounded final system recovery is presented as automatic',()=>{
   const rejected={...eligible,articleReview:failedReview('content_rejected')};
   assert.equal(taskCanAutoRecover(rejected),false);
   assert.equal(taskHasAutomaticFollowup(rejected),false);
-  assert.equal(taskPresentation(rejected,'ai').label,'等待新证据或渠道');
+  assert.equal(taskPresentation(rejected,'ai').label,'稿件核对未通过');
 });
 
 test('an interrupted AI marker can authorize the same bounded recovery without review metadata',()=>{

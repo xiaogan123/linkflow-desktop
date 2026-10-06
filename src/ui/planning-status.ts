@@ -32,8 +32,10 @@ const capacityCopy:Record<CapacityBlockReason,{label:string;next:string;detail:s
   topics_exhausted:{label:'暂无机会 · 选题已用完',next:'等待网站新页面',detail:'已发现的真实页面都已用于发布；网站出现新页面后再继续。',tone:'muted'},
   cadence_wait:{label:'发布间隔未到',next:'下次时间待确认',detail:'当前平台的发布间隔未到，到期后会自动继续。',tone:'blue'},
   account_required:{label:'暂无机会 · 账号未连接',next:'需要连接可用账号',detail:'当前自动渠道还没有可用账号；连接后才能排期。',tone:'amber'},
+  article_rejected:{label:'稿件核对未通过',next:'查看核对原因',detail:'稿件核对未通过，当前自动恢复已停止；其他可用渠道仍会继续。',tone:'amber'},
+  invalid_topic:{label:'需要新的文章选题',next:'当前选题不可用于发文',detail:'已排除说明页和非文章页面；取得有效选题后才能继续。',tone:'muted'},
   cooldown:{label:'渠道冷却中',next:'恢复时间待确认',detail:'当前渠道正在冷却，到期后会重新评估。',tone:'muted'},
-  budget_exhausted:{label:'暂无机会 · 任务预算已用完',next:'当前没有自动后续',detail:'已达到当前任务的自动处理或 AI 调用上限，不会静默循环。',tone:'muted'},
+  budget_exhausted:{label:'自动处理额度不足',next:'当前没有自动后续',detail:'剩余 AI 调用额度不足以完成下一轮处理，已停止该任务的自动尝试。',tone:'muted'},
   no_automatic_channel:{label:'暂无机会 · 没有自动渠道',next:'当前无可自动发布的平台',detail:'当前没有同时符合免费、规则与自动执行条件的渠道。',tone:'muted'},
 };
 

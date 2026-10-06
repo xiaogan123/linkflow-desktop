@@ -11,7 +11,7 @@ export type ChannelReadiness='ready'|'autocreate'|'handoff_required'|'manual';
 export interface TaskPresentation {kind:TaskWorkKind;label:string;tone:TaskTone}
 
 const transientReviewCodes=new Set(['evidence_fetch_failed','evidence_invalid','ai_unavailable','format_invalid']);
-const channelWaitReviewCodes=new Set(['policy_unknown','policy_not_found','input_too_long','content_rejected']);
+const channelWaitReviewCodes=new Set(['policy_unknown','policy_not_found','input_too_long','content_rejected','invalid_topic']);
 const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published']);
 const telegraphUncertainCheckpoints=new Set(['telegraph_publish_submitting','telegraph_publish_uncertain']);
 const taskAiBudget=6,telegraphReconcileLimit=3;
@@ -52,7 +52,7 @@ export function taskWorkKind(task:Task,reviewMode:ArticleReviewMode='manual',cha
   // hide a later account, verification, or uncertain-submission handoff.
   if(task.status==='needs_input')return 'user_action';
   if(task.status==='failed'&&(!!task.submittedAt||publicationCheckpoints.has(task.checkpoint??'')))return 'user_action';
-  if(task.checkpoint==='channel_wait'||task.status==='expired'||failedReview&&!!reasonCode&&channelWaitReviewCodes.has(reasonCode))return 'channel_wait';
+  if(['channel_wait','invalid_topic','article_rejected','topic_recovery_budget'].includes(task.checkpoint??'')||task.status==='expired'||failedReview&&!!reasonCode&&channelWaitReviewCodes.has(reasonCode))return 'channel_wait';
   if(task.checkpoint==='system_wait'||failedReview&&!!reasonCode&&transientReviewCodes.has(reasonCode))return 'system_retry';
   if(task.status==='failed')return 'user_action';
   return 'progress';
@@ -62,6 +62,10 @@ export function taskPresentation(task:Task,reviewMode:ArticleReviewMode='manual'
   const kind=taskWorkKind(task,reviewMode,channelEnabled),review=task.articleReview,reasonCode=review?.reasonCode;
   if(kind==='deferred')return {kind,label:'已搁置',tone:'muted'};
   if(kind==='channel_wait'){
+    if(task.checkpoint==='topic_recovery_budget')return {kind,label:'自动处理额度不足',tone:'muted'};
+    if(task.checkpoint==='invalid_topic'||reasonCode==='invalid_topic')return {kind,label:'需要新的文章选题',tone:'muted'};
+    if(task.checkpoint==='article_rejected')return {kind,label:'稿件核对未通过',tone:'amber'};
+    if(reasonCode==='content_rejected')return {kind,label:'稿件核对未通过',tone:'amber'};
     if(reasonCode==='policy_unknown'||reasonCode==='policy_not_found')return {kind,label:'等待渠道许可证据',tone:'muted'};
     if(task.status==='expired')return {kind,label:'等待渠道结果',tone:'muted'};
     return {kind,label:'等待新证据或渠道',tone:'muted'};

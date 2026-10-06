@@ -86,7 +86,7 @@ test('only timed automatic blockers expose their next available time',()=>{
 });
 
 test('every capacity blocker has a specific truthful label',()=>{
- const expected:Record<CapacityBlockReason,string>={topics_unknown:'暂无机会 · 选题待取得',topics_exhausted:'暂无机会 · 选题已用完',cadence_wait:'发布间隔未到',account_required:'暂无机会 · 账号未连接',cooldown:'渠道冷却中',budget_exhausted:'暂无机会 · 任务预算已用完',no_automatic_channel:'暂无机会 · 没有自动渠道'};
+ const expected:Record<CapacityBlockReason,string>={topics_unknown:'暂无机会 · 选题待取得',topics_exhausted:'暂无机会 · 选题已用完',cadence_wait:'发布间隔未到',account_required:'暂无机会 · 账号未连接',article_rejected:'稿件核对未通过',invalid_topic:'需要新的文章选题',cooldown:'渠道冷却中',budget_exhausted:'自动处理额度不足',no_automatic_channel:'暂无机会 · 没有自动渠道'};
  for(const [reason,label] of Object.entries(expected) as [CapacityBlockReason,string][])assert.equal(planningStatus(site,[],{...context(),capacity:capacity(reason)}).label,label,reason);
 });
 
