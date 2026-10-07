@@ -8,12 +8,14 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { Store, defaultSettings } from './store';
 import { Vault, encryptBackup, decryptBackup } from './vault';
-import {connectBlogger,listBloggerBlogs,bindBloggerBlog,disconnectBlogger} from './blogger-management';
+import {connectBlogger,reconnectBlogger,listBloggerBlogs,bindBloggerBlog,bindBloggerBlogs,disconnectBlogger} from './blogger-management';
+import {connectParagraph} from './paragraph-management';
+import {connectBluesky} from './bluesky-management';
 import { Controller } from './controller';
 import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
-import {publicationOpportunity,hasBloggerDraftReceipt} from '../shared/publication';
+import {publicationOpportunity,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
 import {resumeDeferredTask} from './task-recovery';
 import { IPC_COMMANDS, type Site, type Account } from '../shared/types';
 import {CHANNELS} from '../integrations/catalog';
@@ -130,10 +132,20 @@ async function command(name:string,p:unknown):Promise<unknown>{
         }finally{if(bloggerConnect===abort)bloggerConnect=undefined}
       });
     }
+    case 'account:reconnect-blogger':{
+      const d=z.object({accountId:z.string().uuid()}).strict().parse(p);if(bloggerConnect)throw Error('Blogger连接正在进行');
+      return controller.manageIdentity(async()=>{const abort=new AbortController();bloggerConnect=abort;
+        try{const result=await reconnectBlogger(store,vault,d.accountId,{signal:abort.signal,openExternal:url=>openInPreferredBrowser(url,store.read().settings.preferredBrowser,value=>shell.openExternal(value))});return result.account;}
+        finally{if(bloggerConnect===abort)bloggerConnect=undefined}
+      });
+    }
     case 'account:cancel-blogger':z.object({}).strict().parse(p??{});bloggerConnect?.abort();return {cancelled:true};
     case 'account:blogger-blogs':{const d=z.object({accountId:z.string().uuid()}).strict().parse(p);return controller.manageIdentity(()=>listBloggerBlogs(store,vault,d.accountId));}
     case 'site:bind-blogger':{const d=z.object({siteId:z.string().uuid(),accountId:z.string().uuid(),blogId:z.string().regex(/^\d{1,64}$/)}).strict().parse(p);return controller.manageIdentity(()=>bindBloggerBlog(store,vault,d.siteId,d.accountId,d.blogId));}
+    case 'site:bind-blogger-batch':{const d=z.object({siteIds:z.array(z.string().uuid()).min(1).max(100),accountId:z.string().uuid(),blogId:z.string().regex(/^\d{1,64}$/)}).strict().parse(p);return controller.manageIdentity(()=>bindBloggerBlogs(store,vault,d.siteIds,d.accountId,d.blogId));}
     case 'account:disconnect-blogger':{const d=z.object({accountId:z.string().uuid()}).strict().parse(p);return controller.manageIdentity(async()=>{await disconnectBlogger(store,vault,d.accountId);return {disconnected:true}});}
+    case 'account:connect-paragraph':{const d=z.object({apiKey:z.string().trim().min(8).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectParagraph(store,vault,d.apiKey,d.siteIds,d.accountId));}
+    case 'account:connect-bluesky':{const d=z.object({handle:z.string().trim().min(3).max(253),appPassword:z.string().min(1).max(128),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectBluesky(store,vault,d.handle.replace(/^@/,''),d.appPassword,{},d.accountId));}
     case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512),accountId:z.string().uuid().optional()}).parse(p);return await controller.connectGist(d.token,d.accountId);}
     case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
     case 'search:bing':await controller.checkSearch(getId(p));break;
@@ -146,11 +158,11 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||(task.submittedAt&&!hasBloggerDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||(task.submittedAt&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
-      if(t.submittedAt&&!hasBloggerDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error('已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if(t.submittedAt&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error('已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
       if(t.deferredAt){store.update(state=>resumeDeferredTask(state.tasks,id,state.settings));void controller.tick();break;}
       if(t.attempts>=store.read().settings.maxAttempts)throw Error('已达重试上限，请检查原因或跳过此渠道。');
       controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;

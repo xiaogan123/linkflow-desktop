@@ -1,5 +1,5 @@
 import type {Account,ArticleReviewMode,Category,Channel,Site,Snapshot,Task} from '../shared/types';
-import {reservesSlot,hasBloggerDraftReceipt} from '../shared/publication';
+import {reservesSlot,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
 export const categoryText:Record<Category,string>={software:'软件工具',ai:'AI 产品',developer:'开发者',design:'设计作品',business:'商业服务',content:'内容创作',education:'教育学习',finance:'金融内容',general:'综合网站'};
 export const kindText:Record<Channel['kind'],string>={directory:'产品目录',profile:'品牌资料',article:'内容发布',community:'社区分享'};
 export const dateLabel=(value?:string)=>{if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(date)};
@@ -12,23 +12,29 @@ export interface TaskPresentation {kind:TaskWorkKind;label:string;tone:TaskTone}
 
 const transientReviewCodes=new Set(['evidence_fetch_failed','evidence_invalid','ai_unavailable','format_invalid']);
 const channelWaitReviewCodes=new Set(['policy_unknown','policy_not_found','input_too_long','content_rejected','invalid_topic']);
-const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published']);
+const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','blogger_insert_submitting','blogger_draft_created','blogger_publish_submitting','blogger_published','bluesky_create_submitting','bluesky_create_accepted','bluesky_published','paragraph_insert_submitting','paragraph_draft_created','paragraph_publish_submitting','paragraph_published','nostr_publish_submitting','nostr_published']);
 const telegraphUncertainCheckpoints=new Set(['telegraph_publish_submitting','telegraph_publish_uncertain']);
+const bloggerUncertainCheckpoints=new Set(['blogger_insert_submitting','blogger_publish_submitting','blogger_draft_created']);
 const taskAiBudget=6,telegraphReconcileLimit=3;
 const normalize=(value:string)=>value.trim().toLowerCase();
 
-export function taskHasArticleReview(task:Task){return (!task.submittedAt||hasBloggerDraftReceipt(task))&&task.status!=='live'&&(task.checkpoint==='article_review'||!!task.articleReview)}
+export function taskHasArticleReview(task:Task){return (!task.submittedAt||hasRecoverablePublisherDraftReceipt(task))&&task.status!=='live'&&(task.checkpoint==='article_review'||!!task.articleReview)}
 
 export function taskHasSubmissionEvidence(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt)||publicationCheckpoints.has(task.checkpoint??'')}
 export function taskHasUnconfirmedSubmission(task:Task){return !task.publicUrl&&!task.firstLiveAt&&(!!task.submittedAt||publicationCheckpoints.has(task.checkpoint??''))}
 
 export function taskCanAutoRecover(task:Task,channelEnabled=true){
   const recoverableReason=task.recoveryEligible===true||transientReviewCodes.has(task.articleReview?.reasonCode??'');
-  return channelEnabled&&task.status==='failed'&&task.checkpoint==='system_wait'&&recoverableReason&&!!task.nextCheckAt&&(task.recoveryAttempts??0)<1&&(task.cost?.aiCalls??0)<taskAiBudget&&(!taskHasSubmissionEvidence(task)||hasBloggerDraftReceipt(task))&&!task.deferredAt;
+  return channelEnabled&&task.status==='failed'&&task.checkpoint==='system_wait'&&recoverableReason&&!!task.nextCheckAt&&(task.recoveryAttempts??0)<1&&(task.cost?.aiCalls??0)<taskAiBudget&&(!taskHasSubmissionEvidence(task)||hasRecoverablePublisherDraftReceipt(task))&&!task.deferredAt;
 }
 
 export function taskNeedsTelegraphReconciliation(task:Task,channelEnabled=true){
-  return channelEnabled&&task.channelId==='telegraph'&&!task.publicUrl&&!!task.submittedAt&&telegraphUncertainCheckpoints.has(task.checkpoint??'')&&(task.reconcileAttempts??0)<telegraphReconcileLimit;
+  const pending=task.channelId==='telegraph'&&telegraphUncertainCheckpoints.has(task.checkpoint??'')
+    ||task.channelId==='blogger'&&(bloggerUncertainCheckpoints.has(task.checkpoint??'')||task.blogger?.stage==='draft'&&task.status==='needs_input'&&task.articleReview?.status==='passed')
+    ||task.channelId==='paragraph'&&!!task.paragraph&&['paragraph_insert_submitting','paragraph_draft_created','paragraph_publish_submitting'].includes(task.checkpoint??'')
+    ||task.channelId==='nostr'&&!!task.nostr&&task.checkpoint==='nostr_publish_submitting'
+    ||task.channelId==='bluesky'&&!!task.bluesky&&['bluesky_create_submitting','bluesky_create_accepted'].includes(task.checkpoint??'');
+  return channelEnabled&&!task.publicUrl&&!!task.submittedAt&&pending&&(task.reconcileAttempts??0)<telegraphReconcileLimit;
 }
 
 export function taskAutomaticFollowupAt(task:Task,channelEnabled=true):string|undefined{
@@ -152,6 +158,7 @@ function profileAccountConflict(data:Snapshot,accountId:string,siteId:string,cha
 }
 
 function candidateAccounts(data:Snapshot,site:Site,channelId:string){
+  if(channelId==='nostr')return [];
   return data.accounts.filter(account=>account.channelId===channelId&&(channelId==='github-gist'||normalize(account.email)===normalize(site.publicEmail||site.email)));
 }
 
@@ -167,6 +174,7 @@ function accountForSiteChannel(data:Snapshot,site:Site,channel:Channel):Account|
 
 export function channelReadinessForDisplay(data:Snapshot,site:Site,channel:Channel):ChannelReadiness{
   if(channel.automation==='manual')return 'manual';
+  if(['bluesky','paragraph'].includes(channel.id)){const binding=data.accountBindings.find(item=>item.siteId===site.id&&item.channelId===channel.id),account=data.accounts.find(item=>item.id===binding?.accountId&&item.channelId===channel.id);return (channel.id!=='paragraph'||site.paragraph?.publicationId===account?.username)&&account?.credentialKind==='api_token'&&account.status==='registered'&&account.hasPassword?'ready':'handoff_required'}
   if(channel.id==='blogger'){const binding=data.accountBindings.find(item=>item.siteId===site.id&&item.channelId==='blogger'),account=data.accounts.find(item=>item.id===binding?.accountId&&item.channelId==='blogger');return site.blogger&&account?.credentialKind==='oauth'&&account.status==='registered'&&account.hasPassword?'ready':'handoff_required'}
   if(!channel.accountRequired)return 'ready';
   const binding=data.accountBindings.find(item=>item.siteId===site.id&&item.channelId===channel.id);
@@ -181,16 +189,16 @@ export function channelReadinessForDisplay(data:Snapshot,site:Site,channel:Chann
   }
   if(account){
     if(!compatible(account)){
-      if(!binding&&channel.id==='telegraph'&&channel.automation==='api')return 'autocreate';
+      if(!binding&&['telegraph','nostr'].includes(channel.id)&&channel.automation==='api')return 'autocreate';
       return 'handoff_required';
     }
     if(channel.kind==='profile'&&profileAccountConflict(data,account.id,site.id,channel.id))return 'handoff_required';
-    if(channel.id==='telegraph'&&channel.automation==='api'&&account.status==='draft'&&account.source==='generated'&&account.credentialKind==='api_token'&&(account.registrationAttempts??0)<1)return 'autocreate';
+    if(['telegraph','nostr'].includes(channel.id)&&channel.automation==='api'&&account.status==='draft'&&account.source==='generated'&&account.credentialKind==='api_token'&&(account.registrationAttempts??0)<1)return 'autocreate';
     const apiReady=channel.automation==='api'&&account.status==='registered'&&account.hasPassword&&account.credentialKind==='api_token';
     const browserReady=channel.automation==='browser'&&account.hasPassword&&['registered','unknown'].includes(account.status);
     return apiReady||browserReady?'ready':'handoff_required';
   }
-  return channel.id==='telegraph'&&channel.automation==='api'?'autocreate':'handoff_required';
+  return ['telegraph','nostr'].includes(channel.id)&&channel.automation==='api'?'autocreate':'handoff_required';
 }
 
 export const channelReadinessLabel:Record<ChannelReadiness,string>={

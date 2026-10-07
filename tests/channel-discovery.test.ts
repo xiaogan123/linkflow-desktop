@@ -62,7 +62,7 @@ test('affiliate signals keep hosted publication conditions visible without keywo
  for(const id of ['wordpress-com','paragraph']){
   const result=channelDiscoveryFor(s,channel(id));
   assert.equal(result.status,'needs_preparation',id);
-  assert.equal(result.canQueue,true,id);
+  assert.equal(result.canQueue,id!=='paragraph',id);if(id==='paragraph')assert.match(result.nextStep,/账号页连接本人 Paragraph/);
   assert.equal(result.executionReady,false,id);
   assert.match(result.reason,/联盟导流为主要目的/,id);
   assert.match(result.reason,/仅凭网站简介不能判定/,id);

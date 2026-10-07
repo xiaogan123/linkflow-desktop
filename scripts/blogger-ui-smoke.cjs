@@ -18,14 +18,14 @@ if(!process.versions.electron){
           const channel=(id,name)=>({id,name,domain:id+'.example',url:'https://'+id+'.example',submitUrl:'https://'+id+'.example/new',categories:['general'],languages:['zh'],kind:'article',emailRequired:false,accountRequired:true,articleRequired:true,free:'yes',freeNote:'fixture',automation:id==='github'?'browser':'api',quality:'A',qualityReason:'fixture',rulesUrl:'https://'+id+'.example/rules',checkedAt:now,notes:'',allowedHosts:[id+'.example'],enabled:true});
           const initial={
             sites:[
-              {id:'site-1',domain:'one.example',url:'https://one.example',email:'owner@one.example',name:'One',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now},
+              {id:'site-1',domain:'one.example',url:'https://one.example',email:'owner@one.example',name:'One',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now,blogger:{blogId:'blog-oauth-existing',url:'https://fixture.blogspot.com/'}},
               {id:'site-2',domain:'two.example',url:'https://two.example',email:'owner@two.example',name:'Two',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now},
             ],
             tasks:[],channels:[channel('blogger','Blogger'),channel('github','GitHub')],
             accounts:[
-              {id:'oauth-existing',channelId:'blogger',email:'owner@gmail.com',username:'existing-owner',createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'},
-              {id:'oauth-empty',channelId:'blogger',email:'empty@gmail.com',username:'no-blog-owner',createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'},
-              {id:'oauth-error',channelId:'blogger',email:'error@gmail.com',username:'retry-owner',createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'},
+              {id:'oauth-existing',channelId:'blogger',email:'owner@gmail.com',username:'existing-owner',createdAt:now,status:'registered',hasPassword:true,credentialKind:'oauth',source:'imported'},
+              {id:'oauth-empty',channelId:'blogger',email:'empty@gmail.com',username:'no-blog-owner',createdAt:now,status:'registered',hasPassword:true,credentialKind:'oauth',source:'imported'},
+              {id:'oauth-error',channelId:'blogger',email:'error@gmail.com',username:'retry-owner',createdAt:now,status:'registered',hasPassword:true,credentialKind:'oauth',source:'imported'},
               {id:'password-account',channelId:'github',email:'login@example.com',username:'password-owner',createdAt:now,status:'registered',hasPassword:true,credentialKind:'password',source:'imported'},
             ],
             mailboxes:[],accountBindings:[{id:'bind-existing',siteId:'site-1',channelId:'blogger',accountId:'oauth-existing',createdAt:now,updatedAt:now}],events:[],
@@ -58,23 +58,29 @@ if(!process.versions.electron){
                   connectionCancelled=true;
                   return {ok:true};
                 }
+                if(command==='account:reconnect-blogger'){
+                  connectionCancelled=false;
+                  await pause(180);
+                  if(connectionCancelled)return undefined;
+                  return data.accounts.find(account=>account.id===payload.accountId);
+                }
                 if(command==='account:blogger-blogs'){
                   await pause(90);
                   if(payload.accountId==='oauth-empty')return [];
                   if(payload.accountId==='oauth-error'&&errorReads++===0)return undefined;
                   return [{id:'blog-'+payload.accountId,name:'Fixture Blog',url:'https://fixture.blogspot.com/'}];
                 }
-                if(command==='site:bind-blogger'){
+                if(command==='site:bind-blogger-batch'){
                   await pause(70);
                   setData(current=>({...current,
-                    sites:current.sites.map(site=>site.id===payload.siteId?{...site,blogger:{blogId:payload.blogId,url:'https://fixture.blogspot.com/'}}:site),
-                    accountBindings:[...current.accountBindings.filter(binding=>!(binding.siteId===payload.siteId&&binding.channelId==='blogger')),{id:'binding-'+payload.siteId,siteId:payload.siteId,channelId:'blogger',accountId:payload.accountId,createdAt:now,updatedAt:now}],
+                    sites:current.sites.map(site=>payload.siteIds.includes(site.id)?{...site,blogger:{blogId:payload.blogId,url:'https://fixture.blogspot.com/'}}:site),
+                    accountBindings:[...current.accountBindings.filter(binding=>!(payload.siteIds.includes(binding.siteId)&&binding.channelId==='blogger')),...payload.siteIds.map(siteId=>({id:'binding-'+siteId,siteId,channelId:'blogger',accountId:payload.accountId,createdAt:now,updatedAt:now}))],
                   }));
                   return {ok:true};
                 }
                 if(command==='account:disconnect-blogger'){
                   await pause(70);
-                  setData(current=>({...current,accounts:current.accounts.filter(account=>account.id!==payload.accountId),accountBindings:current.accountBindings.filter(binding=>binding.accountId!==payload.accountId)}));
+                  setData(current=>({...current,accounts:current.accounts.map(account=>account.id===payload.accountId?{...account,status:'credentials_invalid',hasPassword:false}:account),accountBindings:current.accountBindings.filter(binding=>binding.accountId!==payload.accountId)}));
                   return {ok:true};
                 }
                 if(command==='external:open')return {ok:true};
@@ -110,7 +116,8 @@ if(!process.versions.electron){
   const waitFor=async source=>{const deadline=Date.now()+8000;while(Date.now()<deadline){if(await evaluate(source))return;await delay(35)}throw new Error('UI readiness deadline: '+source)};
   const clickText=async text=>{const clicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.trim()===${JSON.stringify(text)}&&!item.disabled);if(!button)return false;button.click();return true})()`);assert(clicked,'button: '+text);await delay(35)};
   const clickLabel=async label=>{const clicked=await evaluate(`(()=>{const button=document.querySelector('button[aria-label=${JSON.stringify(label)}]');if(!button||button.disabled)return false;button.click();return true})()`);assert(clicked,'button label: '+label);await delay(35)};
-  const select=async(label,value)=>{const changed=await evaluate(`(()=>{const element=document.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!element||element.disabled)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);assert(changed,'select: '+label);await delay(35)};
+  const forceSelect=async(label,value)=>{const changed=await evaluate(`(()=>{const element=document.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!element)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);assert(changed,'force select: '+label);await delay(35)};
+  const setCheckbox=async(label,checked)=>{const changed=await evaluate(`(()=>{const element=document.querySelector('input[aria-label=${JSON.stringify(label)}]');if(!element||element.disabled)return false;if(element.checked!==${checked})element.click();return element.checked===${checked}})()`);assert(changed,'checkbox: '+label);await delay(35)};
   const actionCount=command=>evaluate(`window.__bloggerFixture.actions.filter(action=>action.command===${JSON.stringify(command)}).length`);
 
   app.whenReady().then(async()=>{try{
@@ -123,13 +130,20 @@ if(!process.versions.electron){
     check('ordinary password identity keeps its existing controls',await evaluate('!!document.querySelector("button[aria-label=\\"查看 password-owner 的密码\\"]")&&!!document.querySelector("button[aria-label=\\"更新 password-owner\\"]")'));
 
     await clickText('连接 Blogger');
-    await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("选择 Google 桌面客户端配置并连接")');
-    const guide=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return {text:dialog.innerText,passwords:dialog.querySelectorAll('input[type=password]').length,textInputs:dialog.querySelectorAll('input').length}})()`);
-    check('connection guide explains one-time desktop config and system browser account selection',guide.text.includes('已启用 Blogger API')&&guide.text.includes('7 天后过期')&&guide.text.includes('系统浏览器中选择 Google 账号'));
-    check('connection UI contains no plaintext credential fields or registration claim',guide.passwords===0&&guide.textInputs===0&&guide.text.includes('不会自动注册 Google 账号'));
+    await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("首次连接只需一次配置")');
+    check('advanced client import stays collapsed when reusable identities exist',await evaluate('document.querySelector("[role=dialog] details").open===false'));
+    const firstGuide=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return {text:dialog.innerText,passwords:dialog.querySelectorAll('input[type=password]').length}})()`);
+    check('connection guide explains one-time desktop config and system browser account selection',firstGuide.text.includes('启用 Blogger API')&&firstGuide.text.includes('桌面应用')&&firstGuide.text.includes('系统浏览器选择 Google 账号'));
+    check('connection UI contains no plaintext credential fields or registration claim',firstGuide.passwords===0&&firstGuide.text.includes('不会自动注册账号'));
+    await clickText('Google 官方设置步骤');
+    const setupAction=await evaluate('window.__bloggerFixture.actions.findLast(action=>action.command==="external:open")');
+    check('setup help opens the exact official desktop OAuth guide',setupAction.payload.url==='https://developers.google.com/workspace/guides/create-credentials#desktop-app');
+    const openedDetails=await evaluate(`(()=>{const summary=document.querySelector('[role=dialog] details summary');if(!summary)return false;summary.click();return summary.parentElement.open})()`);
+    assert(openedDetails,'open desktop client details');
+    check('Testing notice is concise and tied to External Testing refresh tokens',await evaluate('document.querySelector("[role=dialog]").innerText.includes("External")&&document.querySelector("[role=dialog]").innerText.includes("Testing")&&document.querySelector("[role=dialog]").innerText.includes("7 天后失效")'));
     writeFileSync(join(evidence,'blogger-connect-drawer.png'),(await win.capturePage()).toPNG());
     const connectedBefore=await actionCount('account:connect-blogger');
-    const doubleClicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.includes('选择 Google 桌面客户端配置并连接'));if(!button)return false;button.click();button.click();return true})()`);
+    const doubleClicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.includes('选择桌面客户端 JSON 并连接'));if(!button)return false;button.click();button.click();return true})()`);
     assert(doubleClicked,'double connect click');
     await waitFor('document.body.innerText.includes("等待浏览器授权…")');
     check('connect exposes a truthful loading state',await evaluate('document.body.innerText.includes("关闭本抽屉可取消本次连接")'));
@@ -137,34 +151,54 @@ if(!process.versions.electron){
     check('rapid connect clicks dispatch only once',await actionCount('account:connect-blogger')===connectedBefore+1);
     const connectAction=await evaluate('window.__bloggerFixture.actions.find(action=>action.command==="account:connect-blogger")');
     check('connect command carries no payload',connectAction.payload==='__undefined__');
-    await select('绑定网站','site-2');
-    await clickText('绑定博客');
+    check('new identities do not preselect every site',await evaluate('[...document.querySelectorAll("fieldset input[type=checkbox]")].every(input=>!input.checked)'));
+    await setCheckbox('绑定网站 two.example',true);
+    await clickText('绑定所选网站');
     await waitFor('!document.querySelector("[role=dialog]")');
-    const bindAction=await evaluate('window.__bloggerFixture.actions.find(action=>action.command==="site:bind-blogger")');
-    check('binding submits the selected site, OAuth identity, and blog',bindAction.payload.siteId==='site-2'&&bindAction.payload.accountId==='oauth-connected-1'&&bindAction.payload.blogId==='blog-oauth-connected-1');
+    const bindAction=await evaluate('window.__bloggerFixture.actions.find(action=>action.command==="site:bind-blogger-batch")');
+    check('batch binding submits only explicitly selected sites with one identity and blog',bindAction.payload.siteIds.length===1&&bindAction.payload.siteIds[0]==='site-2'&&bindAction.payload.accountId==='oauth-connected-1'&&bindAction.payload.blogId==='blog-oauth-connected-1');
 
-    await clickLabel('管理 no-blog-owner 的 Blogger 绑定');
-    await clickText('读取该身份的博客');
+    const readsBeforeRace=await actionCount('account:blogger-blogs');
+    await clickLabel('管理 existing-owner 的 Blogger 绑定');
+    check('existing bindings are the only default site selections',await evaluate('document.querySelector("input[aria-label=\\"绑定网站 one.example\\"]").checked&&!document.querySelector("input[aria-label=\\"绑定网站 two.example\\"]").checked'));
+    await forceSelect('Blogger 身份','oauth-empty');
+    await delay(120);
+    check('an out-of-order blog response cannot overwrite a newly selected identity',await evaluate('document.querySelector("select[aria-label=\\"Blogger 身份\\"]").value==="oauth-empty"&&!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")'));
+    check('managing an existing identity auto-loads exactly once',await actionCount('account:blogger-blogs')===readsBeforeRace+1);
+    await clickText('读取博客列表');
     await waitFor('document.body.innerText.includes("还没有 Blogger 博客")');
     check('empty Blogger identity offers a manual external creation path',await evaluate('document.body.innerText.includes("去 Blogger 创建博客")&&!document.body.innerText.includes("自动创建 Blogger 博客")'));
     await clickText('去 Blogger 创建博客');
     const openAction=await evaluate('window.__bloggerFixture.actions.findLast(action=>action.command==="external:open")');
     check('creation button opens the official Blogger site',openAction.payload.url==='https://www.blogger.com/');
     await clickText('取消');
+    await clickLabel('管理 no-blog-owner 的 Blogger 绑定');
+    await waitFor('document.body.innerText.includes("还没有 Blogger 博客")');
+    await clickText('取消');
     await clickText('连接 Blogger');
     check('closing and reopening clears transient blog results',await evaluate('!document.querySelector("[role=dialog]").innerText.includes("还没有 Blogger 博客")'));
     await clickText('取消');
 
     await clickLabel('管理 retry-owner 的 Blogger 绑定');
-    await clickText('读取该身份的博客');
     await waitFor('document.querySelector("[role=alert]")?.innerText.includes("暂未读取到博客列表")');
     check('blog loading failure stays recoverable in the drawer',await evaluate('document.querySelector("[role=dialog]")!==null&&document.body.innerText.includes("已有选择不会被提交")'));
-    await clickText('读取该身份的博客');
+    await clickText('读取博客列表');
     await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")');
     await clickText('取消');
 
+    await clickLabel('管理 existing-owner 的 Blogger 绑定');
+    await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")');
+    const reconnectBefore=await actionCount('account:reconnect-blogger');
+    await clickText('重新授权此身份');
+    await waitFor('document.body.innerText.includes("等待浏览器授权…")');
+    await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")&&!document.body.innerText.includes("等待浏览器授权…")');
+    const reconnectAction=await evaluate('window.__bloggerFixture.actions.findLast(action=>action.command==="account:reconnect-blogger")');
+    check('reconnect reuses the selected identity without asking for JSON again',await actionCount('account:reconnect-blogger')===reconnectBefore+1&&reconnectAction.payload.accountId==='oauth-existing');
+    await clickText('取消');
+
     await clickText('连接 Blogger');
-    await clickText('选择 Google 桌面客户端配置并连接');
+    await evaluate(`document.querySelector('[role=dialog] details summary').click()`);
+    await clickText('选择桌面客户端 JSON 并连接');
     await waitFor('document.body.innerText.includes("取消连接")');
     await clickText('取消连接');
     await waitFor('!document.querySelector("[role=dialog]")');

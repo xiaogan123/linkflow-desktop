@@ -512,6 +512,15 @@ function contentWithoutDisclosure(input: DraftFingerprintInput): string {
     .toLocaleLowerCase('und');
 }
 
+/** Local labels never make an otherwise identical public post unique. */
+export function duplicatePublicBody(body:string,history:ReadonlyArray<string>):boolean{
+  const normalize=(value:string)=>contentWithoutDisclosure({title:'',body:value.replace(/https?:\/\/\S+/gi,' ')}).replace(/[\p{P}\p{S}\s]+/gu,'');
+  const raw=(value:string)=>value.replace(/https?:\/\/\S+/gi,' ').normalize('NFKC').toLocaleLowerCase('und').replace(/[\p{P}\p{S}\s]+/gu,'');
+  const exact=raw(body);if(exact.length>=12&&history.some(previous=>raw(previous)===exact))return true;
+  const candidate=normalize(body);
+  return candidate.length>=12&&history.some(previous=>normalize(previous)===candidate);
+}
+
 function contentNgrams(input: DraftFingerprintInput): Set<string> {
   const text = contentWithoutDisclosure(input);
   const grams = new Set<string>();

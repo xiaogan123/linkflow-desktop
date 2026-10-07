@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindBloggerBlog, connectBlogger, disconnectBlogger, listBloggerBlogs } from '../src/main/blogger-management';
+import { bindBloggerBlog, bindBloggerBlogs, connectBlogger, disconnectBlogger, listBloggerBlogs, reconnectBlogger } from '../src/main/blogger-management';
 import { BLOGGER_SCOPE, type BloggerLoopback, type BloggerTransport } from '../src/integrations/blogger';
 import { Store } from '../src/main/store';
 import type { Account, SecretStore, Task } from '../src/shared/types';
@@ -13,6 +13,7 @@ const ACCESS_TOKEN = 'synthetic-access-token-that-is-not-real';
 const REFRESH_TOKEN = 'synthetic-refresh-token-that-is-not-real';
 const NOW = new Date('2026-10-04T12:00:00.000Z');
 const SITE_ID = '11111111-1111-4111-8111-111111111111';
+const SECOND_SITE_ID = '12121212-1212-4212-8212-121212121212';
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
@@ -90,6 +91,13 @@ function savedAccount(id: string, userId = USER_ID): Account {
   };
 }
 
+function secondSite(status: 'ready' | 'paused' = 'ready') {
+  return {
+    id: SECOND_SITE_ID, domain: 'second.example', url: 'https://second.example/', email: 'owner@second.example', name: 'Second Brand',
+    description: 'Second description', category: 'content' as const, language: 'en', monthlyTarget: 2, status, createdAt: NOW.toISOString(),
+  };
+}
+
 function managementRequest(options: { admin?: boolean } = {}): BloggerTransport {
   return async (input, init) => {
     const url = new URL(input);
@@ -143,6 +151,40 @@ test('reconnect cannot replace an existing account with a different Google Blogg
   } finally { store.close(); }
 });
 
+test('reconnect reuses only the encrypted desktop client for the same Blogger subject and returns no OAuth material', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '20202020-2020-4020-8020-202020202020';
+  store.update(state => state.accounts.push(savedAccount(accountId)));
+  secrets.set(`account:${accountId}`, savedCredential());
+  const flow = oauthRequest();
+  try {
+    const result = await reconnectBlogger(store, vault, accountId, connectDeps(flow));
+    assert.equal(result.account.id, accountId);
+    assert.equal(result.account.username, USER_ID);
+    assert.equal(new URL(flow.opened[0]).searchParams.get('client_id'), 'client.apps.googleusercontent.com');
+    assert.equal(JSON.stringify(result).includes(ACCESS_TOKEN), false);
+    assert.equal(JSON.stringify(result).includes(REFRESH_TOKEN), false);
+    assert.equal(JSON.stringify(result).includes('synthetic-client-secret'), false);
+    assert.equal(JSON.parse(secrets.get(`account:${accountId}`)!).userId, USER_ID);
+    assert.equal(flow.closes.count, 1);
+  } finally { store.close(); }
+});
+
+test('reconnect fails clearly before opening a browser when the encrypted desktop client is missing or invalid', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '21212121-2121-4121-8121-212121212121';
+  store.update(state => state.accounts.push(savedAccount(accountId)));
+  const missing = oauthRequest();
+  try {
+    await assert.rejects(reconnectBlogger(store, vault, accountId, connectDeps(missing)), /重新导入桌面客户端 JSON/);
+    assert.equal(missing.opened.length, 0);
+    secrets.set(`account:${accountId}`, '{"version":1,"clientId":"broken"}');
+    const invalid = oauthRequest();
+    await assert.rejects(reconnectBlogger(store, vault, accountId, connectDeps(invalid)), /重新导入桌面客户端 JSON/);
+    assert.equal(invalid.opened.length, 0);
+  } finally { store.close(); }
+});
+
 test('list validates the stored subject and returns no OAuth material', async () => {
   const { store, secrets, vault } = fixture();
   const accountId = '22222222-2222-4222-8222-222222222222';
@@ -177,6 +219,110 @@ test('bind rechecks list, exact blog identity and admin write access before savi
       assert.equal(deniedStore.store.read().sites[0].blogger, undefined);
       assert.equal(deniedStore.store.read().accountBindings.length, 0);
     } finally { deniedStore.store.close(); }
+  } finally { store.close(); }
+});
+
+test('batch binding verifies the remote blog once and commits every selected site together', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '31313131-3131-4131-8131-313131313131';
+  store.update(state => { state.sites.push(secondSite()); state.accounts.push(savedAccount(accountId)); });
+  secrets.set(`account:${accountId}`, savedCredential());
+  let remoteVerifications = 0;
+  const request: BloggerTransport = async (...args) => {
+    if (new URL(args[0]).pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}`) remoteVerifications++;
+    return managementRequest()(...args);
+  };
+  try {
+    const result = await bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, { request, now: () => NOW });
+    assert.equal(result.id, BLOG_ID);
+    assert.equal(remoteVerifications, 1);
+    const state = store.read();
+    assert.deepEqual(state.sites.map(site => site.blogger), [
+      { blogId: BLOG_ID, url: BLOG_URL },
+      { blogId: BLOG_ID, url: BLOG_URL },
+    ]);
+    assert.deepEqual(state.accountBindings.map(binding => binding.siteId).sort(), [SECOND_SITE_ID, SITE_ID].sort());
+    assert.equal(state.accountBindings.every(binding => binding.accountId === accountId), true);
+  } finally { store.close(); }
+});
+
+test('batch binding validates every remote-intent guard before network access or any binding write', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '32323232-3232-4232-8232-323232323232';
+  const blocked: Task = {
+    id: 'blocked-second', siteId: SECOND_SITE_ID, channelId: 'blogger', accountId, sourceDomain: 'old.blogspot.com', status: 'needs_input',
+    createdAt: NOW.toISOString(), scheduledAt: NOW.toISOString(), updatedAt: NOW.toISOString(), attempts: 1, message: 'Unknown result',
+    submittedAt: NOW.toISOString(), checkpoint: 'blogger_insert_submitting',
+    blogger: { blogId: '9999999999999999999', operationId: '33333333-3333-4333-8333-333333333333', contentHash: 'd'.repeat(64), stage: 'inserting' },
+  };
+  store.update(state => { state.sites.push(secondSite()); state.accounts.push(savedAccount(accountId)); state.tasks.push(blocked); });
+  secrets.set(`account:${accountId}`, savedCredential());
+  let requests = 0;
+  try {
+    await assert.rejects(bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, {
+      request: async (...args) => { requests++; return managementRequest()(...args); }, now: () => NOW,
+    }), /second\.example.*待处理/);
+    assert.equal(requests, 0);
+    assert.equal(store.read().sites.every(site => site.blogger === undefined), true);
+    assert.equal(store.read().accountBindings.length, 0);
+  } finally { store.close(); }
+});
+
+test('batch binding rolls back all selected binding writes when one site changes during remote verification', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '34343434-3434-4434-8434-343434343434';
+  store.update(state => { state.sites.push(secondSite()); state.accounts.push(savedAccount(accountId)); });
+  secrets.set(`account:${accountId}`, savedCredential());
+  let removed = false;
+  const request: BloggerTransport = async (...args) => {
+    if (!removed && new URL(args[0]).pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}`) {
+      removed = true;
+      store.update(state => { state.sites = state.sites.filter(site => site.id !== SECOND_SITE_ID); });
+    }
+    return managementRequest()(...args);
+  };
+  try {
+    await assert.rejects(bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, { request, now: () => NOW }), /绑定期间发生变化/);
+    const state = store.read();
+    assert.equal(state.sites.find(site => site.id === SITE_ID)?.blogger, undefined);
+    assert.equal(state.accountBindings.length, 0);
+  } finally { store.close(); }
+});
+
+test('batch binding preserves the site pause and terminal work while retaining drafts, history and cumulative cost', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '35353535-3535-4535-8535-353535353535';
+  const draft = { title: 'Preserved', description: 'Preserved description', body: 'Preserved body with enough useful detail.' };
+  const paused: Task = {
+    id: 'paused-work', siteId: SECOND_SITE_ID, channelId: 'blogger', sourceDomain: 'blogspot.com', status: 'needs_input', checkpoint: 'account_handoff',
+    createdAt: NOW.toISOString(), scheduledAt: '2026-10-09T12:00:00.000Z', updatedAt: NOW.toISOString(), attempts: 2, message: 'Waiting', draft,
+    history: [{ at: NOW.toISOString(), status: 'needs_input', message: 'Waiting' }], cost: { aiCalls: 4, inputTokens: 70 },
+  };
+  const budget: Task = {
+    ...structuredClone(paused), id: 'budget-stop', siteId: SITE_ID, status: 'failed', checkpoint: 'topic_recovery_budget', message: 'Budget stopped', recoveryEligible: false,
+  };
+  const skipped: Task = { ...structuredClone(paused), id: 'skipped-stop', siteId: SITE_ID, status: 'skipped', message: 'Skipped explicitly' };
+  const expired: Task = { ...structuredClone(paused), id: 'expired-stop', siteId: SITE_ID, status: 'expired', message: 'Expired explicitly' };
+  store.update(state => { state.sites.push(secondSite('paused')); state.accounts.push(savedAccount(accountId)); state.tasks.push(paused, budget, skipped, expired); });
+  secrets.set(`account:${accountId}`, savedCredential());
+  try {
+    await bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, { request: managementRequest(), now: () => NOW });
+    const state = store.read();
+    assert.equal(state.sites.find(site => site.id === SECOND_SITE_ID)?.status, 'paused');
+    for (const id of ['paused-work', 'budget-stop', 'skipped-stop', 'expired-stop']) {
+      const task = state.tasks.find(item => item.id === id)!;
+      assert.deepEqual(task.draft, draft);
+      assert.deepEqual(task.cost, { aiCalls: 4, inputTokens: 70 });
+      assert.deepEqual(task.history, [{ at: NOW.toISOString(), status: 'needs_input', message: 'Waiting' }]);
+      assert.equal(task.accountId, accountId);
+      assert.equal(task.sourceDomain, 'example-owner.blogspot.com');
+    }
+    assert.equal(state.tasks.find(task => task.id === 'paused-work')?.status, 'queued');
+    assert.equal(state.tasks.find(task => task.id === 'paused-work')?.checkpoint, 'article_review');
+    assert.equal(state.tasks.find(task => task.id === 'budget-stop')?.status, 'failed');
+    assert.equal(state.tasks.find(task => task.id === 'budget-stop')?.checkpoint, 'topic_recovery_budget');
+    assert.equal(state.tasks.find(task => task.id === 'skipped-stop')?.status, 'skipped');
+    assert.equal(state.tasks.find(task => task.id === 'expired-stop')?.status, 'expired');
   } finally { store.close(); }
 });
 
@@ -233,6 +379,8 @@ test('first binding adopts safe legacy handoff tasks, preserves work, and never 
     assert.equal(retained.status, 'skipped');
     assert.equal(retained.accountId, accountId);
     assert.equal(retained.sourceDomain, 'example-owner.blogspot.com');
+    assert.equal(retained.articleApprovedAt, NOW.toISOString());
+    assert.deepEqual(retained.articleReview, review);
   } finally { store.close(); }
 });
 

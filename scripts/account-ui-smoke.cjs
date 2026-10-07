@@ -117,7 +117,7 @@ if(!process.versions.electron){
     await clickText('账号');
     await waitFor('document.body.innerText.includes("telegraph-author")');
 
-    check('accounts page explains automatic Telegraph identities and optional imports',await evaluate('document.body.innerText.includes("Telegraph 等官方 API 身份由任务自动创建")&&document.body.innerText.includes("已有账号可按需导入")'));
+    check('accounts page explains automatic Telegraph identities and optional imports',await evaluate('document.body.innerText.includes("Telegraph 和 Nostr 作者身份由任务自动创建")&&[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="导入已有账号")'));
     check('Telegraph API identity is identified as task-created',await evaluate('document.body.innerText.includes("任务自动创建的 API 身份")'));
     check('API identities never expose the password reveal action',await evaluate('!document.querySelector("button[aria-label=\\"查看 telegraph-author 的密码\\"]")&&!document.querySelector("button[aria-label=\\"查看 gist-owner 的密码\\"]")'));
     check('ordinary password account keeps its reveal action',await evaluate('!!document.querySelector("button[aria-label=\\"查看 github-user 的密码\\"]")'));

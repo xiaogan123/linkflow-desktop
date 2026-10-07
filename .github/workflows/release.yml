@@ -62,6 +62,10 @@ jobs:
         run: npm run test:account-ui
       - name: Blogger connection UI
         run: node scripts/blogger-ui-smoke.cjs
+      - name: Bluesky connection UI
+        run: npm run test:bluesky-ui
+      - name: Paragraph connection UI
+        run: npm run test:paragraph-ui
       - name: Per-site article review UI
         run: npm run test:site-review-ui
 
@@ -164,6 +168,10 @@ jobs:
         run: npm run test:account-ui
       - name: Blogger connection UI
         run: node scripts/blogger-ui-smoke.cjs
+      - name: Bluesky connection UI
+        run: npm run test:bluesky-ui
+      - name: Paragraph connection UI
+        run: npm run test:paragraph-ui
       - name: Per-site article review UI
         run: npm run test:site-review-ui
 

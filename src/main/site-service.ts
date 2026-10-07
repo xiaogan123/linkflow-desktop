@@ -1,4 +1,5 @@
 import {isDeepStrictEqual} from 'node:util';
+import {hasRecoverablePublisherDraftReceipt} from '../shared/publication';
 import {getArticleReviewMode} from '../shared/article-review-mode';
 import type {ArticleReviewMode,Site} from '../shared/types';
 import type {State} from './store';
@@ -28,7 +29,7 @@ const draftFields=['name','description','category','language','email','publicEma
 const reviewFields=[...draftFields,'qualifications'] as const;
 
 function invalidateModeTransition(state:State,siteId:string,nextMode:ArticleReviewMode,stamp:string){
-  for(const task of state.tasks.filter(item=>item.siteId===siteId&&!item.submittedAt&&!item.firstLiveAt)){
+  for(const task of state.tasks.filter(item=>item.siteId===siteId&&(!item.submittedAt||hasRecoverablePublisherDraftReceipt(item))&&!item.firstLiveAt)){
     task.articleApprovedAt=undefined;
     task.articleReview=undefined;
     task.updatedAt=stamp;
@@ -62,9 +63,9 @@ export function applySiteUpdate(state:State,input:SiteEditInput,now:Date=new Dat
   const draftChanged=draftFields.some(fieldChanged);
   const reviewChanged=reviewModeChanged||reviewFields.some(fieldChanged);
   const stamp=now.toISOString();
-  for(const task of state.tasks.filter(item=>item.siteId===site.id&&!item.submittedAt&&!item.firstLiveAt)){
+  for(const task of state.tasks.filter(item=>item.siteId===site.id&&(!item.submittedAt||hasRecoverablePublisherDraftReceipt(item))&&!item.firstLiveAt)){
     let changed=false;
-    if(draftChanged&&task.draft){task.draft=undefined;changed=true}
+    if(draftChanged&&task.draft&&!task.submittedAt){task.draft=undefined;changed=true}
     if(reviewChanged&&(task.articleApprovedAt||task.articleReview)){task.articleApprovedAt=undefined;task.articleReview=undefined;changed=true}
     if(changed)task.updatedAt=stamp;
   }

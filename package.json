@@ -24,13 +24,17 @@
     "update:sign": "node scripts/sign-update.mjs",
     "test:update-native": "node scripts/update-native-smoke.mjs",
     "test:account-ui": "node scripts/account-ui-smoke.cjs",
-    "test:planning-ui": "node scripts/planning-ui-smoke.cjs"
+    "test:planning-ui": "node scripts/planning-ui-smoke.cjs",
+    "test:bluesky-ui": "node scripts/bluesky-ui-smoke.cjs",
+    "test:paragraph-ui": "node scripts/paragraph-ui-smoke.cjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
     "cheerio": "^1.1.2",
     "imapflow": "^2.0.7",
     "mailparser": "^3.9.0",
+    "marked": "18.1.0",
+    "nostr-tools": "2.25.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.1.0"

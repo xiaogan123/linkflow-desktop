@@ -17,7 +17,7 @@ function profileAccountConflict(state:State,accountId:string,siteId:string,chann
 }
 
 function candidateAccounts(state:State,siteId:string,channelId:string):Account[]{
-  const site=state.sites.find(item=>item.id===siteId);if(!site)return [];
+  const site=state.sites.find(item=>item.id===siteId);if(!site||channelId==='nostr')return [];
   return state.accounts.filter(account=>account.channelId===channelId&&(channelId==='github-gist'||lower(account.email)===lower(site.publicEmail||site.email)));
 }
 
@@ -26,7 +26,7 @@ function accountForSiteChannel(state:State,siteId:string,channelId:string,accoun
   const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId);
   if(binding)return state.accounts.find(account=>account.id===binding.accountId);
   const candidates=candidateAccounts(state,siteId,channelId);
-  const usableCandidates=['telegraph','github-gist'].includes(channelId)?candidates.filter(account=>account.credentialKind==='api_token'):candidates;
+  const usableCandidates=['telegraph','github-gist','nostr'].includes(channelId)?candidates.filter(account=>account.credentialKind==='api_token'):candidates;
   return usableCandidates.find(account=>account.status==='registered'&&account.hasPassword)
     ??usableCandidates.find(account=>account.status==='unknown'&&account.hasPassword)
     ??usableCandidates[0];
@@ -44,6 +44,11 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
     const account=state.accounts.find(item=>item.id===(accountId??binding?.accountId)&&item.channelId==='blogger');
     return {kind:site?.blogger&&binding&&account&&binding.accountId===account.id&&account.credentialKind==='oauth'&&account.status==='registered'&&account.hasPassword?'ready':'handoff_required',account};
   }
+  if(['bluesky','paragraph'].includes(channel.id)){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
+    const account=state.accounts.find(item=>item.id===(accountId??binding?.accountId)&&item.channelId===channel.id);
+    return {kind:(channel.id!=='paragraph'||state.sites.find(item=>item.id===siteId)?.paragraph?.publicationId===account?.username)&&binding&&account&&binding.accountId===account.id&&account.credentialKind==='api_token'&&account.status==='registered'&&account.hasPassword?'ready':'handoff_required',account};
+  }
   if(!channel.accountRequired)return {kind:'ready'};
   const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
   const compatible=(candidate:Account)=>channel.automation==='api'?candidate.credentialKind==='api_token':candidate.credentialKind!=='api_token'&&candidate.credentialKind!=='oauth';
@@ -58,17 +63,17 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
   if(accountId&&!account)return {kind:'handoff_required'};
   if(account){
     if(!compatible(account)){
-      if(!accountId&&!binding&&channel.id==='telegraph'&&channel.automation==='api')return {kind:'autocreate'};
+      if(!accountId&&!binding&&['telegraph','nostr'].includes(channel.id)&&channel.automation==='api')return {kind:'autocreate'};
       return {kind:'handoff_required',account};
     }
     if(channel.kind==='profile'&&profileAccountConflict(state,account.id,siteId,channel.id))return {kind:'handoff_required',account};
-    if(channel.id==='telegraph'&&channel.automation==='api'&&account.status==='draft'&&account.source==='generated'&&account.credentialKind==='api_token'&&(account.registrationAttempts??0)<1)return {kind:'autocreate',account};
+    if(['telegraph','nostr'].includes(channel.id)&&channel.automation==='api'&&account.status==='draft'&&account.source==='generated'&&account.credentialKind==='api_token'&&(account.registrationAttempts??0)<1)return {kind:'autocreate',account};
     const apiReady=channel.automation==='api'&&account.status==='registered'&&account.hasPassword&&account.credentialKind==='api_token';
     const browserReady=channel.automation==='browser'&&account.hasPassword&&['registered','unknown'].includes(account.status);
     if(apiReady||browserReady)return {kind:'ready',account};
     return {kind:'handoff_required',account};
   }
-  if(channel.id==='telegraph'&&channel.automation==='api')return {kind:'autocreate'};
+  if(['telegraph','nostr'].includes(channel.id)&&channel.automation==='api')return {kind:'autocreate'};
   return {kind:'handoff_required'};
 }
 
@@ -77,9 +82,12 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   const site=state.sites.find(item=>item.id===siteId);
   if(!account||!site)throw Error('账号或网站不存在');
   if(account.channelId!==channel.id)throw Error('账号与渠道不匹配');
+  if(channel.id==='bluesky'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='bluesky'&&!task.firstLiveAt&&!task.publicUrl&&(task.submittedAt||task.bluesky)&&task.accountId!==accountId))throw Error('该网站有 Bluesky 发布结果待核验，保留原身份处理完成后再更换。');
+  if(['paragraph','nostr'].includes(channel.id)&&state.tasks.some(task=>task.siteId===siteId&&task.channelId===channel.id&&!task.firstLiveAt&&!task.publicUrl&&(task.submittedAt||task.paragraph||task.nostr)&&task.accountId!==accountId))throw Error('该网站有发布结果待核验，保留原身份处理完成后再更换。');
   if(channel.kind==='profile'){
     if(profileAccountConflict(state,accountId,siteId,channel.id))throw Error('该资料页账号已绑定其他网站的公开或待确认结果；为避免覆盖原链接，请先核实原提交或选择其他账号。');
   }
+  if(channel.id==='paragraph'){if(account.credentialKind!=='api_token'||account.status!=='registered'||!account.hasPassword||!account.publicationUrl)throw Error('请先验证本人 Paragraph 出版物连接');const url=new URL(account.publicationUrl);if(url.origin!=='https://paragraph.com'||!/^\/@[^/]+\/?$/.test(url.pathname)||url.search||url.hash)throw Error('出版物地址无效');site.paragraph={publicationId:account.username,url:url.toString()};}
   const stamp=now.toISOString();
   const existing=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
   if(existing){existing.accountId=accountId;existing.updatedAt=stamp;return existing}

@@ -8,6 +8,7 @@ import {
   getBloggerBlogs,
   getBloggerIdentity,
   parseBloggerDesktopClient,
+  readBloggerCredential,
   revokeBloggerCredential,
   saveAuthorizedBloggerCredential,
   verifyBloggerBlog,
@@ -166,6 +167,34 @@ export async function connectBlogger(
   return { account, blogs: authorized.blogs };
 }
 
+/**
+ * Re-authorize an existing Blogger subject with the desktop OAuth client that
+ * is already stored inside that account's encrypted credential. No client
+ * JSON or OAuth material is returned to the renderer.
+ */
+export async function reconnectBlogger(
+  store: StateStore,
+  vault: SecretStore,
+  accountId: string,
+  dependencies: BloggerManagementDependencies,
+): Promise<{ account: Account; blogs: BloggerBlog[] }> {
+  requireAccount(store, accountId);
+  let credential: Awaited<ReturnType<typeof readBloggerCredential>>;
+  try { credential = await readBloggerCredential(vault, accountId); }
+  catch {
+    throw new Error('本机保险箱中没有可复用的 Google OAuth 桌面客户端配置；请重新导入桌面客户端 JSON。');
+  }
+  return connectBlogger(store, vault, {
+    installed: {
+      client_id: credential.clientId,
+      ...(credential.clientSecret ? { client_secret: credential.clientSecret } : {}),
+      auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+      token_uri: 'https://oauth2.googleapis.com/token',
+      redirect_uris: ['http://localhost'],
+    },
+  }, { ...dependencies, existingAccountId: accountId });
+}
+
 export async function listBloggerBlogs(
   store: StateStore,
   vault: SecretStore,
@@ -207,13 +236,37 @@ export async function bindBloggerBlog(
   blogId: string,
   dependencies: BloggerDependencies = {},
 ): Promise<BloggerBlog> {
+  return bindBloggerBlogs(store, vault, [siteId], accountId, blogId, dependencies);
+}
+
+function terminalBindingTask(task: ReturnType<StateStore['read']>['tasks'][number]): boolean {
+  return ['skipped', 'expired', 'live'].includes(task.status)
+    || (task.status === 'failed' && (task.checkpoint === 'system_wait' || (task.checkpoint ?? '').includes('budget')));
+}
+
+export async function bindBloggerBlogs(
+  store: StateStore,
+  vault: SecretStore,
+  siteIds: string[],
+  accountId: string,
+  blogId: string,
+  dependencies: BloggerDependencies = {},
+): Promise<BloggerBlog> {
+  if (!siteIds.length) throw new Error('请至少选择一个要绑定的网站');
+  if (new Set(siteIds).size !== siteIds.length) throw new Error('要绑定的网站不能重复');
   const before = store.read();
-  const site = before.sites.find(item => item.id === siteId);
-  if (!site) throw new Error('网站不存在');
-  const existingBinding = before.accountBindings.find(item => item.siteId === siteId && item.channelId === 'blogger');
-  const unchanged = existingBinding?.accountId === accountId && site.blogger?.blogId === blogId;
-  if (!unchanged && bindingChangeBlocked(before, siteId, accountId, blogId)) {
-    throw new Error('该网站仍有 Blogger 待处理或结果不明任务；请先暂停并核对原任务，再更换博客绑定。');
+  const requestedSites = siteIds.map(siteId => before.sites.find(item => item.id === siteId));
+  if (requestedSites.some(site => !site)) throw new Error('所选网站中有网站不存在，请刷新后重试');
+  const expectedTargets = new Map(requestedSites.map(site => [site!.id, {
+    blogger: site!.blogger ? { ...site!.blogger } : undefined,
+    binding: before.accountBindings.find(item => item.siteId === site!.id && item.channelId === 'blogger'),
+  }]));
+  for (const site of requestedSites) {
+    const existingBinding = before.accountBindings.find(item => item.siteId === site!.id && item.channelId === 'blogger');
+    const unchanged = existingBinding?.accountId === accountId && site!.blogger?.blogId === blogId;
+    if (!unchanged && bindingChangeBlocked(before, site!.id, accountId, blogId)) {
+      throw new Error(`网站 ${site!.domain} 仍有 Blogger 待处理或结果不明任务；请先暂停并核对原任务，再更换博客绑定。`);
+    }
   }
   const { account, accessToken } = await authorizedAccount(store, vault, accountId, dependencies);
   let blogs: BloggerBlog[];
@@ -231,30 +284,47 @@ export async function bindBloggerBlog(
   const stamp = timestamp(dependencies);
   const sourceDomain = new URL(verified.url).hostname.toLowerCase();
   store.update(state => {
-    const currentSite = state.sites.find(item => item.id === siteId);
     const currentAccount = state.accounts.find(item => item.id === accountId && item.channelId === 'blogger');
-    if (!currentSite || !currentAccount || currentAccount.username !== account.username) throw new Error('网站或 Blogger 身份在绑定期间发生变化');
-    const currentBinding = state.accountBindings.find(item => item.siteId === siteId && item.channelId === 'blogger');
-    const same = currentBinding?.accountId === accountId && currentSite.blogger?.blogId === blogId;
-    if (!same && bindingChangeBlocked(state, siteId, accountId, blogId)) throw new Error('Blogger 任务状态已变化，请重新核对后绑定');
-    currentSite.blogger = { blogId: verified.id, url: verified.url };
-    state.accountBindings = state.accountBindings.filter(item => !(item.siteId === siteId && item.channelId === 'blogger'));
-    state.accountBindings.push({
-      id: currentBinding?.id ?? randomUUID(),
-      siteId,
-      channelId: 'blogger',
-      accountId,
-      createdAt: currentBinding?.createdAt ?? stamp,
-      updatedAt: stamp,
+    if (!currentAccount || currentAccount.username !== account.username) throw new Error('Blogger 身份在绑定期间发生变化');
+    const currentSites = siteIds.map(siteId => state.sites.find(item => item.id === siteId));
+    if (currentSites.some(site => !site)) throw new Error('网站在绑定期间发生变化，请刷新后重试');
+    const changes = currentSites.map(site => {
+      const currentBinding = state.accountBindings.find(item => item.siteId === site!.id && item.channelId === 'blogger');
+      const expected = expectedTargets.get(site!.id)!;
+      const bindingUnchanged = expected.binding
+        ? currentBinding?.id === expected.binding.id && currentBinding.accountId === expected.binding.accountId
+        : currentBinding === undefined;
+      const blogUnchanged = expected.blogger
+        ? site!.blogger?.blogId === expected.blogger.blogId && site!.blogger.url === expected.blogger.url
+        : site!.blogger === undefined;
+      if (!bindingUnchanged || !blogUnchanged) throw new Error(`网站 ${site!.domain} 的 Blogger 绑定在验证期间发生变化，请刷新后重试`);
+      const unchanged = currentBinding?.accountId === accountId && site!.blogger?.blogId === blogId;
+      if (!unchanged && bindingChangeBlocked(state, site!.id, accountId, blogId)) {
+        throw new Error(`网站 ${site!.domain} 的 Blogger 任务状态已变化，请重新核对后绑定`);
+      }
+      return { site: site!, currentBinding, unchanged };
     });
-    for (const task of state.tasks) {
-      if (task.siteId !== siteId || task.channelId !== 'blogger'
-        || task.submittedAt || task.publicUrl || task.firstLiveAt || task.blogger) continue;
-      task.accountId = accountId;
-      task.sourceDomain = sourceDomain;
-      task.articleApprovedAt = undefined;
-      task.articleReview = undefined;
-      if (!['skipped', 'expired'].includes(task.status)) {
+    const changedSites = new Set(changes.filter(change => !change.unchanged).map(change => change.site.id));
+    state.accountBindings = state.accountBindings.filter(item => !(changedSites.has(item.siteId) && item.channelId === 'blogger'));
+    for (const { site, currentBinding, unchanged } of changes) {
+      site.blogger = { blogId: verified.id, url: verified.url };
+      if (unchanged) continue;
+      state.accountBindings.push({
+        id: currentBinding?.id ?? randomUUID(),
+        siteId: site.id,
+        channelId: 'blogger',
+        accountId,
+        createdAt: currentBinding?.createdAt ?? stamp,
+        updatedAt: stamp,
+      });
+      for (const task of state.tasks) {
+        if (task.siteId !== site.id || task.channelId !== 'blogger'
+          || task.submittedAt || task.publicUrl || task.firstLiveAt || task.blogger) continue;
+        task.accountId = accountId;
+        task.sourceDomain = sourceDomain;
+        if (terminalBindingTask(task)) continue;
+        task.articleApprovedAt = undefined;
+        task.articleReview = undefined;
         task.status = 'queued';
         task.scheduledAt = stamp;
         task.updatedAt = stamp;

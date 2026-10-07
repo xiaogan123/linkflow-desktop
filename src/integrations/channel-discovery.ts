@@ -34,7 +34,7 @@ function relevance(site:Site,channel:Channel){
   if(channel.categories.includes('general'))return 38;
   return 18;
 }
-function missingRequirements(site:Site,channel:Channel){if(channel.id==='github-gist'&&eligibilityFor(site,channel).eligible)return [];return requirementsFor(channel).filter(requirement=>!validQualificationUrl(site.qualifications?.[requirement]))}
+function missingRequirements(site:Site,channel:Channel){if(['github-gist','paragraph'].includes(channel.id)&&eligibilityFor(site,channel).eligible)return [];return requirementsFor(channel).filter(requirement=>!validQualificationUrl(site.qualifications?.[requirement]))}
 function inferredRequirement(site:Site,requirement:Qualification){
   if(requirement==='publication')return true;
   if(requirement==='techContent')return hasTechnicalContentShape(site);
@@ -66,7 +66,7 @@ export function channelDiscoveryFor(site:Site,channel:Channel):ChannelDiscovery{
     const canPrepare=channel.automation==='manual'&&missing.every(requirement=>preparableRequirements.has(requirement)&&(requirement!=='publication'||preparablePublicationChannels.has(channel.id)));
     const restrictedPublication=missing.includes('publication')&&affiliateRestrictedPublicationChannels.has(channel.id);
     const reason=restrictedPublication?'可准备独立原创出版物，但该平台不接受以联盟导流为主要目的的出版物；仅凭网站简介不能判定是否符合。':`公开简介显示可能适合，但${missingLabel(missing)}仍待准备和核对。`;
-    const nextStep=canPrepare?(restrictedPublication?'可建立人工待办，准备以独立原创内容为主且如实披露关系的材料；平台接受和最终提交仍需人工核对。':'可先建立人工待办并准备真实材料；平台接受、账号资格和最终提交仍需确认。'):`先确认真实的${missingLabel(missing)}及公开资料，再加入执行计划。`;
+    const nextStep=channel.id==='paragraph'?'在账号页连接本人 Paragraph 原创出版物并选择网站；连接后按内容规则自动审核和发布。':canPrepare?(restrictedPublication?'可建立人工待办，准备以独立原创内容为主且如实披露关系的材料；平台接受和最终提交仍需人工核对。':'可先建立人工待办并准备真实材料；平台接受、账号资格和最终提交仍需确认。'):`先确认真实的${missingLabel(missing)}及公开资料，再加入执行计划。`;
     return {channel,score:baseScore,status:'needs_preparation',reason,nextStep,executionReady:false,canQueue:canPrepare};
   }
 

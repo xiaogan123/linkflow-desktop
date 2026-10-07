@@ -1,6 +1,6 @@
 import type {ArticleReviewReasonCode,Channel, Settings, Site, Task} from '../shared/types';
 import {getArticleReviewMode} from '../shared/article-review-mode';
-import {articleTopicLanguageScore,canonicalPublicPageUrl,hasBloggerDraftReceipt} from '../shared/publication';
+import {articleTopicLanguageScore,canonicalPublicPageUrl,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
 import {isArticleTopicUrl} from '../shared/topic-policy';
 
 export const TASK_AI_BUDGET=6;
@@ -43,7 +43,7 @@ export function recoverWithAlternativeTopic(task:Task,site:Site,channel:Channel,
   const code=task.articleReview?.reasonCode,invalidCurrent=invalidEvidence||code==='invalid_topic'||!isArticleTopicUrl(task.topicUrl,site);
   if(!invalidCurrent&&(!code||!ALTERNATIVE_TOPIC_CODES.has(code)))return {kind:'not_applicable'};
   if(code==='content_rejected'&&task.articleReview?.checks?.channelRules==='fail')return {kind:'ineligible'};
-  if(!settings.autoRun||site.status!=='ready'||getArticleReviewMode(site,settings)!=='ai'||!channel.enabled||channel.automation==='manual'||channel.kind!=='article'||!channel.articleRequired||
+  if(!settings.autoRun||site.status!=='ready'||getArticleReviewMode(site,settings)!=='ai'||!channel.enabled||channel.automation==='manual'||(channel.kind!=='article'&&channel.contentFormat!=='social')||!channel.articleRequired||
     !['queued','running','failed'].includes(task.status)||!!task.deferredAt||hasExternalAttempt(task)||competingWork(task,tasks))return {kind:'ineligible'};
   const stamp=now.toISOString(),switched=task.topicSwitchAttempts??task.articleAttempts?.length??0;
   const block=(blockingReason:'invalid_topic'|'article_rejected'|'budget_exhausted',message:string):AlternativeTopicRecoveryResult=>{
@@ -65,7 +65,7 @@ export function maintainWaitingTasks(tasks:Task[],sites:Site[],channels:Channel[
   const stamp=now.toISOString();
   for(const task of tasks){
     const site=sites.find(item=>item.id===task.siteId),channel=channels.find(item=>item.id===task.channelId);
-    if(!site||site.status!=='ready'||!channel?.enabled||(hasExternalAttempt(task)&&!hasBloggerDraftReceipt(task))||task.deferredAt)continue;
+    if(!site||site.status!=='ready'||!channel?.enabled||(hasExternalAttempt(task)&&!hasRecoverablePublisherDraftReceipt(task))||task.deferredAt)continue;
     if(task.status==='failed'&&task.checkpoint==='system_wait'&&task.nextCheckAt&&tasks.some(other=>other.id!==task.id&&other.siteId===task.siteId&&(other.channelId===task.channelId||!!task.topicUrl&&canonicalPublicPageUrl(other.topicUrl)===canonicalPublicPageUrl(task.topicUrl))&&((hasExternalAttempt(other)&&!other.firstLiveAt)||(!!other.firstLiveAt&&Date.parse(other.firstLiveAt)>Date.parse(task.createdAt))||!['failed','skipped','expired','live'].includes(other.status)))){
       Object.assign(task,{recoveryEligible:false,nextCheckAt:undefined,message:'已有其他进行中任务、成功结果或待确认的提交，保留旧任务记录，不再恢复旧稿。'});continue;
     }

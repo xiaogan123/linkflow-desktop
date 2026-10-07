@@ -1,7 +1,7 @@
 import type {CapacityBlockReason,Channel,Site,SiteTopic,Task} from './types';
 import {isArticleTopicUrl} from './topic-policy';
 
-const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger']);
+const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','bluesky','paragraph','nostr']);
 export const PUBLICATION_GAP_MS=10*24*60*60*1000;
 const TRACKING_PARAMETER=/^(?:utm_[a-z0-9_]+|fbclid|gclid|dclid|msclkid)$/i;
 
@@ -132,6 +132,12 @@ export function publicationCounts(siteId:string,tasks:Task[],now:Date,timeZone:s
   };
 }
 
+/** Public short posts are transparent distribution results, never labelled complete articles. */
+export function publicationFormatCounts(siteId:string,tasks:Task[],now:Date,timeZone:string){
+  const social=tasks.filter(task=>task.channelId==='bluesky'),other=tasks.filter(task=>task.channelId!=='bluesky');
+  return {social:publicationCounts(siteId,social,now,timeZone),articlesAndProfiles:publicationCounts(siteId,other,now,timeZone)};
+}
+
 export function sourceMetrics(siteId:string,tasks:Task[],now:Date,timeZone:string):Pick<PublicationCounts,'currentSources'|'monthlySources'>{
   const {currentSources,monthlySources}=publicationCounts(siteId,tasks,now,timeZone);
   return {currentSources,monthlySources};
@@ -145,7 +151,7 @@ export function taskOccupiesSource(task:Task):boolean{
 }
 
 export function isRepeatableOfficialArticleChannel(channel:Channel):boolean{
-  return channel.provenance==='built-in'&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired===true&&REPEATABLE_ARTICLE_CHANNELS.has(channel.id);
+  return channel.provenance==='built-in'&&channel.automation==='api'&&(channel.kind==='article'||channel.contentFormat==='social')&&channel.articleRequired===true&&REPEATABLE_ARTICLE_CHANNELS.has(channel.id);
 }
 
 function taskReservesTopic(task:Task):boolean{
@@ -173,7 +179,7 @@ function originalTaskCanRecover(task:Task):boolean{
 }
 
 function hasUnresolvedExternalAttempt(task:Task):boolean{
-  return !!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||/(?:submitt|publish|registration)/i.test(task.checkpoint??'');
+  return !!task.bluesky||!!task.paragraph||!!task.nostr||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||/(?:submitt|publish|registration)/i.test(task.checkpoint??'');
 }
 
 function terminalBlock(task:Task):PublicationOpportunity|undefined{
@@ -284,3 +290,8 @@ export function reservesMonthlySlot(t:Task,now:Date,timeZone:string):boolean{
 
 /** A positively identified remote draft may resume the same post after review. */
 export function hasBloggerDraftReceipt(task:Task):boolean{return task.channelId==='blogger'&&!!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&task.blogger?.stage==='draft'&&!!task.blogger.postId}
+
+/** A confirmed remote draft can continue only under its original publication identity. */
+export function hasRecoverablePublisherDraftReceipt(task:Task):boolean{
+  return hasBloggerDraftReceipt(task)||task.channelId==='paragraph'&&!!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&task.paragraph?.stage==='draft'&&!!task.paragraph.postId;
+}
