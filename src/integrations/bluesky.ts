@@ -612,6 +612,7 @@ export async function runBlueskyTask(
 
   const prior = taskState(context.task);
   const remoteCheckpoint = ['bluesky_create_submitting', 'bluesky_create_accepted', 'bluesky_published'].includes(context.task.checkpoint ?? '');
+  const remoteIntent = !!prior || !!context.task.submittedAt || !!context.task.publicUrl || !!context.task.firstLiveAt || remoteCheckpoint;
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
     return {
       status: 'needs_input',
@@ -675,6 +676,7 @@ export async function runBlueskyTask(
     return {
       status: error instanceof BlueskyError && ['network', 'timeout', 'rate_limited'].includes(error.code) ? 'failed' : 'needs_input',
       message: failureMessage(error, false),
+      ...(error instanceof BlueskyError && error.code === 'auth' && !remoteIntent ? { checkpoint: 'account_handoff' } : {}),
     };
   }
 

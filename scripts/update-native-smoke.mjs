@@ -10,8 +10,8 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.10',candidateVersion:'1.2.11',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.10/Linkflow-1.2.10-windows-x64-setup.exe',sha256:'1f4b5eb4d1b71891180786a418bb4d07d7762d5b2e0f4e134b976120ec750e1b'};
-const macPublishedUpgrade={sourceVersion:'1.2.10',candidateVersion:'1.2.11',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.10/Linkflow-1.2.10-mac-arm64.zip',sha256:'c8502fcf9acd7de5878e2acde149e6aa120419da7f1e413289a28a9d1afc0aeb'};
+const windowsUpgrade={sourceVersion:'1.2.11',candidateVersion:'1.2.12',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.11/Linkflow-1.2.11-windows-x64-setup.exe',sha256:'8e381a2eae5231a17f1ade06ad0066bf80536da1e60ede275accc91a560da0da'};
+const macPublishedUpgrade={sourceVersion:'1.2.11',candidateVersion:'1.2.12',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.11/Linkflow-1.2.11-mac-arm64.zip',sha256:'1aa7b0e1a209b9421d58cd07d2d69c64bcac77ef6dcf6914d9dc6396b1f468e2'};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
@@ -32,7 +32,7 @@ const bridgeIndex=process.argv.indexOf('--mac-bridge');
 const publishedSourceIndex=process.argv.indexOf('--mac-published-source');
 if(bridgeIndex>=0&&publishedSourceIndex>=0)throw Error('Choose either --mac-published-source or --mac-bridge');
 if(publishedSourceIndex>=0){
- if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.10-zip]');
+ if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.11-zip]');
  Object.assign(plan,probePlan(process.platform,process.arch,version,'published-source'));
  const [path]=process.argv.slice(publishedSourceIndex+1);if(path)plan.sourcePath=resolve(path);
 }

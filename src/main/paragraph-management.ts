@@ -28,7 +28,8 @@ export async function connectParagraph(
       state.accounts=state.accounts.filter(item=>item.id!==id);state.accounts.push(account);
       const channel=CHANNELS.find(item=>item.id==='paragraph')!;
       for(const siteId of selected)bindAccount(state,id,siteId,channel);
-      state.accountBindings=state.accountBindings.filter(binding=>binding.accountId!==id||binding.channelId!=='paragraph'||selected.has(binding.siteId));
+      // Only the explicit edit drawer shows all previous bindings for replacement.
+      if(requested)state.accountBindings=state.accountBindings.filter(binding=>binding.accountId!==id||binding.channelId!=='paragraph'||selected.has(binding.siteId));
     });
     return account;
   }catch(error){

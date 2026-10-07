@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Account, SecretStore } from '../shared/types';
 import type { Store } from './store';
+import {bindAccount} from './account-bindings';
+import {CHANNELS} from '../integrations/catalog';
 import {
   BlueskyError,
   createBlueskyCredential,
@@ -11,6 +13,7 @@ import {
 type StateStore = Pick<Store, 'read' | 'update'>;
 
 export interface BlueskyManagementDependencies extends BlueskyDependencies {}
+export interface BlueskyBindingSelection {siteIds:string[];mailboxId?:string|null}
 
 function stamp(dependencies?: BlueskyDependencies): string {
   const supplied = dependencies?.now?.();
@@ -39,7 +42,7 @@ function connectionMessage(error: unknown): string {
  * Connect an existing, user-owned Bluesky identity on the fixed hosted PDS.
  * Only the returned display metadata reaches callers; the app password and
  * rotating session tokens are stored together in the encrypted account vault.
- * This function never creates a site binding implicitly.
+ * Explicitly selected bindings commit together with the verified identity.
  */
 export async function connectBluesky(
   store: StateStore,
@@ -48,6 +51,7 @@ export async function connectBluesky(
   appPassword: string,
   dependencies: BlueskyManagementDependencies = {},
   existingAccountId?: string,
+  selection?: BlueskyBindingSelection,
 ): Promise<Account> {
   const handle = normalizeBlueskyHandle(handleInput);
   const before = store.read();
@@ -55,6 +59,12 @@ export async function connectBluesky(
     ? before.accounts.find(account => account.id === existingAccountId && account.channelId === 'bluesky')
     : undefined;
   if (existingAccountId && !requested) throw new Error('要更新的 Bluesky 账号不存在');
+  const selected=new Set(selection?.siteIds??[]);
+  const validateSelection=(state:ReturnType<StateStore['read']>)=>{
+    if([...selected].some(id=>!state.sites.some(site=>site.id===id)))throw Error('所选网站已不存在');
+    if(selection?.mailboxId&&!state.mailboxes.some(mailbox=>mailbox.id===selection.mailboxId))throw Error('收件箱不存在');
+  };
+  validateSelection(before);
 
   let savedAccount: Account | undefined;
   try {
@@ -82,6 +92,7 @@ export async function connectBluesky(
         hasPassword: true,
         source: 'imported',
         diagnostic: undefined,
+        ...(selection?.mailboxId!==undefined?{mailboxId:selection.mailboxId??undefined}:{}),
       };
 
       let previousSecret: string | undefined;
@@ -89,12 +100,20 @@ export async function connectBluesky(
       await vault.set(`account:${accountId}`, authenticated.secret);
       try {
         store.update(state => {
+          validateSelection(state);
           const current = state.accounts.find(item => item.id === accountId);
           if (current && (current.channelId !== 'bluesky' || current.username !== authenticated.did)) {
             throw new Error('Bluesky 账号身份在连接期间发生变化');
           }
           state.accounts = state.accounts.filter(item => item.id !== accountId);
           state.accounts.push(account);
+          if(selection){
+            const channel=CHANNELS.find(item=>item.id==='bluesky')!;
+            for(const siteId of selected)bindAccount(state,accountId,siteId,channel);
+            // A new connection can discover an existing DID. Add the chosen sites
+            // without silently disconnecting bindings absent from the new drawer.
+            if(requested)state.accountBindings=state.accountBindings.filter(binding=>binding.accountId!==accountId||binding.channelId!=='bluesky'||selected.has(binding.siteId));
+          }
         });
       } catch (error) {
         if (previousSecret !== undefined) await vault.set(`account:${accountId}`, previousSecret);

@@ -86,25 +86,18 @@ if(!process.versions.electron){
                   setData(current=>({
                     ...current,
                     accounts:[account,...current.accounts.filter(item=>item.id!==account.id)],
-                  }));
-                  return account;
-                }
-                if(command==='account:set-bindings'){
-                  await pause(70);
-                  setData(current=>({
-                    ...current,
-                    accounts:current.accounts.map(item=>item.id===payload.accountId?{...item,mailboxId:payload.mailboxId??undefined}:item),
                     accountBindings:[
-                      ...current.accountBindings.filter(binding=>binding.accountId!==payload.accountId),
+                      ...current.accountBindings.filter(binding=>binding.accountId!==account.id),
                       ...payload.siteIds.map(siteId=>({
-                        id:'binding-'+payload.accountId+'-'+siteId,
-                        siteId,channelId:'bluesky',accountId:payload.accountId,
+                        id:'binding-'+account.id+'-'+siteId,
+                        siteId,channelId:'bluesky',accountId:account.id,
                         createdAt:now,updatedAt:now,
                       })),
                     ],
                   }));
-                  return {ok:true};
+                  return account;
                 }
+                if(command==='account:set-bindings')throw Error('Connection must not dispatch a second binding operation');
                 if(command==='external:open')return {ok:true};
                 return {ok:true};
               }finally{
@@ -153,7 +146,7 @@ if(!process.versions.electron){
 }else{
   const {app,BrowserWindow}=require('electron');
   const dir=process.argv[2];
-  const evidence=join(process.cwd(),'.evidence','bluesky-ui-2026-10-06');
+  const evidence=join(process.cwd(),'.evidence','maturation-2026-10-07','bluesky-ui');
   mkdirSync(evidence,{recursive:true});
   app.setPath('userData',join(dir,'profile'));
 
@@ -293,12 +286,13 @@ if(!process.versions.electron){
       await waitFor('document.querySelector("[role=dialog]")===null');
       check(
         'new identity connect payload contains only the expected fields',
-        await evaluate('(()=>{const action=window.__blueskyFixture.actions.find(item=>item.command==="account:connect-bluesky"&&item.payload.handle==="fresh.bsky.social");return !!action&&Object.keys(action.payload).sort().join(",")==="accountId,appPassword,handle"&&action.payload.accountId===undefined&&action.payload.appPassword==="fixture-password-new-success"})()'),
+        await evaluate('(()=>{const action=window.__blueskyFixture.actions.find(item=>item.command==="account:connect-bluesky"&&item.payload.handle==="fresh.bsky.social");return !!action&&Object.keys(action.payload).sort().join(",")==="accountId,appPassword,handle,mailboxId,siteIds"&&action.payload.accountId===undefined&&action.payload.appPassword==="fixture-password-new-success"})()'),
       );
       check(
-        'multi-site binding submits the explicit sites and null mailbox',
-        await evaluate('(()=>{const action=window.__blueskyFixture.actions.find(item=>item.command==="account:set-bindings"&&item.payload.accountId==="20202020-2020-4020-8020-202020202020");return !!action&&Object.keys(action.payload).sort().join(",")==="accountId,mailboxId,siteIds"&&action.payload.mailboxId===null&&action.payload.siteIds.join(",")==="site-2,site-3"})()'),
+        'single connection submits the explicit sites without changing an existing mailbox',
+        await evaluate('(()=>{const action=window.__blueskyFixture.actions.find(item=>item.command==="account:connect-bluesky"&&item.payload.handle==="fresh.bsky.social");return !!action&&action.payload.mailboxId===undefined&&action.payload.siteIds.join(",")==="site-2,site-3"})()'),
       );
+      check('connection does not race a separate binding request',await actionCount('account:set-bindings')===0);
       check(
         'new connection returns metadata without plaintext secrets',
         await evaluate('(()=>{const account=window.__blueskyFixture.returnedAccounts.find(item=>item.id==="20202020-2020-4020-8020-202020202020");return !!account&&!Object.prototype.hasOwnProperty.call(account,"password")&&!Object.prototype.hasOwnProperty.call(account,"appPassword")&&!Object.prototype.hasOwnProperty.call(account,"secret")})()'),
@@ -338,7 +332,7 @@ if(!process.versions.electron){
       );
       check(
         'existing binding update preserves mailbox and sends the complete selected set',
-        await evaluate('(()=>{const action=window.__blueskyFixture.actions.findLast(item=>item.command==="account:set-bindings");return action.payload.accountId==="10101010-1010-4010-8010-101010101010"&&action.payload.mailboxId==="mailbox-existing"&&action.payload.siteIds.join(",")==="site-1,site-2"})()'),
+        await evaluate('(()=>{const action=window.__blueskyFixture.actions.findLast(item=>item.command==="account:connect-bluesky");return action.payload.accountId==="10101010-1010-4010-8010-101010101010"&&action.payload.mailboxId==="mailbox-existing"&&action.payload.siteIds.join(",")==="site-1,site-2"})()'),
       );
       check(
         'reconnect leaves neither DID nor app password visible',

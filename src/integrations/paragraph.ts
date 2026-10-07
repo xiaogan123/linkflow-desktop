@@ -789,6 +789,7 @@ export async function runParagraphTask(
   const prior = task.paragraph;
   const remoteCheckpoint = ['paragraph_insert_submitting', 'paragraph_draft_created', 'paragraph_publish_submitting', 'paragraph_published']
     .includes(context.task.checkpoint ?? '');
+  const remoteIntent = !!prior || !!context.task.submittedAt || !!context.task.publicUrl || !!context.task.firstLiveAt || remoteCheckpoint;
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
     return {
       status: 'needs_input',
@@ -813,7 +814,11 @@ export async function runParagraphTask(
   try { access = await authenticatedPublication(context, account, { ...dependencies, signal: context.signal }, true); }
   catch (error) {
     await markAccountFailure(context, account, error, dependencies);
-    return { status: error instanceof ParagraphError && ['network', 'timeout', 'rate_limited'].includes(error.code) ? 'failed' : 'needs_input', message: failureMessage(error, false) };
+    return {
+      status: error instanceof ParagraphError && ['network', 'timeout', 'rate_limited'].includes(error.code) ? 'failed' : 'needs_input',
+      message: failureMessage(error, false),
+      ...(error instanceof ParagraphError && error.code === 'auth' && !remoteIntent ? { checkpoint: 'account_handoff' } : {}),
+    };
   }
 
   let state = prior;

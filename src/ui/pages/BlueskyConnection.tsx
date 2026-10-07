@@ -14,11 +14,10 @@ export function BlueskyConnection({data,disabled,account,onClose,onAction}:Props
   const connect=async()=>{
     if(busyRef.current)return;busyRef.current=true;setBusy(true);setError('');
     try{
-      const result=await onAction<Account>('account:connect-bluesky',{handle:handle.trim(),appPassword:password,accountId:account?.id});
+      const result=await onAction<Account>('account:connect-bluesky',{handle:handle.trim(),appPassword:password,accountId:account?.id,siteIds,mailboxId:account?account.mailboxId??null:undefined},'Bluesky 身份和网站已连接，将按计划发布原创短内容。');
       setPassword('');
       if(!result){setError('连接未完成。请确认账号和应用专用密码，再试一次。');return;}
-      const bound=await onAction('account:set-bindings',{accountId:result.id,siteIds,mailboxId:account?.mailboxId??null},'Bluesky 身份已连接，所选网站将按计划发布原创短内容。');
-      if(bound!==undefined)onClose();else setError('身份已连接，网站绑定尚未完成。可从账号列表继续设置绑定。');
+      onClose();
     }finally{busyRef.current=false;setBusy(false);setPassword('');}
   };
   return <div className="side-drawer-backdrop"><aside className="side-drawer narrow" role="dialog" aria-modal="true" aria-label="连接 Bluesky"><header><div><span className="eyebrow">BLUESKY / 短内容分发</span><h2>{account?'更新 Bluesky 连接':'连接 Bluesky'}</h2></div><button className="icon-button" aria-label="关闭" disabled={busy} onClick={onClose}><X size={18}/></button></header><div className="drawer-form">

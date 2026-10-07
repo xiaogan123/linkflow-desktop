@@ -35,6 +35,11 @@ export interface ControllerServices {aiFactory?:typeof createAi;discoverTopics?:
 
 const transientReviewCodes=new Set(['evidence_fetch_failed','ai_unavailable','format_invalid','evidence_invalid']);
 const channelWaitReviewCodes=new Set(['policy_unknown','policy_not_found','input_too_long','content_rejected']);
+const AUTOMATIC_REPAIR_AI_CALLS=2;
+
+function hasAutomaticRepairBudget(task:Task):boolean{
+  return TASK_AI_BUDGET-(task.cost?.aiCalls??0)>=AUTOMATIC_REPAIR_AI_CALLS;
+}
 
 function nextLocalDay(now:Date,timeZone:string):Date{
   const current=dateKey(now,timeZone);let next=new Date(now.getTime()+60*60000);
@@ -397,6 +402,10 @@ export class Controller {
       try{
         if(task.checkpoint==='article_repair'&&task.draft&&task.articleReview?.status==='failed'){
           if((task.articleRepairAttempts??0)>=1)throw Error('自动修稿已尝试一次，保留原稿和核对记录，避免重复付费调用');
+          if(!hasAutomaticRepairBudget(task)){
+            this.patch(task.id,{status:'failed',checkpoint:'system_wait',attempts:task.attempts,recoveryEligible:false,nextCheckAt:undefined,
+              message:'当前任务剩余 AI 预算不足以完成自动修稿和独立复核，已保留原稿及核对记录；不会发起付费调用。'});return;
+          }
           this.patch(task.id,{articleRepairAttempts:(task.articleRepairAttempts??0)+1,message:'AI 正在根据独立审核意见修稿，完成后再次审核。'});
           await this.generateDraft(task.id,this.active.signal,{reason:task.articleReview.reason,draft:task.draft});
         }else if(!task.draft)await this.generateDraft(task.id,this.active.signal);
@@ -420,6 +429,11 @@ export class Controller {
             if(review.status!=='passed'){
               const failed=this.store.read().tasks.find(item=>item.id===task.id);if(!failed)return;
               if(!failed.submittedAt&&review.reasonCode==='content_rejected'&&review.checks?.channelRules!=='fail'&&(failed.articleRepairAttempts??0)<1){
+                if(!hasAutomaticRepairBudget(failed)){
+                  this.patch(task.id,{status:'failed',checkpoint:'system_wait',recoveryEligible:false,nextCheckAt:undefined,
+                    message:'当前任务剩余 AI 预算不足以完成自动修稿和独立复核，已保留原稿及核对记录；不会发起付费调用。'});
+                  this.plan();return;
+                }
                 this.patch(task.id,{status:'queued',checkpoint:'article_repair',scheduledAt:new Date().toISOString(),nextCheckAt:undefined,
                   attempts:task.attempts,message:'独立审核发现可修订内容，AI 将自动修稿一次并重新审核。'});
                 this.plan();return;

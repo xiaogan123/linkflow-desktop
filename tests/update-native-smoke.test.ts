@@ -11,10 +11,10 @@ const script=fileURLToPath(new URL('../scripts/update-native-smoke.mjs',import.m
 const wrapper=fileURLToPath(new URL('../scripts/update-native-wrapper.cjs',import.meta.url));
 const plan=(platform:string,arch:string,version:string,sourceMode?:string)=>JSON.parse(execFileSync(process.execPath,[script,'--describe-plan',platform,arch,version,...(sourceMode?[sourceMode]:[])],{encoding:'utf8'}));
 
-test('Windows native probe is frozen to the published v1.2.10 installer and candidate v1.2.11',()=>{
- const value=plan('win32','x64','1.2.11');
- assert.deepEqual(value,{sourceVersion:'1.2.10',candidateVersion:'1.2.11',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.10/Linkflow-1.2.10-windows-x64-setup.exe',sha256:'1f4b5eb4d1b71891180786a418bb4d07d7762d5b2e0f4e134b976120ec750e1b',platform:'win32',arch:'x64',sourceArtifact:'published-release',evidenceDirectory:'.evidence/release-1.2.11/native-probe'});
- const rejected=spawnSync(process.execPath,[script,'--describe-plan','win32','x64','1.2.10'],{encoding:'utf8'});assert.notEqual(rejected.status,0);assert.match(rejected.stderr,/frozen for candidate 1\.2\.11/);
+test('Windows native probe is frozen to the published v1.2.11 installer and candidate v1.2.12',()=>{
+ const value=plan('win32','x64','1.2.12');
+ assert.deepEqual(value,{sourceVersion:'1.2.11',candidateVersion:'1.2.12',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.11/Linkflow-1.2.11-windows-x64-setup.exe',sha256:'8e381a2eae5231a17f1ade06ad0066bf80536da1e60ede275accc91a560da0da',platform:'win32',arch:'x64',sourceArtifact:'published-release',evidenceDirectory:'.evidence/release-1.2.12/native-probe'});
+ const rejected=spawnSync(process.execPath,[script,'--describe-plan','win32','x64','1.2.11'],{encoding:'utf8'});assert.notEqual(rejected.status,0);assert.match(rejected.stderr,/frozen for candidate 1\.2\.12/);
 });
 
 test('Mac native probe retains its candidate replacement path without a Windows download',()=>{
@@ -23,10 +23,10 @@ test('Mac native probe retains its candidate replacement path without a Windows 
  assert.equal('url' in value,false);
 });
 
-test('Mac published-source probe is frozen to the official v1.2.10 archive and candidate v1.2.11',()=>{
- const value=plan('darwin','arm64','1.2.11','published-source');
- assert.deepEqual(value,{sourceVersion:'1.2.10',candidateVersion:'1.2.11',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.10/Linkflow-1.2.10-mac-arm64.zip',sha256:'c8502fcf9acd7de5878e2acde149e6aa120419da7f1e413289a28a9d1afc0aeb',platform:'darwin',arch:'arm64',sourceArtifact:'published-release',originalPublishedUpdater:true,evidenceDirectory:'.evidence/release-1.2.11/native-probe'});
- const rejected=spawnSync(process.execPath,[script,'--describe-plan','darwin','arm64','1.2.10','published-source'],{encoding:'utf8'});assert.notEqual(rejected.status,0);assert.match(rejected.stderr,/frozen for candidate 1\.2\.11/);
+test('Mac published-source probe is frozen to the official v1.2.11 archive and candidate v1.2.12',()=>{
+ const value=plan('darwin','arm64','1.2.12','published-source');
+ assert.deepEqual(value,{sourceVersion:'1.2.11',candidateVersion:'1.2.12',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.11/Linkflow-1.2.11-mac-arm64.zip',sha256:'1aa7b0e1a209b9421d58cd07d2d69c64bcac77ef6dcf6914d9dc6396b1f468e2',platform:'darwin',arch:'arm64',sourceArtifact:'published-release',originalPublishedUpdater:true,evidenceDirectory:'.evidence/release-1.2.12/native-probe'});
+ const rejected=spawnSync(process.execPath,[script,'--describe-plan','darwin','arm64','1.2.11','published-source'],{encoding:'utf8'});assert.notEqual(rejected.status,0);assert.match(rejected.stderr,/frozen for candidate 1\.2\.12/);
 });
 
 test('ASAR version proof invalidates cached headers when the installer replaces the same path',async()=>{
