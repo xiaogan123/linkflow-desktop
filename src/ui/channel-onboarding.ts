@@ -5,7 +5,7 @@ export type ChannelOnboardingKind='no_signup'|'ai_account'|'wallet'|'existing_ac
 export type ChannelOnboardingFilter='all'|ChannelOnboardingKind;
 export type ChannelDirectoryFilters={automation:ChannelAutomationFilter;onboarding:ChannelOnboardingFilter;freeOnly:boolean;category:'all'|Category;siteVisible:boolean};
 
-type OnboardingDefinition={kind:Exclude<ChannelOnboardingKind,'unknown'>;setup:string;aliases?:readonly string[]};
+type OnboardingDefinition={kind:ChannelOnboardingKind;setup:string;aliases?:readonly string[];verification?:{checkedAt:string;sourceUrl:string}};
 
 export const channelOnboardingOptions:ReadonlyArray<{value:ChannelOnboardingFilter;label:string}>=[
   {value:'all',label:'全部'},
@@ -28,6 +28,30 @@ const labelByKind:Record<ChannelOnboardingKind,string>={
 // an automatic publisher capability, enable a disabled channel, or prove that
 // a candidate can be used for a particular site.
 const onboardingById:Record<string,OnboardingDefinition>={
+  "pinterest":{"kind":"existing_account","setup":"本人登录并按提示完成邮箱验证；商业用途需商业账号，本工具保持停用","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.pinterest.com/en/business/article/get-a-business-account"}},
+  "linkedin-company":{"kind":"existing_account","setup":"本人用真实个人账号登录；有权代表组织并取得主页超级管理员权限后维护资料","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://www.linkedin.com/help/linkedin/answer/a545752"}},
+  "bluesky-domain":{"kind":"existing_account","setup":"本人登录已有 Bluesky 账号，并用自有域名完成 DNS 或 HTTPS 验证；仅身份参考，保持停用","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://bsky.social/about/blog/4-28-2023-domain-handle-tutorial"}},
+  "linkedin-articles":{"kind":"existing_account","setup":"本人用真实身份登录并验证邮箱；个人或有权限的主页管理员人工发布专业文章","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://www.linkedin.com/help/linkedin/answer/a1340200/"}},
+  "youtube-channel":{"kind":"existing_account","setup":"本人用 Google 账号登录并选择有管理权限的真实频道；按提示完成验证，资料链接由本人维护","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://support.google.com/youtube/answer/1646861?hl=en"}},
+  "x-profile":{"kind":"existing_account","setup":"本人登录并按提示完成邮箱或手机验证；人工维护真实资料的网站字段，未接自动化","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.x.com/en/using-x/create-x-account"}},
+  "tradingview-profile":{"kind":"existing_account","setup":"本人登录并完成账号验证；状态栏需付费方案，签名需 Premium 或更高方案，当前人工维护","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://www.tradingview.com/privacy-policy/"}},
+  "vocus":{"kind":"existing_account","setup":"本人登录并完成邮箱及手机验证（海外可申请身份审核）；本工具保持停用","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://vocus.cc/help_center/ru-he-zhu-ce-vocus-zhang-hao-bing-wan-cheng-zhang-hao-yan-zheng"}},
+  "publish0x":{"kind":"existing_account","setup":"本人登录并申请作者资格；平台禁止 AI 写稿及自动发布，本工具保持停用","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://www.publish0x.com/page/rules"}},
+  "flipboard-publisher":{"kind":"existing_account","setup":"本人登录 Flipboard 并完善出版者资料；当前人工维护，RSS 接入另需审核","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://about.flipboard.com/forpublishers/"}},
+  "gravatar":{"kind":"existing_account","setup":"本人通过 WordPress.com 登录并验证邮箱；仅人工维护真实资料和网站链接","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://support.gravatar.com/basic/account-signup/"}},
+  "linktree":{"kind":"existing_account","setup":"本人登录 Linktree 并验证邮箱；当前人工维护，官方 AI 接入需 Premium 与本人授权","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://linktr.ee/help/en/articles/5434134-creating-your-linktree"}},
+  "ghost-pro":{"kind":"existing_account","setup":"本人登录 Ghost(Pro) 并准备付费出版物；当前人工处理，发布 API 需支持集成的方案","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://ghost.org/integrations/custom-integrations/"}},
+  "beehiiv":{"kind":"existing_account","setup":"本人登录 beehiiv 并完成账户验证；当前人工处理，API 另需本人身份核验","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://www.beehiiv.com/support/article/13091918395799-how-to-access-your-publication-id-or-api-keys"}},
+  "kit-newsletter":{"kind":"existing_account","setup":"本人登录 Kit 并设置公开 Newsletter Site；本工具尚未接入发布 API","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.kit.com/en/articles/14005977-how-to-set-up-your-new-kit-account-a-complete-checklist"}},
+  "product-hunt":{"kind":"existing_account","setup":"本人使用个人账号登录并完成引导与发布资格；真实产品由本人提交","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.producthunt.com/en/articles/479557-how-to-post-a-product"}},
+  "alternativeto":{"kind":"existing_account","setup":"本人登录 AlternativeTo 并验证邮箱；提交真实应用后等待编辑审核","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://alternativeto.net/faq/"}},
+  "saashub":{"kind":"unknown","setup":"公开入口可填写产品网址；账号及最终提交条件待核实，当前仅人工处理","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://www.saashub.com/site/product_verification"}},
+  "hashnode":{"kind":"existing_account","setup":"本人登录 Hashnode 并创建或选择出版物；当前仅人工操作，API 写入另需 Pro","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://hashnode.com/onboard"}},
+  "medium":{"kind":"existing_account","setup":"本人通过邮箱验证或社交账号登录 Medium；本渠道仍停用，未接自动发布","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.medium.com/hc/en-us/articles/115004915268-Sign-in-or-sign-up-to-Medium"}},
+  "substack":{"kind":"existing_account","setup":"本人登录 Substack 并完善真实出版物；主页链接由本人维护，未接无人值守","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://support.substack.com/hc/en-us/articles/360037825111-How-do-I-create-a-publication-on-Substack"}},
+  "dev":{"kind":"existing_account","setup":"本人登录 DEV 账号并人工准备技术文章；本渠道仍停用，未接自动发布","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://dev.to/new"}},
+  "hackernoon":{"kind":"existing_account","setup":"本人登录 HackerNoon 并完善作者资料；人工投稿交编辑审核，品牌稿使用品牌身份","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.hackernoon.com/using-hacker-noon"}},
+  "tumblr":{"kind":"existing_account","setup":"本人登录 Tumblr 并选择本人博客；邮箱注册需验证邮箱，当前仅人工操作","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://help.tumblr.com/knowledge-base/getting-started-on-tumblr/"}},
   'lucid-page':{kind:'no_signup',setup:'无需账号；直接创建公开页面，后续修改或删除需本人认领'},
   rentry:{kind:'no_signup',setup:'无需账号；发布时生成编辑凭据并加密保存在本机'},
   betterthanhtml:{kind:'no_signup',setup:'无需账号即可发布公开全文；不承诺编辑或删除'},
@@ -75,6 +99,6 @@ export function channelOnboardingView(channel:Channel){
   const kind=definition?.kind??'unknown';
   const setup=definition?.setup??(channel.provenance==='custom'
     ?'用户添加的渠道；首次接入方式待核实'
-    :'尚未确认可复用的首次接入方式；请按渠道详情人工准备');
-  return {kind,label:labelByKind[kind],setup,aliases:[...(definition?.aliases??[])]};
+    :'尚未确认首次接入方式；核实完成前不计入全自动渠道');
+  return {kind,label:labelByKind[kind],setup,aliases:[...(definition?.aliases??[])],verification:definition?.verification};
 }

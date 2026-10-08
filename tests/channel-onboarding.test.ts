@@ -80,3 +80,42 @@ test('a setup filter never enables a disabled catalog candidate',()=>{
   assert.equal(channelAutomationKind(disabledBetterThanHtml),'disabled');
   assert.equal(channelMatchesAutomation(disabledBetterThanHtml,'ai_auto'),false);
 });
+
+test('verified account setup does not turn manual or disabled publishers into automatic channels',()=>{
+  for(const id of ['hashnode','medium','substack','dev','hackernoon','tumblr','ghost-pro','beehiiv','kit-newsletter','product-hunt','alternativeto','vocus','publish0x','flipboard-publisher','gravatar','linktree','linkedin-articles','youtube-channel','x-profile','tradingview-profile','pinterest','linkedin-company','bluesky-domain']){
+    const item=channel(id),view=channelOnboardingView(item);
+    assert.equal(view.kind,'existing_account',id);
+    assert.equal(channelMatchesOnboarding(item,'unknown'),false,id);
+    assert.equal(channelMatchesAutomation(item,'ai_auto'),false,id);
+    assert.equal(channelMatchesAutomation(item,'connected_auto'),false,id);
+    assert.equal(channelAutomationKind(item),['medium','dev','vocus','publish0x','pinterest','bluesky-domain'].includes(id)?'disabled':'manual',id);
+    assert.equal(view.verification?.checkedAt,'2026-10-09',id);
+    assert.ok(view.verification?.sourceUrl.startsWith('https://'),id);
+    // Checking the login step must not refresh the separate content-policy date.
+    assert.notEqual(item.checkedAt,view.verification?.checkedAt,id);
+  }
+});
+
+test('user-added copies cannot inherit built-in onboarding evidence',()=>{
+  const verified=channel('medium');
+  assert.ok(channelOnboardingView(verified).verification);
+  for(const provenance of ['custom',undefined] as const){
+    const view=channelOnboardingView({...verified,provenance});
+    assert.equal(view.kind,'unknown');
+    assert.equal(view.verification,undefined);
+  }
+});
+
+
+test('partially checked setup preserves a concrete gap and remains unknown',()=>{
+  const item=channel('saashub'),view=channelOnboardingView(item);
+  assert.equal(view.kind,'unknown');
+  assert.equal(channelMatchesOnboarding(item,'unknown'),true);
+  assert.equal(channelAutomationKind(item),'manual');
+  assert.equal(channelMatchesAutomation(item,'ai_auto'),false);
+  assert.equal(channelMatchesAutomation(item,'connected_auto'),false);
+  assert.match(view.setup,/账号及最终提交条件待核实/);
+  assert.ok(view.verification?.sourceUrl.startsWith('https://www.saashub.com/'));
+  assert.notEqual(item.checkedAt,view.verification?.checkedAt);
+  assert.equal(channelOnboardingView({...item,provenance:'custom'}).verification,undefined);
+});

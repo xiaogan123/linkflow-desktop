@@ -110,7 +110,7 @@ export class UpdateManager {
   status():UpdateState{return structuredClone(this.current)}
   private set(next:UpdateState):UpdateState{this.current=next;try{this.options.emit?.(this.status())}catch{/* Notification failures must not roll back committed update state. */}return this.status()}
   private targetState(phase:UpdateState['phase'],extra:Partial<UpdateState>={}):UpdateState{
-    const manifest=this.verified?.manifest;return {phase,currentVersion:this.options.currentVersion,targetVersion:manifest?.version,releaseNotes:manifest?.releaseNotes,publishedAt:manifest?.publishedAt,...extra};
+    const manifest=this.verified?.manifest;return {phase,currentVersion:this.options.currentVersion,targetVersion:manifest?.version,releaseNotes:manifest?.releaseNotes,publishedAt:manifest?.publishedAt,checkedAt:this.current.targetVersion===manifest?.version?this.current.checkedAt:undefined,...extra};
   }
   private supported():boolean{
     if(!this.options.packaged){this.set({phase:'unsupported',currentVersion:this.options.currentVersion,error:'更新安装仅在已安装的正式客户端中可用'});return false}

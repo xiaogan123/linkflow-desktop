@@ -14,7 +14,7 @@ const phaseCopy:Record<UpdatePhase,{label:string;title:string;body:string;tone:s
   downloading:{label:'正在下载',title:'正在下载更新',body:'可以继续查看页面，也可以取消本次下载。',tone:'blue'},
   prepared:{label:'准备安装',title:'更新已下载并验证',body:'结束正在运行的任务后，即可安装并重启。',tone:'green'},
   installing:{label:'正在安装',title:'正在交接安装',body:'应用将退出、完成替换并重新启动。',tone:'blue'},
-  installed:{label:'已安装',title:'更新已安装',body:'应用已完成本次版本更新。',tone:'green'},
+  installed:{label:'已安装',title:'更新已安装',body:'应用已完成本次版本更新；仍需再次检查是否有更新版本。',tone:'green'},
   'up-to-date':{label:'已是最新版',title:'当前版本可继续使用',body:'最近一次检查没有发现更高版本。',tone:'green'},
   unsupported:{label:'暂不支持',title:'此平台无法自动更新',body:'当前系统或架构没有匹配的可信安装包。',tone:'amber'},
   failed:{label:'更新失败',title:'这次更新没有完成',body:'查看错误后可以重试，或重新检查可用版本。',tone:'red'}
@@ -71,6 +71,8 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
   const busy=command!==null||activePhases.has(state.phase);
   const versionSummary=state.recoveryPending
     ?{label:'上次更新版本',value:state.targetVersion??'尚未记录'}
+    :state.phase==='installed'
+    ?{label:'本次安装版本',value:state.targetVersion??state.currentVersion}
     :{label:'最新版本',value:state.targetVersion??(state.phase==='up-to-date'?state.currentVersion:'尚未获取')};
   const retry=()=>run(lastCommand==='app:install-update'?'app:install-update':state.targetVersion?'app:download-update':'app:check-update');
 

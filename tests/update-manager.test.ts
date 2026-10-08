@@ -254,3 +254,25 @@ test('native extraction failure keeps old recovery data and reports a sanitized 
   assert.equal((await lstat(recovery.job.errorPath)).isFile(),true);assert.equal((await lstat(recovery.backupPath)).isDirectory(),true);
  }finally{await rm(directory,{recursive:true,force:true})}
 });
+
+
+test('keeps the verified check time through download without inventing a new check on restart',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-update-check-time-'));
+ try{
+  const data=fixture('1.2.0',Buffer.from('synthetic update'));
+  const checkedAt='2026-10-09T01:00:00.000Z';
+  const emitted:Array<{phase:string;checkedAt?:string}>=[];
+  const config={...options(directory,data),now:()=>new Date(checkedAt)};
+  const manager=new UpdateManager({...config,emit:state=>emitted.push(state)});
+  await manager.initialize();
+  assert.equal((await manager.check()).checkedAt,checkedAt);
+  const downloaded=await manager.download();
+  assert.equal(downloaded.phase,'prepared');
+  assert.equal(downloaded.checkedAt,checkedAt);
+  assert.ok(emitted.some(state=>state.phase==='downloading'));
+  assert.ok(emitted.filter(state=>state.phase==='downloading').every(state=>state.checkedAt===checkedAt));
+  const restored=await new UpdateManager(config).initialize();
+  assert.equal(restored.phase,'prepared');
+  assert.equal(restored.checkedAt,undefined,'a cached package is not a fresh online check');
+ }finally{await rm(directory,{recursive:true,force:true})}
+});

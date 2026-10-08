@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {maintainWaitingTasks,recoverWithAlternativeTopic,resumeDeferredTask} from '../src/main/task-recovery';
-import {defaultSettings} from '../src/main/store';
+import {defaultSettings,emptyState} from '../src/main/store';
+import {validateBackup} from '../src/main/backup-validation';
 import {CHANNELS} from '../src/integrations/catalog';
 import type {Site,Task} from '../src/shared/types';
 const stamp='2026-10-01T00:00:00.000Z',now=new Date('2026-10-03T01:00:00.000Z');
@@ -9,6 +10,48 @@ const site:Site={id:'s',url:'https://example.com',domain:'example.com',name:'Exa
 const channel=CHANNELS.find(c=>c.id==='telegraph')!;
 const settings={...defaultSettings(),autoRun:true};
 function task(extra:Partial<Task>={}):Task{return {id:'t',siteId:'s',channelId:channel.id,sourceDomain:channel.domain,status:'needs_input',checkpoint:'article_review',createdAt:stamp,updatedAt:stamp,scheduledAt:stamp,waitingSince:stamp,attempts:0,message:'等待审稿',draft:{title:'A',description:'B',body:'Original'},cost:{aiCalls:2},...extra}}
+test('an imported remote Blogger draft without a submission timestamp cannot switch topic',()=>{
+ const state=emptyState(),siteId='11111111-1111-4111-8111-111111111111';
+ state.settings={...settings,articleReviewMode:'ai'};
+ state.sites=[{...site,id:siteId,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp}]}];
+ state.tasks=[task({id:'22222222-2222-4222-8222-222222222222',siteId,channelId:'blogger',sourceDomain:'blogspot.com',status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',
+  blogger:{blogId:'123456',postId:'654321',operationId:'synthetic-operation',contentHash:'a'.repeat(64),stage:'draft'},
+  articleReview:{status:'failed',reason:'Needs correction',reasonCode:'content_rejected',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}
+ })];
+ const restored=validateBackup({state,secrets:{}}).state,before=structuredClone(restored.tasks[0]);
+ assert.equal(before.submittedAt,undefined);
+ maintainWaitingTasks(restored.tasks,restored.sites,CHANNELS,restored.settings,now);
+ assert.deepEqual(restored.tasks[0],before);
+});
+
+test('publisher receipts alone preserve remote work through timeout, recovery and deferred resume',()=>{
+ const receipts:Partial<Task>[]=[
+  {channelId:'blogger',blogger:{blogId:'123456',postId:'654321',operationId:'synthetic-operation',contentHash:'a'.repeat(64),stage:'draft'}},
+  {channelId:'paragraph',paragraph:{publicationId:'fixture-publication',slug:'fixture-post',contentHash:'a'.repeat(64),stage:'draft',postId:'fixture-post'}},
+  {channelId:'bluesky',bluesky:{did:'did:plc:abcdefghijklmnopqrstuvwx',rkey:'fixture-post',recordHash:'a'.repeat(64),recordCreatedAt:stamp,stage:'creating'}},
+  {channelId:'nostr',nostr:{pubkey:'a'.repeat(64),eventId:'b'.repeat(64),identifier:'fixture-post',contentHash:'c'.repeat(64),createdAt:Math.floor(Date.parse(stamp)/1000),stage:'submitting'}}
+ ];
+ for(const saved of receipts){
+  const receipt={sourceDomain:CHANNELS.find(c=>c.id===saved.channelId)!.domain,...saved};
+  const waiting=task(receipt),temporary=task({...receipt,status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp});
+  for(const current of [waiting,temporary]){
+   const before=structuredClone(current);
+   maintainWaitingTasks([current],[site],CHANNELS,settings,now);
+   assert.deepEqual(current,before,receipt.channelId);
+  }
+  const deferred=task({...receipt,status:'skipped',deferredAt:stamp}),before=structuredClone(deferred);
+  assert.throws(()=>resumeDeferredTask([deferred],deferred.id,settings,now),/外部提交/,receipt.channelId);
+  assert.deepEqual(deferred,before);
+  if(receipt.blogger||receipt.paragraph){
+   const confirmed=task({...receipt,status:'failed',checkpoint:'system_wait',submittedAt:stamp,recoveryEligible:true,nextCheckAt:stamp}),originalDraft=structuredClone(confirmed.draft);
+   maintainWaitingTasks([confirmed],[site],CHANNELS,settings,now);
+   assert.equal(confirmed.status,'queued');assert.equal(confirmed.recoveryAttempts,1);
+   assert.deepEqual(confirmed.draft,originalDraft);assert.equal(confirmed.cost?.aiCalls,2);
+   assert.deepEqual(confirmed.blogger,receipt.blogger);assert.deepEqual(confirmed.paragraph,receipt.paragraph);
+  }
+ }
+});
+
 test('48h manual waits defer original draft while external/unknown/system states stay unchanged',()=>{
  const waiting=task(),submitted=task({id:'submitted',submittedAt:stamp}),registration=task({id:'registration',checkpoint:'account_registration_submitted'}),system=task({id:'system',checkpoint:'system_vault_unavailable'}),policy=task({id:'policy',checkpoint:'channel_wait'});
  const tasks=[waiting,submitted,registration,system,policy];maintainWaitingTasks(tasks,[site],[channel],settings,now);

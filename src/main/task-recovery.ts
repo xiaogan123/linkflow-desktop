@@ -6,8 +6,8 @@ import {isArticleTopicUrl} from '../shared/topic-policy';
 export const TASK_AI_BUDGET=6;
 const TEMPORARY=new Set(['ai_unavailable','evidence_fetch_failed','format_invalid','evidence_invalid']);
 const ALTERNATIVE_TOPIC_CODES=new Set<ArticleReviewReasonCode>(['content_rejected','evidence_invalid','invalid_topic']);
-/** A time limit is not permission to repeat an external or unknown operation. */
-export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.betterthanhtml)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
+/** A receipt still protects remote work when an imported task lacks its submission timestamp. */
+export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.blogger||task.bluesky||task.paragraph||task.nostr||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.betterthanhtml)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
 
 /** Registration uncertainty stays pinned, but is not an attempted article publication. */
 export function isPendingPublisherRegistration(task:Task):boolean{
