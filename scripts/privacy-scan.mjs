@@ -1,4 +1,5 @@
 import {hasPersonalMacPath} from './lib/privacy-paths.mjs';
+import {hasPrivateKeyMaterial} from './lib/privacy-keys.mjs';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {readFile,readdir,realpath,readlink,writeFile,lstat} from 'node:fs/promises';
@@ -14,7 +15,7 @@ const forbiddenPath=/(?:^|\/)(?:\.evidence|\.test-data|\.git|memory|界面设计
 const rules=[
  ['personal-mac-path',{test:hasPersonalMacPath}],
  ['personal-windows-path',/[A-Z]:\\(?:\\)?Users\\(?:\\)?(?!runneradmin\\)[a-z0-9._-]+\\/i],
- ['private-key',new RegExp('-----BEGIN '+'(?:RSA |EC |OPENSSH )?PRIVATE KEY-----')],
+ ['private-key',{test:hasPrivateKeyMaterial}],
  ['github-token',/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/],
  ['service-token',/\bsk-(?:proj-)?[A-Za-z0-9_-]{30,}\b/],
  ['cloud-access-key',/\bAKIA[0-9A-Z]{16}\b/],

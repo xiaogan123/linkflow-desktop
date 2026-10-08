@@ -36,7 +36,16 @@ for(const channelId of ['telegraph','github-gist'])test(`${channelId} retains a 
   }finally{store.close()}
 });
 
-for(const channelId of ['vocus','publish0x'])test(`${channelId} refuses full-draft AI generation even while its record exists`,async()=>{
-  const store=new Store(':memory:');store.update(s=>{s.sites=[{...site,category:'content'}];s.tasks=[task(channelId)]});const controller=new Controller(store,vault,'fixture');
-  try{await assert.rejects(controller.generateDraft(store.read().tasks[0].id),/纯人工原创/);assert.equal(store.read().tasks[0].draft?.body,body)}finally{store.close()}
+for(const channelId of ['vocus','publish0x','show-hn'])test(`${channelId} refuses full-draft AI generation even while its record exists`,async()=>{
+  let aiCalls=0,publicReads=0;
+  const store=new Store(':memory:');store.update(s=>{s.sites=[{...site,category:'software',qualifications:{software:'https://example.com/product'}}];s.tasks=[{...task(channelId),topicUrl:'https://example.com/guide'}]});
+  const controller=new Controller(store,vault,'fixture',{aiFactory:()=>({async json<T>(){aiCalls++;return {} as T}}),readTopicEvidence:async()=>{publicReads++;throw Error('topic evidence must not run')},collectArticleEvidence:async()=>{publicReads++;throw Error('public evidence must not run')}});
+  const before=store.read().tasks[0];
+  try{await assert.rejects(controller.generateDraft(before.id),/纯人工原创/);assert.deepEqual(store.read().tasks[0],before);assert.equal(aiCalls,0);assert.equal(publicReads,0)}finally{store.close()}
+});
+
+for(const [channelId,expected] of [['show-hn',/本人手写/],['indie-hackers',/人工准备和提交/]] as const)test(`${channelId} manual handoff describes its available preparation path`,async()=>{
+  const store=new Store(':memory:');store.update(s=>{s.settings.autoRun=true;s.sites=[{...site,category:'software',qualifications:{software:'https://example.com/product'}}];s.tasks=[{...task(channelId),draft:undefined}]});
+  const controller=new Controller(store,vault,'fixture');
+  try{await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.status,'needs_input');assert.match(saved.message,expected);if(channelId==='show-hn')assert.doesNotMatch(saved.message,/生成并编辑材料/)}finally{store.close()}
 });

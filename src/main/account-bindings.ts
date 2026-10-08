@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {Account,Channel,SiteAccountBinding,Task} from '../shared/types';
 import type {State} from './store';
+import {validProseAccount} from '../integrations/prose';
 
 export type ChannelExecutionReadiness='ready'|'autocreate'|'handoff_required'|'manual';
 
@@ -19,7 +20,7 @@ function profileAccountConflict(state:State,accountId:string,siteId:string,chann
 function candidateAccounts(state:State,siteId:string,channelId:string):Account[]{
   const site=state.sites.find(item=>item.id===siteId);if(!site||['nostr','hive'].includes(channelId))return [];
   if(channelId==='wordpress-com'||channelId==='leaflet')return state.accounts.filter(account=>account.channelId===channelId);
-  if(['paper-wf','mataroa','verbose','rentry'].includes(channelId))return state.accounts.filter(account=>account.channelId===channelId&&!(channelId==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))&&!(channelId==='verbose'&&account.verboseExcludedSiteIds?.includes(siteId))&&!(channelId==='rentry'&&account.rentryExcludedSiteIds?.includes(siteId)));
+  if(['paper-wf','mataroa','verbose','prose','rentry'].includes(channelId))return state.accounts.filter(account=>account.channelId===channelId&&!(channelId==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))&&!(channelId==='verbose'&&account.verboseExcludedSiteIds?.includes(siteId))&&!(channelId==='rentry'&&account.rentryExcludedSiteIds?.includes(siteId)));
   return state.accounts.filter(account=>account.channelId===channelId&&(channelId==='github-gist'||lower(account.email)===lower(site.publicEmail||site.email)));
 }
 
@@ -30,7 +31,7 @@ export function accountForSiteChannel(state:State,siteId:string,channelId:string
   if(binding){const account=state.accounts.find(account=>account.id===binding.accountId);return channelId==='mataroa'&&account?.mataroaExcludedSiteIds?.includes(siteId)||channelId==='verbose'&&account?.verboseExcludedSiteIds?.includes(siteId)||channelId==='rentry'&&account?.rentryExcludedSiteIds?.includes(siteId)?undefined:account;}
   if(channelId==='wordpress-com'||channelId==='leaflet')return;
   const candidates=candidateAccounts(state,siteId,channelId);
-  if(['paper-wf','mataroa','verbose','rentry'].includes(channelId))return candidates.length===1?candidates[0]:undefined;
+  if(['paper-wf','mataroa','verbose','prose','rentry'].includes(channelId))return candidates.length===1?candidates[0]:undefined;
   const usableCandidates=['telegraph','github-gist','nostr'].includes(channelId)?candidates.filter(account=>account.credentialKind==='api_token'):candidates;
   return usableCandidates.find(account=>account.status==='registered'&&account.hasPassword)
     ??usableCandidates.find(account=>account.status==='unknown'&&account.hasPassword)
@@ -113,6 +114,11 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
     if(['paper-wf','mataroa','verbose','rentry'].includes(channel.id)&&!accountId&&!binding&&state.accounts.every(item=>item.channelId!==channel.id))return {kind:'autocreate'};
     return {kind:'handoff_required',account};
   }
+  if(channel.id==='prose'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='prose');
+    const account=accountForSiteChannel(state,siteId,'prose',accountId);
+    return {kind:binding&&account&&binding.accountId===account.id&&validProseAccount(account)?'ready':'handoff_required',account};
+  }
   if(['bluesky','paragraph'].includes(channel.id)){
     const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
     const account=state.accounts.find(item=>item.id===(accountId??binding?.accountId)&&item.channelId===channel.id);
@@ -156,6 +162,7 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='verbose'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='verbose'&&task.checkpoint==='verbose_account_create_pending'&&task.accountId&&task.accountId!==accountId))throw Error('该网站的 Verbose 首次注册仍归属原身份，不能改绑账号。');
   if(['paragraph','nostr'].includes(channel.id)&&state.tasks.some(task=>task.siteId===siteId&&task.channelId===channel.id&&!task.firstLiveAt&&!task.publicUrl&&(task.submittedAt||task.paragraph||task.nostr)&&task.accountId!==accountId))throw Error('该网站有发布结果待核验，保留原身份处理完成后再更换。');
   if(['paper-wf','hive','mataroa','verbose','rentry'].includes(channel.id)&&state.tasks.some(task=>task.siteId===siteId&&task.channelId===channel.id&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.paper||task.hive||task.mataroa||task.verbose||task.rentry)&&task.accountId!==accountId))throw Error('该网站有发布结果待核验，保留原身份处理完成后再更换。');
+  if(channel.id==='prose'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='prose'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.prose)&&task.accountId!==accountId))throw Error('该网站有 Prose 发布结果待核验，必须保留原出版身份。');
   if(channel.id==='wordpress-com'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='wordpress-com'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.wordpress)&&task.accountId!==accountId))throw Error('该网站有 WordPress.com 发布结果待核验，必须保留原博客身份。');
   if(channel.id==='leaflet'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='leaflet'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.leaflet)&&task.accountId!==accountId))throw Error('该网站有 Leaflet 发布结果待核验，必须保留原 DID 身份。');
   if(channel.kind==='profile'){
@@ -164,6 +171,7 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='paragraph'){if(account.credentialKind!=='api_token'||account.status!=='registered'||!account.hasPassword||!account.publicationUrl)throw Error('请先验证本人 Paragraph 出版物连接');const url=new URL(account.publicationUrl);if(url.origin!=='https://paragraph.com'||!/^\/@[^/]+\/?$/.test(url.pathname)||url.search||url.hash)throw Error('出版物地址无效');site.paragraph={publicationId:account.username,url:url.toString()};}
   if(channel.id==='wordpress-com'&&!validWordPressAccount(account))throw Error('请先验证本人 WordPress.com 免费托管博客授权');
   if(channel.id==='leaflet'&&!validLeafletAccount(account))throw Error('请先为 Leaflet 单独验证本人 bsky.social 账号与应用专用密码');
+  if(channel.id==='prose'&&!validProseAccount(account))throw Error('请先验证本人 Prose 出版身份与专用 SSH 密钥');
   if(['paper-wf','hive','mataroa','verbose','rentry'].includes(channel.id)&&!validPublisherIdentity(account,channel.id as 'paper-wf'|'hive'|'mataroa'|'verbose'|'rentry'))throw Error(channel.id==='rentry'?'Rentry 本机发布密钥不可用':'请先验证本人出版账号及其公开地址');
   if(channel.id==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))account.mataroaExcludedSiteIds=account.mataroaExcludedSiteIds.filter(id=>id!==siteId);
   if(channel.id==='verbose'&&account.verboseExcludedSiteIds?.includes(siteId))account.verboseExcludedSiteIds=account.verboseExcludedSiteIds.filter(id=>id!==siteId);
@@ -180,6 +188,7 @@ export function unbindAccount(state:State,accountId:string,siteId:string,channel
   const account=state.accounts.find(item=>item.id===accountId&&item.channelId===channelId);
   if(channelId==='wordpress-com'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.wordpress)))throw Error('该网站有 WordPress.com 发布结果待核验，必须保留原博客身份。');
   if(channelId==='leaflet'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.leaflet)))throw Error('该网站有 Leaflet 发布结果待核验，必须保留原 DID 身份。');
+  if(channelId==='prose'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.prose)))throw Error('该网站有 Prose 发布结果待核验，必须保留原出版身份。');
   if(channelId==='mataroa'&&account&&state.sites.some(site=>site.id===siteId))account.mataroaExcludedSiteIds=[...new Set([...(account.mataroaExcludedSiteIds??[]),siteId])];
   if(channelId==='verbose'&&account&&state.sites.some(site=>site.id===siteId))account.verboseExcludedSiteIds=[...new Set([...(account.verboseExcludedSiteIds??[]),siteId])];
   if(channelId==='rentry'&&account&&state.sites.some(site=>site.id===siteId))account.rentryExcludedSiteIds=[...new Set([...(account.rentryExcludedSiteIds??[]),siteId])];

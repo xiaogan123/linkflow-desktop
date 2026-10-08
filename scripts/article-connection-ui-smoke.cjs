@@ -20,18 +20,24 @@ if(!process.versions.electron){
           const channel=(id,name,domain)=>({id,name,domain,url:'https://'+domain,submitUrl:'https://'+domain+'/new',categories:['general'],languages:['zh'],kind:'article',emailRequired:false,accountRequired:true,articleRequired:true,free:'yes',freeNote:'fixture',automation:'api',quality:'A',qualityReason:'fixture',rulesUrl:'https://'+domain+'/rules',checkedAt:now,notes:'',allowedHosts:[domain],enabled:true});
           const initial={
             sites:[site('site-1','one.example'),site('site-2','two.example')],
-            tasks:[],channels:[channel('mataroa','Mataroa','mataroa.blog'),channel('paper-wf','Paper.wf','paper.wf'),channel('hive','Hive','hive.blog'),channel('betterthanhtml','Better Than HTML','betterthanhtml.com'),{...channel('telegraph','Telegraph','telegra.ph'),enabled:false}],
+            tasks:[],channels:[channel('mataroa','Mataroa','mataroa.blog'),channel('paper-wf','Paper.wf','paper.wf'),channel('hive','Hive','hive.blog'),{...channel('prose','Prose','prose.sh'),enabled:false},channel('betterthanhtml','Better Than HTML','betterthanhtml.com'),{...channel('telegraph','Telegraph','telegra.ph'),enabled:false}],
             accounts:[],accountBindings:[],mailboxes:[],events:[],
             settings:{provider:'codex',codexPath:'codex',model:'',apiBase:'',hasApiKey:false,autoRun:false,articleReviewMode:'manual',launchAtLogin:false,notify:true,timezone:'Asia/Singapore',maxAttempts:3,maxSteps:30,dailyAiLimit:50,channelOverrides:{},mail:{host:'',port:993,user:'',secure:true,hasPassword:false}},
             runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:true,version:'fixture',platform:'darwin-arm64',dataPath:'fixture',aiCallsToday:0},
           };
-          const calls=[];
+          const calls=[];let proseCancelled=false;
           const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
           function Harness(){
             const [data,setData]=useState(initial);
             const [pending,setPending]=useState(false);
             window.linkflow={command:async(command,payload)=>{
               calls.push({command,payload});
+              if(command==='account:cancel-prose'){proseCancelled=true;return {cancelled:true}}
+              if(command==='account:connect-prose'){
+                proseCancelled=false;await pause(100);if(proseCancelled||payload.privateKey==='fixture-prose-fail')return undefined;
+                const account={id:'prose-fixture-account',channelId:'prose',email:'',username:'prose-author',displayName:'prose-author',publicationUrl:'https://prose-author.prose.sh/',createdAt:now,status:'needs_verification',hasPassword:true,credentialKind:'api_token',source:'imported',diagnostic:{code:'verification_required',message:'SSH 身份已只读验证；邀请资格未知，当前不会自动发布。',at:now,retryable:false}};
+                setData(current=>({...current,accounts:[account,...current.accounts.filter(item=>item.id!==account.id)],accountBindings:[...current.accountBindings.filter(item=>item.accountId!==account.id),...payload.siteIds.map(siteId=>({id:'prose-'+siteId,siteId,channelId:'prose',accountId:account.id,createdAt:now,updatedAt:now}))]}));return account;
+              }
               if(command==='account:connect-mataroa'||command==='account:connect-paper'||command==='account:connect-hive'){
                 await pause(100);
                 if(payload.credential==='fixture-fail')return undefined;
@@ -96,6 +102,10 @@ if(!process.versions.electron){
     assert(await evaluate(source),'input: '+label);
     await delay(35);
   };
+  const setTextarea=async(label,value)=>{
+    const source='(()=>{const input=[...document.querySelectorAll("textarea")].find(item=>item.getAttribute("aria-label")==='+JSON.stringify(label)+');if(!input||input.disabled)return false;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(input,'+JSON.stringify(value)+');input.dispatchEvent(new Event("input",{bubbles:true}));input.dispatchEvent(new Event("change",{bubbles:true}));return true})()';
+    assert(await evaluate(source),'textarea: '+label);await delay(35);
+  };
   const selectHive=async()=>{
     const source='(()=>{const select=document.querySelector("[role=dialog] select");if(!select)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"hive");select.dispatchEvent(new Event("change",{bubbles:true}));return true})()';
     assert(await evaluate(source),'Hive selector');
@@ -118,6 +128,7 @@ if(!process.versions.electron){
       await waitFor('document.body.innerText.includes("更多全文渠道")');
       check('anonymous BTH appears as no-setup and never offers an account connection button',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Better Than HTML");return !!row&&row.innerText.includes("无需首次连接")&&row.innerText.includes("无需注册账号")&&!row.querySelector("button")})()'));
       check('disabled Telegraph never claims automatic preparation or pending acceptance',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Telegraph");return !!row&&row.innerText.includes("当前停用")&&row.innerText.includes("当前不执行")&&!row.innerText.includes("随任务自动准备")&&!row.innerText.includes("待验收启用")})()'));
+      check('disabled Prose offers only read-only SSH identity validation and makes no publishability claim',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Prose");return !!row&&row.innerText.includes("SSH/SFTP")&&row.innerText.includes("邀请")&&row.innerText.includes("当前不会自动发布")&&row.querySelector("button")?.innerText.includes("只读验证")})()'));
       await clickText('更多全文渠道');
       await waitFor('document.querySelector("[role=dialog]")!==null');
       check('Paper drawer opens through the accounts page',await evaluate('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接全文发布渠道"'));
@@ -196,6 +207,17 @@ if(!process.versions.electron){
       await waitFor('document.querySelector("[role=dialog]")!==null');
       check('Mataroa repair keeps username and does not prefill secrets',(await inputInfo('Mataroa 账号名')).value==='mataroa-author'&&(await inputInfo('Mataroa 凭据')).value==='');
       await clickText('取消');
+      await clickText('只读验证 SSH 身份');
+      await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接 Prose SSH 身份"');
+      check('Prose explains dedicated SSH/SFTP read-only identity verification and unknown invitation eligibility',await evaluate('document.querySelector("[role=dialog]").innerText.includes("ssh-agent")&&document.querySelector("[role=dialog]").innerText.includes("不会创建账号")&&document.querySelector("[role=dialog]").innerText.includes("身份读取成功不代表")'));
+      check('Prose passphrase starts empty and masked',(await inputInfo('Prose 私钥口令')).type==='password'&&(await inputInfo('Prose 私钥口令')).value==='');
+      await setTextarea('Prose 专用 SSH 私钥','fixture-prose-fail');await setInput('Prose 私钥口令','fixture-prose-pass');await setCheckbox('one.example',true);
+      await clickText('只读验证并保存');await waitFor('document.querySelector("[role=alert]")?.innerText.includes("没有触发发布")');
+      check('Prose failure clears both secret inputs and never renders them',await evaluate('document.querySelector("textarea[aria-label=\\"Prose 专用 SSH 私钥\\"]").value===""')&&(await inputInfo('Prose 私钥口令')).value===''&&await noSecretInDom('fixture-prose-fail')&&await noSecretInDom('fixture-prose-pass'));
+      await setTextarea('Prose 专用 SSH 私钥','fixture-prose-cancel');await clickText('只读验证并保存');await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="取消验证")');await clickText('取消验证');await waitFor('document.querySelector("[role=dialog]")===null');
+      check('Prose cancellation dispatches a dedicated abort and removes the private key from DOM',await callCount('account:cancel-prose')===1&&await noSecretInDom('fixture-prose-cancel'));
+      await clickText('只读验证 SSH 身份');await setTextarea('Prose 专用 SSH 私钥','fixture-prose-success');await setCheckbox('two.example',true);await clickText('只读验证并保存');await waitFor('document.querySelector("[role=dialog]")===null&&document.body.innerText.includes("prose-author")');
+      check('Prose success remains waiting for invitation verification and does not expose a generic key reveal',await evaluate('document.body.innerText.includes("等待验证")&&document.body.innerText.includes("邀请资格未知")&&![...document.querySelectorAll("button")].some(item=>item.getAttribute("aria-label")==="查看 prose-author 的密码")')&&await noSecretInDom('fixture-prose-success'));
       const sanitized=await evaluate('window.__articleFixture.calls.map(item=>({command:item.command,keys:Object.keys(item.payload??{}).sort(),siteIds:item.payload?.siteIds,acknowledgePermanent:item.payload?.acknowledgePermanent}))');
       writeFileSync(join(evidence,'article-connection-ui-result.json'),JSON.stringify({passed:true,checks,calls:sanitized},null,2));
       console.log('ARTICLE CONNECTION UI PASSED: '+checks.length+' checks');

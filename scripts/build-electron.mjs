@@ -2,7 +2,10 @@ import {build} from 'esbuild';
 import {execFileSync} from 'node:child_process';
 import {chmodSync,mkdirSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
-await build({entryPoints:['src/main/main.ts'],outfile:'dist-electron/main.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',external:['electron'],sourcemap:false});
+import {portableSsh2Plugin} from './lib/ssh2-bundle.mjs';
+// ssh2 treats cpu-features as an optional accelerator and falls back when it is absent.
+// Keep that native addon outside the portable application bundle.
+await build({entryPoints:['src/main/main.ts'],outfile:'dist-electron/main.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',external:['electron','cpu-features'],plugins:[portableSsh2Plugin()],sourcemap:false});
 await build({entryPoints:['src/main/preload.ts'],outfile:'dist-electron/preload.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',external:['electron']});
 
 await build({entryPoints:['src/main/update-helper.ts'],outfile:'dist-electron/update-helper.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',external:['electron']});

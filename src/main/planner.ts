@@ -20,7 +20,7 @@ export {reservesSlot,reservesMonthlySlot} from '../shared/publication';
 export function recoverInterrupted(state:State,now=new Date()){
   for(const t of state.tasks){
     if(state.sites.find(site=>site.id===t.siteId)?.status==='paused')continue;
-    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
+    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
     const paidAiUncertain=t.status==='running'&&!uncertain&&((['article_review','article_repair_review'].includes(t.checkpoint??'')&&t.articleReview?.status==='running')||(!t.draft&&(t.cost?.aiCalls??0)>0));
     if(paidAiUncertain){
       const eligible=(t.cost?.aiCalls??0)<6&&(t.recoveryAttempts??0)<1;
@@ -99,8 +99,8 @@ function sharedDestinationKey(state:State,siteId:string,channelId:string,account
   }
   if(channelId==='paragraph'){const publicationId=receipt?.paragraph?.publicationId??state.sites.find(item=>item.id===siteId)?.paragraph?.publicationId;return publicationId?`paragraph:${publicationId}`:undefined;}
   if(channelId==='nostr'){const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;const pubkey=receipt?.nostr?.pubkey??state.accounts.find(item=>item.id===id&&item.channelId===channelId)?.username;return pubkey?`nostr:${pubkey}`:undefined;}
-  if(['paper-wf','hive','mataroa','verbose'].includes(channelId)){
-    const username=channelId==='paper-wf'?receipt?.paper?.username:channelId==='hive'?receipt?.hive?.author:channelId==='mataroa'?receipt?.mataroa?.username:receipt?.verbose?.username;
+  if(['paper-wf','hive','mataroa','verbose','prose'].includes(channelId)){
+    const username=channelId==='paper-wf'?receipt?.paper?.username:channelId==='hive'?receipt?.hive?.author:channelId==='mataroa'?receipt?.mataroa?.username:channelId==='verbose'?receipt?.verbose?.username:receipt?.prose?.username;
     const identity=username??accountForSiteChannel(state,siteId,channelId,accountId)?.username;
     return identity?`${channelId}:${identity.trim().toLowerCase()}`:undefined;
   }
@@ -179,7 +179,7 @@ function channelSourceDomain(site:Site,channel:Channel,account?:{publicationUrl?
 function untouchedAutomaticTask(task:Task):boolean{
   const cost=task.cost,spent=!!cost&&[cost.aiCalls,cost.durationMs,cost.inputTokens,cost.outputTokens,cost.amount].some(value=>(value??0)>0);
   return task.status==='queued'&&task.attempts===0&&!task.draft&&!spent&&!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.verifiedAt&&
-    !task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
+    !task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
     task.draftRevision===undefined&&!task.draftUpdatedAt&&!task.topicContentHash&&!task.articleAutomationVersion&&!task.articleRepairAttempts&&
     !task.articleAttempts?.length&&!task.topicSwitchAttempts&&!task.recoveryAttempts&&!task.recoveryEligible&&!task.reconcileAttempts&&!task.reconcileAfter&&
     !task.waitingSince&&!task.deferredAt&&!task.reviewUntil&&!task.reviewKind&&!task.lastCheckedAt&&!task.nextCheckAt&&!task.lostAt&&!task.linkRel&&!task.linkCheck&&
@@ -274,7 +274,7 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
     const site=state.sites.find(s=>s.id===t.siteId&&s.status==='ready');
     const planned=new Date(t.scheduledAt);
     const draftContinuation=hasRecoverablePublisherDraftReceipt(t);
-    if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.rentry||t.lucid||t.betterthanhtml)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
+    if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
     const requested=planned.getTime()<=now.getTime()&&monthKey(planned,state.settings.timezone)!==monthKey(now,state.settings.timezone)?now:planned;
     const actual=socialPublicationAt(state,site.id,t.channelId,earliestPublicationAt(site.id,t.channelId,state.tasks,requested,{excludeTaskId:t.id,includeReservations:false}),{excludeTaskId:t.id,includeReservations:false});
     const channel=channels.find(item=>item.id===t.channelId);

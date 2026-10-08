@@ -1,6 +1,6 @@
 import type {Account,Snapshot} from '../shared/types';
 
-export type ConnectionChannelId='mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'paper-wf'|'hive'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky';
+export type ConnectionChannelId='mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'paper-wf'|'hive'|'prose'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -22,6 +22,7 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'betterthanhtml',name:'Better Than HTML',format:'全文',firstStep:'无需注册账号；任务直接发布静态全文，尚未确认文章修改或删除接口。'},
   {id:'paper-wf',name:'Paper.wf',format:'全文',firstStep:'可连接已有账号；自动建号可能需要首次人机验证。'},
   {id:'hive',name:'Hive',format:'全文',firstStep:'连接本人账号的 posting key，再选择要使用的网站。'},
+  {id:'prose',name:'Prose',format:'全文',firstStep:'粘贴本人受邀身份的专用 SSH 私钥，只读核对身份后选择网站。'},
   {id:'nostr',name:'Nostr',format:'全文',firstStep:'任务需要时自动建立作者身份。'},
   {id:'github-gist',name:'GitHub Gist',format:'全文',firstStep:'连接已有 GitHub 账号的 Gists 令牌。'},
   {id:'telegraph',name:'Telegraph',format:'全文',firstStep:'任务需要时自动建立作者身份。'},
@@ -31,7 +32,7 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'paragraph',name:'Paragraph',format:'全文',firstStep:'连接已有 publication 的 API key，并选择网站。'},
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
-const needsBinding=new Set<ConnectionChannelId>(['hive','blogger','wordpress-com','leaflet','paragraph','bluesky']);
+const needsBinding=new Set<ConnectionChannelId>(['hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky']);
 const selfProvisioned=new Set<ConnectionChannelId>(['mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml']);
 
 function usable(account:Account,id:ConnectionChannelId){
@@ -60,7 +61,7 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
     let state:ConnectionState;
     let detail:string;
     if(!data.channels.find(channel=>channel.id===id&&channel.enabled)){
-      state='unavailable';detail=id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
+      state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
     }else if(selfProvisioned.has(id)&&!issue){state='no_setup';detail=firstStep;}
     else if(!accounts.length){state='first_connection';detail=firstStep;}
     else if(issue){

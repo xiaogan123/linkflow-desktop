@@ -64,12 +64,20 @@ test('legacy wait starts now and paused execution never ages or changes task sta
  maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.waitingSince,now.toISOString());assert.equal(t.status,'needs_input');
 });
 test('temporary recovery is once on same id with cumulative cost and cannot revive policy failure',()=>{
- const t=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:4}});
+ const t=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:4},topicUrl:'https://example.com/guide',accountId:'account'}),originalDraft=structuredClone(t.draft);
  maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'queued');assert.equal(t.recoveryAttempts,1);assert.equal(t.cost?.aiCalls,4);
- Object.assign(t,{status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp});maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'failed');
+ Object.assign(t,{status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,message:'临时故障，将在次日进行最后一轮有预算的恢复。'});maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'failed');assert.equal(t.nextCheckAt,undefined);assert.equal(t.recoveryEligible,false);assert.match(t.message,/不再安排自动恢复/);assert.equal(t.cost?.aiCalls,4);assert.deepEqual(t.draft,originalDraft);assert.equal(t.topicUrl,'https://example.com/guide');assert.equal(t.accountId,'account');
  const budget=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:6}});
  const policy=task({status:'failed',checkpoint:'channel_wait',nextCheckAt:stamp});
- maintainWaitingTasks([budget,policy],[site],[channel],settings,now);assert.equal(budget.status,'failed');assert.equal(policy.status,'failed');
+ maintainWaitingTasks([budget,policy],[site],[channel],settings,now);assert.equal(budget.status,'failed');assert.equal(budget.nextCheckAt,undefined);assert.equal(budget.recoveryEligible,false);assert.match(budget.message,/AI 处理次数上限/);assert.equal(budget.cost?.aiCalls,6);assert.equal(policy.status,'failed');
+});
+
+test('exhausted legacy recovery metadata is normalized without touching future eligible or external work',()=>{
+ const future='2026-10-04T01:00:00.000Z';
+ const eligible=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:future,cost:{aiCalls:5},message:'临时故障，等待冷却结束。'}),eligibleBefore=structuredClone(eligible);
+ const external=task({status:'failed',checkpoint:'system_wait',submittedAt:stamp,recoveryAttempts:1,recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:6},message:'外部提交结果待确认。'}),externalBefore=structuredClone(external);
+ maintainWaitingTasks([eligible,external],[site],[channel],settings,now);
+ assert.deepEqual(eligible,eligibleBefore);assert.deepEqual(external,externalBefore);
 });
 test('restoring deferred work preserves draft and budget, and refuses a competing task or unknown submission',()=>{
  const t=task({status:'skipped',deferredAt:stamp});resumeDeferredTask([t],t.id,settings,now);assert.equal(t.status,'queued');assert.equal(t.deferredAt,undefined);assert.equal(t.cost?.aiCalls,2);assert.equal(t.draft?.body,'Original');assert.equal(t.checkpoint,'article_review');

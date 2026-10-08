@@ -7,13 +7,13 @@ export const TASK_AI_BUDGET=6;
 const TEMPORARY=new Set(['ai_unavailable','evidence_fetch_failed','format_invalid','evidence_invalid']);
 const ALTERNATIVE_TOPIC_CODES=new Set<ArticleReviewReasonCode>(['content_rejected','evidence_invalid','invalid_topic']);
 /** A receipt still protects remote work when an imported task lacks its submission timestamp. */
-export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.blogger||task.bluesky||task.paragraph||task.nostr||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.betterthanhtml)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
+export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.blogger||task.bluesky||task.paragraph||task.nostr||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.betterthanhtml)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
 
 /** Registration uncertainty stays pinned, but is not an attempted article publication. */
 export function isPendingPublisherRegistration(task:Task):boolean{
   const checkpoint=task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':undefined;
   return !!checkpoint&&task.checkpoint===checkpoint&&!!task.accountId&&
-    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.betterthanhtml;
+    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml;
 }
 
 export type AlternativeTopicRecoveryResult=
@@ -85,6 +85,9 @@ export function maintainWaitingTasks(tasks:Task[],sites:Site[],channels:Channel[
     if(task.status==='failed'&&['channel_wait','system_wait','article_rejected','invalid_topic'].includes(task.checkpoint??'')&&task.articleReview?.status==='failed'){
       const alternative=recoverWithAlternativeTopic(task,site,channel,tasks,settings,now);
       if(alternative.kind==='switched'||alternative.kind==='blocked')continue;
+    }
+    if(!hasExternalAttempt(task)&&task.status==='failed'&&task.checkpoint==='system_wait'&&((task.recoveryAttempts??0)>=1||(task.cost?.aiCalls??0)>=TASK_AI_BUDGET)&&(task.nextCheckAt!==undefined||task.recoveryEligible===true)){
+      Object.assign(task,{recoveryEligible:false,nextCheckAt:undefined,updatedAt:stamp,message:'这项任务已达到自动重试或 AI 处理次数上限；稿件和进度已保留，不再安排自动恢复。'});continue;
     }
     // Exactly one additional recovery cycle, on the original task and cumulative budget.
     if(task.status==='failed'&&task.checkpoint==='system_wait'&&(TEMPORARY.has(task.articleReview?.reasonCode??'')||task.recoveryEligible===true)&&task.nextCheckAt&&Date.parse(task.nextCheckAt)<=now.getTime()&&(task.recoveryAttempts??0)<1&&(task.cost?.aiCalls??0)<TASK_AI_BUDGET){

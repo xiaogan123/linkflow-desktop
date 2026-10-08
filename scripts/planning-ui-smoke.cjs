@@ -164,6 +164,30 @@ if(!process.versions.electron){
     await clickText('查看网站');await waitFor('[...document.querySelectorAll(".banner.warning button")].some(button=>button.innerText==="重新分析")');
     check('analysis failure detail retains the reanalysis action',await evaluate('document.querySelector(".banner.warning").innerText.includes("网站暂时无法读取")'));
     await capture('actionable-analysis.png');
+
+    await clickText('返回总览');
+    const humanSites=[site('site-show-empty','show-empty.example','manual'),site('site-show-draft','show-draft.example','manual'),site('site-generic-manual','generic-manual.example','manual')];
+    const showChannel=channel('show-hn','Show HN','manual',{domain:'news.ycombinator.com',submitUrl:'https://news.ycombinator.com/submit',allowedHosts:['news.ycombinator.com'],kind:'community',articleRequired:false,requirements:['software']});
+    const genericManual=channel('manual-publication','Manual Publication','manual',{domain:'manual.example',allowedHosts:['manual.example'],requirements:[]});
+    const humanTasks=[
+      task('task-show-empty','site-show-empty','show-hn','needs_input',{draft:undefined,sourceDomain:'news.ycombinator.com',message:'等待本人撰写原创投稿文字。'}),
+      task('task-show-draft','site-show-draft','show-hn','needs_input',{sourceDomain:'news.ycombinator.com',message:'已保留本人草稿。'}),
+      task('task-generic-manual','site-generic-manual','manual-publication','needs_input',{draft:undefined,message:'可准备人工提交材料。'}),
+    ];
+    state={...state,sites:humanSites,tasks:humanTasks,channels:[showChannel,genericManual],accounts:[],accountBindings:[],capacity:humanSites.map(item=>({siteId:item.id,currentLive:0,firstVerifiedThisMonth:0,currentSources:0,monthlySources:0,missing:1,eligiblePages:1,automaticPages:0,eligibleUnused:1,automaticUnused:0,manualUnused:1,monthsAtTarget:0}))};
+    win.webContents.send('fixture-change');
+    await waitFor('document.body.innerText.includes("show-empty.example")');
+    await clickSite('show-empty.example');
+    await evaluate('document.querySelector(".task-summary").click()');await delay(100);
+    check('Show HN site card explains human authorship and hides generation',await evaluate(`(()=>{const card=document.querySelector('.task-card');const labels=[...card.querySelectorAll('button')].map(button=>button.innerText);return card.innerText.includes('本人手写的原创投稿文字')&&!labels.some(label=>label.includes('生成草稿')||label.includes('重新准备'))&&labels.some(label=>label.includes('打开渠道页面'))&&labels.some(label=>label.includes('编辑稿件'))&&labels.some(label=>label.includes('填写地址'))&&labels.some(label=>label.includes('核验'))})()`));
+    await clickText('任务');await clickText('全部');
+    await waitFor('document.querySelectorAll(".work-identity").length===3');
+    const inspectHumanRow=async(domain,forbidden)=>{const opened=await evaluate(`(()=>{const row=[...document.querySelectorAll('.work-table tbody tr')].find(item=>item.querySelector('.work-identity strong')?.innerText===${JSON.stringify(domain)});if(!row)return false;row.querySelector('.work-identity').click();return true})()`);assert(opened,`human-only row: ${domain}`);await delay(80);return evaluate(`(()=>{const row=[...document.querySelectorAll('.work-table tbody tr')].find(item=>item.querySelector('.work-identity strong')?.innerText===${JSON.stringify(domain)});return row?.innerText.includes('本人手写的原创投稿文字')&&!row?.innerText.includes(${JSON.stringify(forbidden)})&&!!row?.querySelector('[aria-label="打开渠道页面"]')&&!!row?.querySelector('[aria-label="编辑稿件"]')&&!!row?.querySelector('[aria-label="核验公开链接"]')})()`)};
+    check('Show HN task center hides new AI preparation but keeps manual controls',await inspectHumanRow('show-empty.example','AI 准备材料'));
+    check('Show HN task center hides regeneration for an existing draft',await inspectHumanRow('show-draft.example','重新准备材料'));
+    const genericOpened=await evaluate(`(()=>{const row=[...document.querySelectorAll('.work-table tbody tr')].find(item=>item.querySelector('.work-identity strong')?.innerText==='generic-manual.example');if(!row)return false;row.querySelector('.work-identity').click();return true})()`);assert(genericOpened,'generic manual row');await delay(80);
+    check('other manual channels retain AI preparation',await evaluate(`(()=>{const row=[...document.querySelectorAll('.work-table tbody tr')].find(item=>item.querySelector('.work-identity strong')?.innerText==='generic-manual.example');return row?.innerText.includes('AI 准备材料')})()`));
+    await capture('show-hn-human-authored-only.png');
     writeFileSync(join(evidence,'result.json'),JSON.stringify({passed:true,viewport:{width:1280,height:800},checks,actions},null,2));
     console.log(`PLANNING UI PASSED: ${checks.length} checks`);
     app.exit(0);

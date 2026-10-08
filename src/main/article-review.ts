@@ -11,7 +11,7 @@ import {TopicDiscoveryError} from '../integrations/topics';
 import {channelEvidenceSources,currentChannelPolicyDecision,supportsOfficialGuidanceReview} from './channel-policy';
 
 export const ARTICLE_REVIEW_CONTRACT_VERSION=4;
-const ACCOUNT_PUBLICATION_REVIEW_CHANNELS=new Set(['wordpress-com','leaflet','paper-wf','hive','mataroa','verbose','rentry']);
+const ACCOUNT_PUBLICATION_REVIEW_CHANNELS=new Set(['wordpress-com','leaflet','paper-wf','hive','mataroa','verbose','prose','rentry']);
 
 const DISCLOSURE_LINK=/affiliate|referr|commission|rebate|partner|disclos|disclaimer|about|terms|关于|返佣|推荐|佣金|合作|披露|免责声明/i;
 const SITE_RELEVANCE=/affiliate|referr|commission|rebate|partner|disclos|sponsor|author|operator|owner|maintain|about|terms|作者|运营|站长|所有者|返佣|推荐|佣金|合作|赞助|披露|免责/i;

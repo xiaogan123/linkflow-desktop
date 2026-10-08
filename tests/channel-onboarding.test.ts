@@ -39,7 +39,7 @@ test('wallet means the platform setup while Linkflow states the credential it ac
 });
 
 test('trusted connection and browser-profile entries require an existing account',()=>{
-  for(const id of ['github-gist','blogger','wordpress-com','leaflet','bluesky','github','gitlab','behance','artstation']){
+  for(const id of ['github-gist','blogger','wordpress-com','leaflet','bluesky','github','gitlab','behance','artstation','prose']){
     assert.equal(channelOnboardingKind(channel(id)),'existing_account',id);
   }
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'profile')&&channelMatchesOnboarding(item,'existing_account')).map(item=>item.id).sort(),['artstation','behance','github','gitlab']);
@@ -82,7 +82,7 @@ test('a setup filter never enables a disabled catalog candidate',()=>{
 });
 
 test('verified account setup does not turn manual or disabled publishers into automatic channels',()=>{
-  for(const id of ['hashnode','medium','substack','dev','hackernoon','tumblr','ghost-pro','beehiiv','kit-newsletter','product-hunt','alternativeto','vocus','publish0x','flipboard-publisher','gravatar','linktree','linkedin-articles','youtube-channel','x-profile','tradingview-profile','pinterest','linkedin-company','bluesky-domain']){
+  for(const id of ['hashnode','medium','substack','dev','hackernoon','tumblr','ghost-pro','beehiiv','kit-newsletter','product-hunt','alternativeto','vocus','publish0x','flipboard-publisher','gravatar','linktree','linkedin-articles','youtube-channel','x-profile','tradingview-profile','pinterest','linkedin-company','bluesky-domain','crunchbase-company','trustpilot-business','bing-places','g2','capterra','clutch','google-business','apple-business','yelp-business','codeberg','huggingface','sourceforge','itch-io','show-hn','npm','pypi','nuget','crates-io','packagist','pub-dev']){
     const item=channel(id),view=channelOnboardingView(item);
     assert.equal(view.kind,'existing_account',id);
     assert.equal(channelMatchesOnboarding(item,'unknown'),false,id);
@@ -91,8 +91,8 @@ test('verified account setup does not turn manual or disabled publishers into au
     assert.equal(channelAutomationKind(item),['medium','dev','vocus','publish0x','pinterest','bluesky-domain'].includes(id)?'disabled':'manual',id);
     assert.equal(view.verification?.checkedAt,'2026-10-09',id);
     assert.ok(view.verification?.sourceUrl.startsWith('https://'),id);
-    // Checking the login step must not refresh the separate content-policy date.
-    assert.notEqual(item.checkedAt,view.verification?.checkedAt,id);
+    // Login-only evidence must not refresh policy dates; Show HN policies were also rechecked.
+    if(id!=='show-hn')assert.notEqual(item.checkedAt,view.verification?.checkedAt,id);
   }
 });
 
@@ -118,4 +118,17 @@ test('partially checked setup preserves a concrete gap and remains unknown',()=>
   assert.ok(view.verification?.sourceUrl.startsWith('https://www.saashub.com/'));
   assert.notEqual(item.checkedAt,view.verification?.checkedAt);
   assert.equal(channelOnboardingView({...item,provenance:'custom'}).verification,undefined);
+});
+
+
+test('business onboarding keeps company and local-service eligibility separate from account access',()=>{
+  const crunchbase=channelOnboardingView(channel('crunchbase-company'));
+  assert.match(crunchbase.setup,/Google 或 LinkedIn 社交认证/);
+  assert.match(crunchbase.setup,/符合收录范围的真实公司/);
+  const trustpilot=channelOnboardingView(channel('trustpilot-business'));
+  assert.match(trustpilot.setup,/邮箱激活.*按需验证域名/);
+  assert.match(trustpilot.setup,/有权管理的真实业务/);
+  const bing=channelOnboardingView(channel('bing-places'));
+  assert.match(bing.setup,/真实本地商家/);
+  assert.match(bing.setup,/纯线上内容站不适用/);
 });

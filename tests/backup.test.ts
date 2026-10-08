@@ -4,6 +4,7 @@ import { encryptBackup,decryptBackup } from '../src/main/backup';
 import { validateBackup } from '../src/main/backup-validation';
 import { emptyState } from '../src/main/store';
 import { AddSite, SettingsPatch, normalizeDomain, safeMessage } from '../src/main/validation';
+import {serializeProseCredentials} from '../src/integrations/prose';
 test('authenticated backup roundtrips all state without exposing passwords',()=>{const state=emptyState();state.settings.hasApiKey=true;const data={state,secrets:{apiKey:'test-private-secret'}};const encrypted=encryptBackup(data,'correct horse battery staple');assert(!encrypted.toString().includes('test-private-secret'));assert.deepEqual(validateBackup(decryptBackup(encrypted,'correct horse battery staple')),data)});
 test('wrong password and tampered backup fail closed',()=>{const b=encryptBackup({state:emptyState(),secrets:{}},'long-passphrase-123');assert.throws(()=>decryptBackup(b,'wrong-passphrase'));const payload=JSON.parse(b.toString());payload.tag=Buffer.alloc(16).toString('base64');assert.throws(()=>decryptBackup(Buffer.from(JSON.stringify(payload)),'long-passphrase-123'))});
 test('short backup passphrase and untrusted data structure are rejected',()=>{assert.throws(()=>encryptBackup({},'short'));assert.throws(()=>validateBackup({state:{},secrets:{}}));assert.throws(()=>validateBackup({state:emptyState(),secrets:{'../other':'bad'}}))});
@@ -26,3 +27,12 @@ test('legacy saved accounts restore conservatively without exposing their passwo
 });
 
 test('new monitoring, qualifications and API credentials survive validated encrypted backup',()=>{const state=emptyState();const id='22222222-2222-4222-8222-222222222222',aid='33333333-3333-4333-8333-333333333333',stamp='2026-09-27T00:00:00.000Z';state.sites.push({id,domain:'example.com',url:'https://example.com',email:'owner@example.com',name:'Example',description:'Educational content',category:'content',language:'en',monthlyTarget:2,status:'ready',createdAt:stamp,qualifications:{publication:'https://example.com/about'},searchReports:{gsc:{checkedAt:stamp,method:'csv',sources:['https://outside.example/post'],complete:false,message:'Snapshot'}}});state.accounts.push({id:aid,channelId:'telegraph',email:'owner@example.com',username:'author',createdAt:stamp,status:'registered',hasPassword:true,credentialKind:'api_token'});state.settings.hasBingKey=true;state.settings.monitorSearch=true;const backup={state,secrets:{bingKey:'synthetic-only-key',[`account:${aid}`]:'synthetic-only-token'}};assert.deepEqual(validateBackup(decryptBackup(encryptBackup(backup,'roundtrip-passphrase-2026'),'roundtrip-passphrase-2026')),backup)});
+
+test('a read-only Prose SSH identity with unknown invitation eligibility survives strict backup validation without becoming publishable',()=>{
+  const state=emptyState(),id='44444444-4444-4444-8444-444444444444',siteId='55555555-5555-4555-8555-555555555555',stamp='2026-10-09T00:00:00.000Z',identity={name:'fixture-author',id:'pico-user-fixture',keyFingerprint:'SHA256:'+'A'.repeat(43)};
+  state.sites.push({id:siteId,domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'Example',description:'Fixture',category:'content',language:'en',monthlyTarget:2,status:'ready',createdAt:stamp});
+  state.accounts.push({id,channelId:'prose',email:'',username:identity.name,displayName:identity.name,publicationUrl:`https://${identity.name}.prose.sh/`,credentialKind:'api_token',status:'needs_verification',hasPassword:true,source:'imported',createdAt:stamp,updatedAt:stamp,verifiedAt:stamp,diagnostic:{code:'verification_required',message:'SSH 身份已只读验证；邀请资格未知。',at:stamp,retryable:false}});
+  state.accountBindings.push({id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'prose',accountId:id,createdAt:stamp,updatedAt:stamp});
+  const backup={state,secrets:{[`account:${id}`]:serializeProseCredentials({privateKey:'fixture-private-key'},identity)}};
+  const restored=validateBackup(backup);assert.equal(restored.state.accounts[0].status,'needs_verification');assert.equal(restored.state.accounts[0].diagnostic?.code,'verification_required');assert.deepEqual(restored,backup);
+});

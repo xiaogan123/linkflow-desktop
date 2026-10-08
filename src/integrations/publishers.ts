@@ -8,6 +8,7 @@ import {preparePaperIdentity,runPaperTask,reconcilePaperTask} from './paper';
 import {runHiveTask,reconcileHiveTask} from './hive';
 import {prepareMataroaIdentity,runMataroaTask,reconcileMataroaTask} from './mataroa';
 import {prepareVerboseIdentity,runVerboseTask,reconcileVerboseTask} from './verbose';
+import {runProseTask,reconcileProseTask} from './prose';
 import {prepareRentryIdentity,runRentryTask,reconcileRentryTask} from './rentry';
 import {runLucidTask,reconcileLucidTask} from './lucid';
 import {runBetterThanHtmlTask,reconcileBetterThanHtmlTask} from './betterthanhtml';
@@ -18,7 +19,7 @@ import {runGistTask} from './gist';
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
   publish(context:ExecutionContext):Promise<ExecutionResult>;
-  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
+  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
 }
 const publishers:Readonly<Record<string,ApiPublisher>>={
   paragraph:{publish:runParagraphTask,reconcile:reconcileParagraphTask},
@@ -27,6 +28,7 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   hive:{publish:runHiveTask,reconcile:reconcileHiveTask},
   mataroa:{prepare:prepareMataroaIdentity,publish:runMataroaTask,reconcile:reconcileMataroaTask},
   verbose:{prepare:prepareVerboseIdentity,publish:runVerboseTask,reconcile:reconcileVerboseTask},
+  prose:{publish:runProseTask,reconcile:reconcileProseTask},
   rentry:{prepare:prepareRentryIdentity,publish:runRentryTask,reconcile:reconcileRentryTask},
   'lucid-page':{publish:runLucidTask,reconcile:reconcileLucidTask},
   betterthanhtml:{publish:runBetterThanHtmlTask,reconcile:reconcileBetterThanHtmlTask},
