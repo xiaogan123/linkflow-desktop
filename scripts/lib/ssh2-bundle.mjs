@@ -6,6 +6,9 @@ import {dirname} from 'node:path';
 // Generate an ephemeral probe key instead so distributed code contains no private keys.
 // Fail closed when the dependency changes: this transformation must be reviewed again.
 const constantsSha256 = 'a3894fdd8e294109b55f06fbda69e467741f15a250801b744b6b0487bbf32529';
+const optionalNativeCryptoRequest = './crypto/build/Release/sshcrypto.node';
+const optionalNativeCryptoNamespace = 'portable-ssh2-optional-native-crypto';
+const ssh2CryptoImporterPattern = /[\\/]ssh2[\\/]lib[\\/]protocol[\\/]crypto\.js$/;
 const probe = `const eddsaSupported = (() => {
   if (typeof crypto.sign === 'function'
       && typeof crypto.verify === 'function'
@@ -27,6 +30,16 @@ export function portableSsh2Plugin() {
   return {
     name: 'portable-ssh2-probe',
     setup(build) {
+      build.onResolve({filter: /^\.\/crypto\/build\/Release\/sshcrypto\.node$/}, (args) => {
+        if (args.kind !== 'require-call'
+          || args.path !== optionalNativeCryptoRequest
+          || !ssh2CryptoImporterPattern.test(args.importer)) return;
+        return {path: 'disabled.js', namespace: optionalNativeCryptoNamespace};
+      });
+      build.onLoad({filter: /.*/, namespace: optionalNativeCryptoNamespace}, () => ({
+        contents: "throw new Error('ssh2 optional native crypto is disabled in portable bundles');",
+        loader: 'js'
+      }));
       build.onLoad({filter: /[\\/]ssh2[\\/]lib[\\/]protocol[\\/]constants\.js$/}, async ({path}) => {
         const source = await readFile(path, 'utf8');
         if (createHash('sha256').update(source).digest('hex') !== constantsSha256) {
