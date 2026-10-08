@@ -8,10 +8,10 @@ const addedIds=['linkedin-company','crunchbase-company','trustpilot-business','b
 function financeSite(language='en'):Site{return {id:'publisher',domain:'publisher.example',url:'https://publisher.example/',email:'owner@publisher.example',name:'Publisher',description:'Original exchange fee and risk education',category:'finance',language,monthlyTarget:2,status:'ready',createdAt:'2026-09-30'}}
 
 test('publisher and brand expansion is evidence-backed and remains manual',()=>{
- assert.equal(CHANNELS.length,69);
+ assert.equal(CHANNELS.length,79);
  for(const id of addedIds){const channel=CHANNELS.find(item=>item.id===id);assert(channel,id);assert.equal(channel.automation,'manual',id);assert.equal(channel.checkedAt,'2026-09-30',id);assert.equal(channel.evidenceStatus,'rules_checked',id);assert.equal(channel.authority,undefined,id);assert.equal(channel.traffic,undefined,id);assert(channel.rulesUrl.startsWith('https://'),id)}
  const blogger=CHANNELS.find(channel=>channel.id==='blogger');assert(blogger);assert.equal(blogger.automation,'api');assert.match(blogger.notes,/OAuth/);assert.match(blogger.notes,/绑定.*博客/);
- assert.equal(CHANNELS.filter(channel=>channel.automation==='api').length,6);
+ assert.equal(CHANNELS.filter(channel=>channel.automation==='api').length,15);
  assert.equal(CHANNELS.filter(channel=>channel.automation==='browser').length,4);
 });
 

@@ -14,9 +14,15 @@ export async function connectGist(store:StateStore,vault:SecretStore,token:strin
   if(target&&target.username.toLowerCase()!==login.toLowerCase())throw Error('新令牌属于不同 GitHub 身份，不会覆盖已有账号；请新增连接。');
   const old=target??state.accounts.find(a=>a.channelId==='github-gist'&&a.username.toLowerCase()===login.toLowerCase());
   const now=new Date().toISOString();
-  const account:Account={id:old?.id??randomUUID(),channelId:'github-gist',credentialKind:'api_token',email:login+'@users.noreply.github.com',username:login,createdAt:old?.createdAt??now,updatedAt:now,verifiedAt:now,status:'registered',hasPassword:true,source:'imported'};
-  await vault.set('account:'+account.id,token);
-  store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==account.id);s.accounts.push(account)});
+  const account:Account={...old,id:old?.id??randomUUID(),channelId:'github-gist',credentialKind:'api_token',email:login+'@users.noreply.github.com',username:login,createdAt:old?.createdAt??now,updatedAt:now,verifiedAt:now,status:'registered',hasPassword:true,source:'imported',diagnostic:undefined};
+  const key='account:'+account.id,previousSecret=await vault.get(key);
+  try{
+    await vault.set(key,token);
+    store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==account.id);s.accounts.push(account)});
+  }catch(error){
+    if(previousSecret===undefined)await vault.delete(key);else await vault.set(key,previousSecret);
+    throw error;
+  }
   return account;
 }
 

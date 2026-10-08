@@ -10,14 +10,16 @@ import {validateBackup} from '../src/main/backup-validation';
 import {runGistTask} from '../src/integrations/gist';
 import {dateKey,nextTask,reservesSlot} from '../src/main/planner';
 import {TopicDiscoveryError} from '../src/integrations/topics';
+import {unbindAccount} from '../src/main/account-bindings';
 
 const siteId='11111111-1111-4111-8111-111111111111',taskId='22222222-2222-4222-8222-222222222222',defaultAccountId='44444444-4444-4444-8444-444444444444';
+const fixtureChannelIds=new Set(['github-gist','telegraph','github']);
 function site():Site{return {topics:[{url:'https://review-fixture.com/guide-one',discoveredAt:new Date().toISOString()}],topicsCheckedAt:new Date().toISOString(),id:siteId,domain:'review-fixture.com',url:'https://review-fixture.com/',email:'owner@review-fixture.com',name:'Review Fixture',description:'Financial comparison and affiliate referral program',category:'finance',language:'en',monthlyTarget:1,status:'ready',createdAt:'2026-09-01T00:00:00.000Z',analyzedAt:'2026-09-01T00:00:00.000Z',qualifications:{developer:'https://review-fixture.com/project'}}}
 function task(status:Task['status']='queued'):Task{return {id:taskId,siteId,channelId:'github-gist',sourceDomain:'gist.github.com',status,createdAt:'2026-09-01T00:00:00.000Z',scheduledAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z',attempts:0,message:'fixture',checkpoint:'article_review',draftRevision:1,draft:{title:'Operator checklist',description:'A reusable technical checklist.',body:'We operate and maintain Review Fixture. We participate in its affiliate referral program and may receive a commission. Use this reproducible checklist to compare public eligibility rules and record source dates. [Official site](https://review-fixture.com/)'}}}
 const fakeVault={ready:true,available:()=>true,get:async()=>undefined,set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault;
 function passed(t:Task,s:Site,settings:ReturnType<Store['read']>['settings']):ArticleReview{const channel=CHANNELS.find(item=>item.id==='github-gist')!;return {status:'passed',reason:'All checks passed with public evidence.',reviewedAt:'2026-09-30T00:00:00.000Z',evidenceUrls:[s.url,channel.rulesUrl],draftRevision:t.draftRevision??0,contentHash:articleContentHash(t),contextHash:articleContextHash(s,channel,settings)}}
 function fixture(options:{mode?:'manual'|'ai';status?:Task['status'];submitted?:boolean;review?:ArticleReview}={}){
-  const store=new Store(':memory:');store.update(state=>{state.settings.channelOverrides.nostr=false;state.settings.articleReviewMode=options.mode??'ai';state.settings.autoRun=true;state.settings.dailyAiLimit=40;state.sites=[site()];state.accounts=[{id:defaultAccountId,channelId:'github-gist',username:'fixture-owner',email:'owner@example.com',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:'2026-09-01T00:00:00.000Z'}];const value=task(options.status);value.accountId=defaultAccountId;if(options.submitted){value.submittedAt='2026-09-30T00:00:00.000Z';value.status='needs_input'}if(options.review)value.articleReview=options.review;state.tasks=[value]});return store;
+  const store=new Store(':memory:');store.update(state=>{state.settings.channelOverrides=Object.fromEntries(CHANNELS.map(channel=>[channel.id,fixtureChannelIds.has(channel.id)]));state.settings.articleReviewMode=options.mode??'ai';state.settings.autoRun=true;state.settings.dailyAiLimit=40;state.sites=[site()];state.accounts=[{id:defaultAccountId,channelId:'github-gist',username:'fixture-owner',email:'owner@example.com',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:'2026-09-01T00:00:00.000Z'}];const value=task(options.status);value.accountId=defaultAccountId;if(options.submitted){value.submittedAt='2026-09-30T00:00:00.000Z';value.status='needs_input'}if(options.review)value.articleReview=options.review;state.tasks=[value]});return store;
 }
 
 test('AI pass is a separate review call and publishes once with a bound synthetic approval',async()=>{
@@ -163,8 +165,14 @@ test('enabling AI resumes only untouched article_review tasks and never submitte
 });
 
 test('restored review evidence is preserved but cannot authorize publication',()=>{
-  const state=emptyState(),s=site(),t=task('queued');state.sites=[s];state.settings.articleReviewMode='ai';t.articleApprovedAt='2026-09-30T00:00:00.000Z';t.articleReview=passed(t,s,state.settings);state.tasks=[t];
-  const restored=validateBackup({state,secrets:{}}).state.tasks[0];assert.equal(restored.articleApprovedAt,undefined);assert.equal(restored.articleReview?.status,'failed');assert.match(restored.articleReview?.reason??'',/必须重新核对/);assert.deepEqual(restored.articleReview?.evidenceUrls,t.articleReview.evidenceUrls);
+  const state=emptyState(),s=site(),t=task('queued');state.sites=[s];state.settings.articleReviewMode='ai';t.articleApprovedAt='2026-09-30T00:00:00.000Z';t.articleReview={...passed(t,s,state.settings),reviewContractVersion:4};t.articleAttempts=[{recordedAt:'2026-09-30T00:00:00.000Z',reason:'previous rejection',draft:structuredClone(t.draft),draftRevision:t.draftRevision,articleReview:{...t.articleReview,status:'failed',reasonCode:'content_rejected'}}];state.tasks=[t];
+  const restored=validateBackup({state,secrets:{}}).state.tasks[0];assert.equal(restored.articleApprovedAt,undefined);assert.equal(restored.articleReview?.status,'failed');assert.equal(restored.articleReview?.reviewContractVersion,4);assert.match(restored.articleReview?.reason??'',/必须重新核对/);assert.deepEqual(restored.articleReview?.evidenceUrls,t.articleReview.evidenceUrls);assert.equal(restored.articleAttempts?.[0].articleReview?.reviewContractVersion,4);
+});
+
+test('backup retains the one-time contract migration snapshot and rejects a changed historical draft',()=>{
+  const state=emptyState(),s=site(),t=task('failed');state.sites=[s];state.settings.articleReviewMode='ai';t.checkpoint='channel_wait';t.articleAutomationVersion=4;t.articleRepairAttempts=1;t.articleReview=legacyAuthorOnlyReview(t,s,state.settings);t.articleReviewMigration={contractVersion:4,recordedAt:'2026-10-07T00:00:00.000Z',priorRepairAttempts:1,draft:structuredClone(t.draft!),draftRevision:t.draftRevision!,review:structuredClone(t.articleReview)};state.tasks=[t];
+  const restored=validateBackup({state,secrets:{}}).state.tasks[0];assert.deepEqual(restored.articleReviewMigration,t.articleReviewMigration);assert.equal(restored.articleReview?.status,'failed');
+  const altered=structuredClone(state);altered.tasks[0].articleReviewMigration!.draft.body+=' changed';assert.throws(()=>validateBackup({state:altered,secrets:{}}),/旧审核迁移记录与原稿不一致/);
 });
 
 test('all settings writes are blocked while review is in flight while plan pause still aborts',async()=>{
@@ -227,6 +235,96 @@ test('a rejected unpublished topic keeps its task and cost, generates one altern
     controller.plan();const switched=store.read().tasks[0];assert.equal(switched.id,taskId);assert.equal(switched.topicUrl,'https://review-fixture.com/guide-two');assert.equal(switched.cost?.aiCalls,4);assert.equal(switched.draft,undefined);assert.equal(switched.articleReview,undefined);assert.equal(switched.articleAttempts?.[0].topicUrl,'https://review-fixture.com/guide-one');
     await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.id,taskId);assert.equal(saved.cost?.aiCalls,6);assert.equal(saved.topicSwitchAttempts,1);assert.equal(saved.draftRevision,3);assert.equal(saved.status,'review');assert.equal(providerCalls,2);assert.equal(reviews,1);assert.equal(executions,1);
   }finally{store.close()}
+});
+
+function legacyAuthorOnlyReview(t:Task,s:Site,settings:ReturnType<Store['read']>['settings']):ArticleReview{
+  return {...passed(t,s,settings),status:'failed',reasonCode:'content_rejected',reason:'The author relationship is not publicly established.',reviewContractVersion:3,
+    checks:{factualAccuracy:'pass',authorRelationship:'unknown',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'}};
+}
+
+test('a legacy author-only rejection resumes once through revision and full independent review on the original budget',async()=>{
+  const store=fixture({status:'failed'});
+  store.update(state=>{const t=state.tasks[0];t.checkpoint='channel_wait';t.attempts=1;t.articleAutomationVersion=3;t.cost={aiCalls:4};t.articleReview=legacyAuthorOnlyReview(t,state.sites[0],state.settings);state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z'}]});
+  const original=structuredClone(store.read().tasks[0]),newBody=original.draft!.body.replace('We operate and maintain Review Fixture.','This article is promotional content made for the linked website. The author publishes this promotional article, not an independent third-party recommendation.');
+  let writerCalls=0,reviewCalls=0,executions=0;
+  const services={collectArticleEvidence:async()=>[],aiFactory:(_settings:unknown,_vault:unknown,onCall?:()=>void)=>({json:async<T>(instruction:string)=>{onCall?.();if(instruction==='independent review')return {} as T;writerCalls++;return {...original.draft!,body:newBody} as T}}),
+    reviewArticle:async(t:Task,s:Site,c:(typeof CHANNELS)[number],settings:ReturnType<Store['read']>['settings'],ai:{json:<T>(instruction:string,input:unknown)=>Promise<T>})=>{reviewCalls++;await ai.json('independent review',{});assert.equal(t.draftRevision,2);return {...passed(t,s,settings),contextHash:articleContextHash(s,c,settings)}},
+    executeTask:async(context:ExecutionContext)=>{executions++;assert.equal(context.task.articleReview?.status,'passed');assert.equal(context.task.articleReview?.reviewContractVersion,4);return {status:'review' as const,message:'submitted'}}};
+  const controller=new Controller(store,fakeVault,'fixture',services as ConstructorParameters<typeof Controller>[3]);controller.runtime.aiReady=true;
+  try{
+    controller.plan();controller.plan();let saved=store.read().tasks.find(item=>item.id===taskId)!;
+    assert.equal(saved.status,'queued');assert.equal(saved.checkpoint,'article_repair');assert.equal(saved.articleAutomationVersion,4);assert.equal(saved.attempts,1);assert.equal(saved.cost?.aiCalls,4);
+    assert.deepEqual(saved.draft,original.draft);assert.deepEqual(saved.articleReviewMigration?.draft,original.draft);assert.deepEqual(saved.articleReviewMigration?.review,original.articleReview);assert.equal(saved.articleAttempts,undefined);assert.ok(saved.history?.length);
+    const restarted=new Controller(store,fakeVault,'fixture',services as ConstructorParameters<typeof Controller>[3]);restarted.runtime.aiReady=true;restarted.plan();
+    assert.equal(store.read().tasks.find(item=>item.id===taskId)?.cost?.aiCalls,4);
+    await restarted.tick();saved=store.read().tasks.find(item=>item.id===taskId)!;
+    assert.equal(writerCalls,1);assert.equal(reviewCalls,1);assert.equal(executions,1);assert.equal(saved.id,taskId);assert.equal(saved.cost?.aiCalls,6);assert.equal(saved.articleRepairAttempts,1);assert.equal(saved.draft?.body,newBody);assert.deepEqual(saved.articleReviewMigration?.review,original.articleReview);
+    restarted.plan();await restarted.tick();assert.equal(store.read().tasks.find(item=>item.id===taskId)?.cost?.aiCalls,6);assert.equal(writerCalls,1);assert.equal(reviewCalls,1);
+  }finally{store.close()}
+});
+
+test('contract-four upgrade adds one bounded repair after an ordinary repair and preserves prior topic evidence',async()=>{
+  for(const previousRepair of [0,1])for(const priorTopic of [false,true]){
+    const store=fixture({status:'failed'});store.update(state=>{const t=state.tasks[0];t.checkpoint='channel_wait';t.attempts=1;t.articleAutomationVersion=3;t.articleRepairAttempts=previousRepair;t.cost={aiCalls:4,amount:0.12,currency:'USD'};t.articleReview=legacyAuthorOnlyReview(t,state.sites[0],state.settings);state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z'}];if(priorTopic){t.topicSwitchAttempts=1;t.articleAttempts=[{topicUrl:'https://review-fixture.com/older-guide',recordedAt:'2026-09-29T00:00:00.000Z',reason:'Prior genuine topic attempt',draft:{title:'Older topic',description:'Archived',body:'Original archived draft'},draftRevision:0,articleRepairAttempts:0}]}});
+    const before=structuredClone(store.read().tasks[0]);let writerCalls=0,reviewCalls=0,executions=0;
+    const controller=new Controller(store,fakeVault,'fixture',{collectArticleEvidence:async()=>[],aiFactory:(_settings,_vault,onCall)=>({json:async<T>(instruction:string)=>{onCall?.();if(instruction==='independent review')return {} as T;writerCalls++;return {...before.draft!,body:before.draft!.body+' This revised disclosure describes the author as the promotional publisher, not an independent third-party reviewer.'} as T}}),reviewArticle:async(t,s,c,settings,ai)=>{reviewCalls++;await ai.json('independent review',{});return {...passed(t,s,settings),contextHash:articleContextHash(s,c,settings)}},executeTask:async()=>{executions++;return {status:'review',message:'submitted'}}});controller.runtime.aiReady=true;
+    try{
+      controller.plan();controller.plan();let saved=store.read().tasks.find(item=>item.id===taskId)!;
+      assert.equal(saved.checkpoint,'article_repair');assert.equal(saved.articleRepairAttempts,previousRepair);assert.deepEqual(saved.cost,before.cost);assert.deepEqual(saved.articleAttempts,before.articleAttempts);assert.deepEqual(saved.articleReviewMigration?.review,before.articleReview);assert.deepEqual(saved.articleReviewMigration?.draft,before.draft);
+      await controller.tick();saved=store.read().tasks.find(item=>item.id===taskId)!;
+      assert.equal(writerCalls,1);assert.equal(reviewCalls,1);assert.equal(executions,1);assert.equal(saved.cost?.aiCalls,6);assert.equal(saved.cost?.amount,0.12);assert.equal(saved.articleRepairAttempts,previousRepair+1);assert.deepEqual(saved.articleAttempts,before.articleAttempts);
+      controller.plan();await controller.tick();assert.equal(writerCalls,1);assert.equal(reviewCalls,1);
+    }finally{store.close()}
+  }
+});
+
+test('a migration queued before Gist unbind stops before any AI call and only the same explicit binding can resume it',async()=>{
+  const store=fixture({status:'failed'});store.update(state=>{const t=state.tasks[0];t.checkpoint='channel_wait';t.attempts=1;t.articleAutomationVersion=3;t.articleRepairAttempts=1;t.cost={aiCalls:4};t.articleReview=legacyAuthorOnlyReview(t,state.sites[0],state.settings);state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z'}]});let calls=0;
+  const controller=new Controller(store,fakeVault,'fixture',{aiFactory:(_settings,_vault,onCall)=>({json:async<T>()=>{onCall?.();calls++;return {} as T}})});controller.runtime.aiReady=true;
+  try{controller.plan();assert.equal(store.read().tasks[0].checkpoint,'article_repair');store.update(state=>unbindAccount(state,defaultAccountId,siteId,'github-gist'));await controller.tick();const stopped=store.read().tasks[0];assert.equal(stopped.status,'needs_input');assert.equal(stopped.checkpoint,'account_handoff');assert.equal(stopped.cost?.aiCalls,4);assert.equal(calls,0);controller.plan();assert.equal(store.read().tasks[0].status,'needs_input');store.update(state=>state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:new Date().toISOString()}]);controller.plan();assert.equal(store.read().tasks[0].status,'queued');assert.equal(store.read().tasks[0].checkpoint,'article_repair');assert.equal(store.read().tasks[0].cost?.aiCalls,4)}finally{store.close()}
+});
+
+test('reconnecting after the migrated draft was saved reviews that revision without rewriting it',async()=>{
+  const store=fixture({status:'failed'});store.update(state=>{const t=state.tasks[0];t.checkpoint='channel_wait';t.attempts=1;t.articleAutomationVersion=3;t.articleRepairAttempts=1;t.cost={aiCalls:4};t.articleReview=legacyAuthorOnlyReview(t,state.sites[0],state.settings);state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z'}]});let writers=0,reviews=0;
+  const controller=new Controller(store,fakeVault,'fixture',{aiFactory:(_settings,_vault,onCall)=>({json:async<T>(instruction:string)=>{onCall?.();if(instruction==='independent review')return {} as T;writers++;return {} as T}}),reviewArticle:async(t,s,c,settings,ai)=>{reviews++;await ai.json('independent review',{});return {...passed(t,s,settings),contextHash:articleContextHash(s,c,settings)}},executeTask:async()=>({status:'review',message:'submitted'})});controller.runtime.aiReady=true;
+  try{controller.plan();store.update(state=>{const t=state.tasks[0];t.draft={...t.draft!,body:t.draft!.body+' Revised disclosure.'};t.draftRevision=2;t.articleReview=undefined;t.articleRepairAttempts=2;t.cost!.aiCalls=5;t.status='needs_input';t.checkpoint='account_handoff'});controller.plan();assert.equal(store.read().tasks[0].status,'queued');assert.notEqual(store.read().tasks[0].checkpoint,'article_repair');await controller.tick();const saved=store.read().tasks[0];assert.equal(writers,0);assert.equal(reviews,1);assert.equal(saved.draftRevision,2);assert.equal(saved.cost?.aiCalls,6);assert.equal(saved.status,'review')}finally{store.close()}
+});
+
+test('a queued legacy repair never spends AI when its draft, repair count, or review mode changes',async()=>{
+  for(const changed of ['draft','repair-count','manual-mode'] as const){
+    const store=fixture({status:'failed'});store.update(state=>{const t=state.tasks[0];t.checkpoint='channel_wait';t.attempts=1;t.articleAutomationVersion=3;t.cost={aiCalls:4};t.articleReview=legacyAuthorOnlyReview(t,state.sites[0],state.settings);state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z'}]});let calls=0;
+    const controller=new Controller(store,fakeVault,'fixture',{aiFactory:(_settings,_vault,onCall)=>({json:async<T>()=>{onCall?.();calls++;return {} as T}})});controller.runtime.aiReady=true;
+    try{controller.plan();store.update(state=>{if(changed==='draft')state.tasks[0].draft!.body+=' edited after migration';if(changed==='repair-count')state.tasks[0].articleRepairAttempts=1;if(changed==='manual-mode')state.sites[0].articleReviewMode='manual'});await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.status,'needs_input',changed);assert.equal(saved.cost?.aiCalls,4,changed);assert.equal(calls,0,changed)}finally{store.close()}
+  }
+});
+
+test('legacy review migration excludes manual, external, spent, changed, incomplete, and non-author failures',()=>{
+  const scenarios=['manual','approved','paused','disabled','submitted','external-method','receipt','budget','attempts','changed-hash','missing-check','other-fail','v4-review','already-migrated','explicit-unbind','gist-unbind'] as const;
+  for(const scenario of scenarios){
+    const store=fixture({status:'failed'});store.update(state=>{const t=state.tasks[0];t.checkpoint='channel_wait';t.articleAutomationVersion=3;t.cost={aiCalls:4};t.articleReview=legacyAuthorOnlyReview(t,state.sites[0],state.settings);state.accountBindings=[{id:'66666666-6666-4666-8666-666666666666',siteId,channelId:'github-gist',accountId:defaultAccountId,createdAt:'2026-09-01T00:00:00.000Z',updatedAt:'2026-09-01T00:00:00.000Z'}];
+      if(scenario==='manual')state.sites[0].articleReviewMode='manual';
+      if(scenario==='approved')t.articleApprovedAt='2026-10-01T00:00:00.000Z';
+      if(scenario==='paused')state.sites[0].status='paused';
+      if(scenario==='disabled')state.settings.channelOverrides['github-gist']=false;
+      if(scenario==='submitted')t.submittedAt='2026-10-01T00:00:00.000Z';
+      if(scenario==='external-method')t.publicationMethod='external';
+      if(scenario==='receipt')t.bluesky={did:'did:plc:fixture',rkey:'post',recordHash:'a'.repeat(64),recordCreatedAt:'2026-10-01T00:00:00.000Z',stage:'creating'};
+      if(scenario==='budget')t.cost={aiCalls:5};
+      if(scenario==='attempts')t.attempts=state.settings.maxAttempts;
+      if(scenario==='changed-hash')t.draft!.body+=' altered';
+      if(scenario==='missing-check')delete (t.articleReview!.checks as unknown as Record<string,string>).affiliateDisclosure;
+      if(scenario==='other-fail')t.articleReview!.checks!.financialSafety='fail';
+      if(scenario==='v4-review')t.articleReview!.reviewContractVersion=4;
+      if(scenario==='already-migrated')t.articleAutomationVersion=4;
+      if(scenario==='explicit-unbind'){
+        state.settings.channelOverrides.mataroa=true;t.channelId='mataroa';t.sourceDomain='mataroa.blog';
+        state.accounts=[{id:defaultAccountId,channelId:'mataroa',username:'fixtureauthor',email:'',publicationUrl:'https://fixtureauthor.mataroa.blog/',status:'registered',credentialKind:'api_token',hasPassword:true,source:'generated',mataroaExcludedSiteIds:[siteId],createdAt:'2026-09-01T00:00:00.000Z'}];
+        state.accountBindings=[];
+      }
+      if(scenario==='gist-unbind')unbindAccount(state,defaultAccountId,siteId,'github-gist');
+    });
+    const controller=new Controller(store,fakeVault,'fixture');try{controller.plan();const saved=store.read().tasks.find(item=>item.id===taskId)!;assert.notEqual(saved.checkpoint,'article_repair',scenario);assert.equal(saved.articleReviewMigration,undefined,scenario);assert.equal(saved.cost?.aiCalls,scenario==='budget'?5:4,scenario)}finally{store.close()}
+  }
 });
 
 test('a same-site topic that redirects to an administrative page switches before any AI call',async()=>{

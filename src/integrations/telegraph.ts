@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, Task } from '../shared/types';
+import {load} from 'cheerio';
+import {fetchPublicText,type PublicFetchDependencies} from './web';
+import {inspectRenderedArticle} from './article-rendering';
+import {applyDeclaredArticleVisibility,elementConcealed} from './article-visibility';
+import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, Task,LinkResult } from '../shared/types';
 
 const API_ORIGIN = 'https://api.telegra.ph';
 const PUBLIC_ORIGIN = 'https://telegra.ph';
@@ -18,6 +22,7 @@ export type TelegraphNode = string | { tag: TelegraphTag; attrs?: { href: string
 export type TelegraphTransport = (input: string, init: RequestInit) => Promise<Response>;
 export type TelegraphReconcileResult = { status: 'found'; publicUrl: string } | { status: 'unknown' };
 export interface TelegraphReconcileDependencies { transport?: TelegraphTransport }
+export interface TelegraphVerificationDependencies extends TelegraphReconcileDependencies {publicFetch?:PublicFetchDependencies}
 
 type ApiSuccess = Record<string, unknown>;
 type ApiResponse = { ok: boolean; result?: unknown; error?: unknown };
@@ -167,6 +172,10 @@ function plainInline(value: string): string {
     .trim();
 }
 
+function promotionalAuthorName(language: string): string {
+  return language.toLowerCase().startsWith('zh') ? '推广内容发布者' : 'Promotional content publisher';
+}
+
 function articleBlocks(body: string): Array<{ tag: 'p' | 'h3' | 'h4' | 'blockquote' | 'pre'; text: string }> {
   const normalized = body.replace(/\r\n?/g, '\n');
   const blocks: Array<{ tag: 'p' | 'h3' | 'h4' | 'blockquote' | 'pre'; text: string }> = [];
@@ -285,15 +294,28 @@ export function articleToTelegraphNodes(body: string, siteName: string, siteUrl:
   const name = plainInline(siteName).slice(0, 120);
   if (!name) throw new Error('网站名称不可为空');
   const href = sourceUrl(siteUrl);
-  const disclosure: TelegraphNode = language.toLowerCase().startsWith('zh')
-    ? { tag: 'p', children: ['作者披露：本文由该网站的所有者或运营方发布，文中主体为 ', name, '。官方来源：', { tag: 'a', attrs: { href }, children: [name] }, '。'] }
-    : { tag: 'p', children: ['Author disclosure: Published by the owner or operator of ', name, '. Official source: ', { tag: 'a', attrs: { href }, children: [name] }, '.'] };
+  const source: TelegraphNode = language.toLowerCase().startsWith('zh')
+    ? { tag: 'p', children: ['文中所述网站：', { tag: 'a', attrs: { href }, children: [name] }, '。'] }
+    : { tag: 'p', children: ['Website discussed: ', { tag: 'a', attrs: { href }, children: [name] }, '.'] };
   const nodes: TelegraphNode[] = blocks.map(block => block.tag === 'pre'
     ? { tag: 'pre', children: [block.text] }
     : { tag: block.tag, children: inlineNodes(block.text, href) });
-  nodes.push({ tag: 'hr' }, disclosure);
+  nodes.push({ tag: 'hr' }, source);
   if (Buffer.byteLength(JSON.stringify(nodes), 'utf8') > MAX_CONTENT_BYTES) throw new Error('文章超出 Telegraph 64 KB 内容上限');
   return nodes;
+}
+
+// Read-only fingerprint for pages submitted before the author-label correction.
+// Never use this content or label in createAccount/createPage requests.
+function priorTelegraphFingerprint(body: string, siteName: string, siteUrl: string, language: string): { author: string; content: string } | undefined {
+  const nodes = articleToTelegraphNodes(body, siteName, siteUrl, language);
+  const name = plainInline(siteName).slice(0, 120);
+  const href = sourceUrl(siteUrl);
+  nodes[nodes.length - 1] = language.toLowerCase().startsWith('zh')
+    ? { tag: 'p', children: ['作者披露：本文由该网站的所有者或运营方发布，文中主体为 ', name, '。官方来源：', { tag: 'a', attrs: { href }, children: [name] }, '。'] }
+    : { tag: 'p', children: ['Author disclosure: Published by the owner or operator of ', name, '. Official source: ', { tag: 'a', attrs: { href }, children: [name] }, '.'] };
+  const content = canonicalTelegraphContent(nodes);
+  return content ? { author: `${plainInline(siteName).slice(0, 108)} site owner`.slice(0, 128).normalize('NFC'), content } : undefined;
 }
 
 function countTargetLinks(nodes: unknown, target: string): number {
@@ -366,7 +388,7 @@ async function createAccount(context: ExecutionContext, transport: TelegraphTran
   await context.saveAccount(pending);
   context.checkpoint({ checkpoint: 'telegraph_account_create_pending' });
   try {
-    const result = await apiCall('createAccount', { short_name: shortName, author_name: `${shortName} site owner`.slice(0, 128) }, context, transport);
+    const result = await apiCall('createAccount', { short_name: shortName, author_name: promotionalAuthorName(context.site.language) }, context, transport);
     if (typeof result.access_token !== 'string' || result.access_token.length < 20 || result.access_token.length > 256) throw new TelegraphUncertainError('account');
     const registeredAt = now();
     const registered: AccountWithCredential = { ...pending, status: 'registered', hasPassword: true, registeredAt, lastUsedAt: registeredAt, updatedAt: registeredAt, diagnostic: undefined };
@@ -413,6 +435,42 @@ async function verifyPage(context: ExecutionContext, path: string, expectedUrl: 
   } catch { return false; }
 }
 
+function nodesHtml(nodes:TelegraphNode[]):string{
+  const escape=(value:string)=>value.replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]!));
+  return nodes.map(node=>typeof node==='string'?escape(node):`<${node.tag}${node.attrs?` href="${escape(node.attrs.href)}"`:''}>${nodesHtml(node.children??[])}</${node.tag}>`).join('');
+}
+
+/** Rechecks the exact originally emitted article, including supported historical attribution. */
+export async function verifyTelegraphPublication(context:ExecutionContext,dependencies:TelegraphVerificationDependencies={}):Promise<LinkResult>{
+  const fallback=context.task.publicUrl??PUBLIC_ORIGIN;
+  const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:fallback,rel:'unknown',reason});
+  let identity:{path:string;url:string},title:string,target:string,fingerprints:Array<{author:string;content:string}>;
+  try{
+    const url=new URL(fallback),parsed=pageIdentity({path:decodeURIComponent(url.pathname.slice(1)),url:fallback});
+    if(context.task.channelId!=='telegraph'||context.task.sourceDomain!=='telegra.ph'||!context.task.draft||!parsed)throw Error();
+    identity=parsed;target=sourceUrl(context.site.url);title=plainInline(context.task.draft.title).slice(0,256).normalize('NFC');
+    const content=canonicalTelegraphContent(articleToTelegraphNodes(context.task.draft.body,context.site.name,target,context.site.language));
+    const prior=priorTelegraphFingerprint(context.task.draft.body,context.site.name,target,context.site.language);
+    if(!content||!prior||title.length<4)throw Error();
+    fingerprints=[{author:promotionalAuthorName(context.site.language).normalize('NFC'),content},prior];
+  }catch{return fail('invalid','Telegraph 原稿或公开地址无效，保留原记录且不会重发');}
+  try{
+    const remote=await apiCall('getPage',{return_content:'true'},context,dependencies.transport??fetch,identity.path);
+    const remoteIdentity=pageIdentity(remote),content=canonicalTelegraphContent(remote.content);
+    const matched=fingerprints.find(value=>value.content===content&&value.author===remote.author_name);
+    if(!remoteIdentity||remoteIdentity.url!==identity.url||remote.title!==title||!matched)return fail('invalid','Telegraph API 的完整正文、作者标记或标题与原稿不一致');
+    const page=await fetchPublicText(identity.url,context.signal,dependencies.publicFetch,{allowRedirect:(_from,to)=>to.href===identity.url});
+    const $=load(page.text);applyDeclaredArticleVisibility($);
+    const article=$('article.tl_article_content'),heading=article.children('h1').first(),byline=article.children('address');
+    if(page.url!==identity.url||article.length!==1||heading.length!==1||heading.text().normalize('NFC').trim()!==title||byline.length!==1
+      ||heading.add(heading.parents()).add(byline).toArray().some(node=>elementConcealed($,node)))return fail('invalid','Telegraph 公开页标题或全文容器不一致或不可见');
+    heading.remove();byline.remove();
+    const rendered=inspectRenderedArticle($.html(),nodesHtml(JSON.parse(matched.content) as TelegraphNode[]),target,'article.tl_article_content',{pageUrl:page.url,robotsHeader:page.robotsHeader});
+    if(!rendered.found)return fail('invalid','Telegraph 可见全文、全部链接或索引规则不一致；原投稿仍保留');
+    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Telegraph API 与原稿及公开可见全文、全部链接一致；不代表搜索收录'};
+  }catch{return fail('unreachable','Telegraph 原公开文章暂时无法完整核验；不会重发');}
+}
+
 /**
  * Positively identifies a page after an uncertain createPage response. An
  * unknown result is intentionally inconclusive and must never authorize a
@@ -438,16 +496,17 @@ export async function reconcileTelegraphTask(
   catch { return unknown; }
   if (!token || token.length < 20 || token.length > 256) return unknown;
 
-  let expectedContent: string | undefined;
+  let expectedFingerprints: Array<{ author: string; content: string }>;
   let expectedTitle: string;
-  let expectedAuthor: string;
   try {
     const target = sourceUrl(context.site.url);
-    expectedContent = canonicalTelegraphContent(articleToTelegraphNodes(task.draft.body, context.site.name, target, context.site.language));
+    const currentContent = canonicalTelegraphContent(articleToTelegraphNodes(task.draft.body, context.site.name, target, context.site.language));
+    const prior = priorTelegraphFingerprint(task.draft.body, context.site.name, target, context.site.language);
+    if (!currentContent || !prior) return unknown;
+    expectedFingerprints = [{ author: promotionalAuthorName(context.site.language).normalize('NFC'), content: currentContent }, prior];
     expectedTitle = plainInline(task.draft.title).slice(0, 256).normalize('NFC');
-    expectedAuthor = `${plainInline(context.site.name).slice(0, 108)} site owner`.slice(0, 128).normalize('NFC');
   } catch { return unknown; }
-  if (!expectedContent || expectedTitle.length < 4 || !expectedAuthor) return unknown;
+  if (expectedTitle.length < 4) return unknown;
 
   const transport = dependencies.transport ?? ((input: string, init: RequestInit) => fetch(input, init));
   const listed: Array<{ path: string; url: string; title: string }> = [];
@@ -496,7 +555,7 @@ export async function reconcileTelegraphTask(
       const content = canonicalTelegraphContent(result.content);
       if (!content) return unknown;
       const author = typeof result.author_name === 'string' ? result.author_name.normalize('NFC') : '';
-      if (result.title.normalize('NFC') === expectedTitle && author === expectedAuthor && content === expectedContent) {
+      if (result.title.normalize('NFC') === expectedTitle && expectedFingerprints.some(fingerprint => author === fingerprint.author && content === fingerprint.content)) {
         matches.push(identity.url);
         if (matches.length > 1) return unknown;
       }
@@ -537,7 +596,7 @@ async function runWithTransport(context: ExecutionContext, transport: TelegraphT
     created = await apiCall('createPage', {
       access_token: ready.token,
       title,
-      author_name: `${plainInline(context.site.name).slice(0, 108)} site owner`.slice(0, 128),
+      author_name: promotionalAuthorName(context.site.language),
       content: JSON.stringify(content),
       return_content: 'false',
     }, context, transport);

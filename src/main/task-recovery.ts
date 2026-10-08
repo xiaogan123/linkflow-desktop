@@ -7,7 +7,14 @@ export const TASK_AI_BUDGET=6;
 const TEMPORARY=new Set(['ai_unavailable','evidence_fetch_failed','format_invalid','evidence_invalid']);
 const ALTERNATIVE_TOPIC_CODES=new Set<ArticleReviewReasonCode>(['content_rejected','evidence_invalid','invalid_topic']);
 /** A time limit is not permission to repeat an external or unknown operation. */
-export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt)||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
+export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.betterthanhtml)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
+
+/** Registration uncertainty stays pinned, but is not an attempted article publication. */
+export function isPendingPublisherRegistration(task:Task):boolean{
+  const checkpoint=task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':undefined;
+  return !!checkpoint&&task.checkpoint===checkpoint&&!!task.accountId&&
+    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.betterthanhtml;
+}
 
 export type AlternativeTopicRecoveryResult=
   |{kind:'not_applicable'|'ineligible'}
@@ -65,7 +72,13 @@ export function maintainWaitingTasks(tasks:Task[],sites:Site[],channels:Channel[
   const stamp=now.toISOString();
   for(const task of tasks){
     const site=sites.find(item=>item.id===task.siteId),channel=channels.find(item=>item.id===task.channelId);
-    if(!site||site.status!=='ready'||!channel?.enabled||(hasExternalAttempt(task)&&!hasRecoverablePublisherDraftReceipt(task))||task.deferredAt)continue;
+    if(!site||site.status!=='ready'||!channel?.enabled||task.deferredAt)continue;
+    if(task.status==='needs_input'&&isPendingPublisherRegistration(task)){
+      task.waitingSince??=stamp;
+      if(now.getTime()-Date.parse(task.waitingSince)>=48*3600000)Object.assign(task,{status:'skipped',deferredAt:stamp,updatedAt:stamp,message:'原账号注册等待本人处理已超过两天，已释放发文名额；保留原身份和注册记录，验证同一账号后继续，不会重新注册。'});
+      continue;
+    }
+    if(hasExternalAttempt(task)&&!hasRecoverablePublisherDraftReceipt(task))continue;
     if(task.status==='failed'&&task.checkpoint==='system_wait'&&task.nextCheckAt&&tasks.some(other=>other.id!==task.id&&other.siteId===task.siteId&&(other.channelId===task.channelId||!!task.topicUrl&&canonicalPublicPageUrl(other.topicUrl)===canonicalPublicPageUrl(task.topicUrl))&&((hasExternalAttempt(other)&&!other.firstLiveAt)||(!!other.firstLiveAt&&Date.parse(other.firstLiveAt)>Date.parse(task.createdAt))||!['failed','skipped','expired','live'].includes(other.status)))){
       Object.assign(task,{recoveryEligible:false,nextCheckAt:undefined,message:'已有其他进行中任务、成功结果或待确认的提交，保留旧任务记录，不再恢复旧稿。'});continue;
     }
@@ -92,8 +105,9 @@ export function maintainWaitingTasks(tasks:Task[],sites:Site[],channels:Channel[
 export function resumeDeferredTask(tasks:Task[],id:string,settings:Settings,now=new Date()){
   const task=tasks.find(item=>item.id===id);
   if(!task?.deferredAt||task.status!=='skipped')throw Error('该任务不是已搁置任务');
-  if(hasExternalAttempt(task))throw Error('已有外部提交记录，不能重复执行');
+  const registration=isPendingPublisherRegistration(task);
+  if(hasExternalAttempt(task)&&!registration)throw Error('已有外部提交记录，不能重复执行');
   if((task.cost?.aiCalls??0)>=TASK_AI_BUDGET||task.attempts>=settings.maxAttempts)throw Error('该任务已达处理预算，请保留原记录核查原因');
   if(tasks.some(item=>item.id!==id&&item.siteId===task.siteId&&(item.channelId===task.channelId||!!task.topicUrl&&canonicalPublicPageUrl(item.topicUrl)===canonicalPublicPageUrl(task.topicUrl))&&(!['failed','skipped','expired'].includes(item.status)||hasExternalAttempt(item))))throw Error('同平台或选题已有其他任务，请先查看并合并已有记录');
-  Object.assign(task,{status:'queued',deferredAt:undefined,waitingSince:undefined,scheduledAt:now.toISOString(),updatedAt:now.toISOString(),message:'已恢复保留的稿件；按当前发布模式继续，原调用预算不重置。'});
+  Object.assign(task,{status:registration?'needs_input':'queued',deferredAt:undefined,waitingSince:undefined,scheduledAt:now.toISOString(),updatedAt:now.toISOString(),message:registration?'已恢复原账号验证等待；仅验证原身份，保留稿件与预算，不会重新注册。':'已恢复保留的稿件；按当前发布模式继续，原调用预算不重置。'});
 }

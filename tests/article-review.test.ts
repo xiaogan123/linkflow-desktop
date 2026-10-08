@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {articleReviewStillValid,collectArticleEvidence,hasExplicitAffiliateDisclosure,hasReturnPromise,reviewArticleDraft} from '../src/main/article-review';
-import {emptyState} from '../src/main/store';
-import type {AiPort,Channel,Site,Task} from '../src/shared/types';
+import {ARTICLE_REVIEW_CONTRACT_VERSION,articleContentHash,articleContextHash,articleReviewStillValid,collectArticleEvidence,hasExplicitAffiliateDisclosure,hasReturnPromise,reviewArticleDraft} from '../src/main/article-review';
+import {Controller} from '../src/main/controller';
+import {CHANNELS} from '../src/integrations/catalog';
+import {Store,emptyState} from '../src/main/store';
+import type {AiPort,ArticleReview,Channel,Site,Task} from '../src/shared/types';
+import type {Vault} from '../src/main/vault';
 
 const site:Site={id:'11111111-1111-4111-8111-111111111111',domain:'product.example.org',url:'https://product.example.org/',email:'owner@example.org',name:'Example Product',description:'Operator-authored comparison tools',category:'finance',language:'en',monthlyTarget:2,status:'ready',createdAt:'2026-09-01T00:00:00.000Z',qualifications:{developer:'https://product.example.org/project'}};
 const channel:Channel={id:'fixture-article',name:'Fixture Articles',domain:'publisher.example.org',url:'https://publisher.example.org/',submitUrl:'https://publisher.example.org/new',categories:['finance'],languages:['*'],kind:'article',emailRequired:false,accountRequired:false,articleRequired:true,free:'yes',freeNote:'Free original articles',automation:'api',quality:'B',qualityReason:'fixture',rulesUrl:'https://publisher.example.org/rules',checkedAt:'2026-09-01',notes:'Original, useful, disclosed articles only.',allowedHosts:['publisher.example.org'],enabled:true};
@@ -32,8 +35,140 @@ function aiResult(overrides:Record<string,unknown>={}):AiPort{return {json:async
 
 test('pass requires separately fetched site facts and channel rules with exact citations',async()=>{
   const review=await reviewArticleDraft(task,site,channel,settings,aiResult(),undefined,{fetchHtml:fetcher()});
-  assert.equal(review.status,'passed');assert.deepEqual(review.evidenceUrls,['https://product.example.org/disclaimer.html',channel.rulesUrl]);
+  assert.equal(review.status,'passed');assert.equal(review.reviewContractVersion,4);assert.deepEqual(review.evidenceUrls,['https://product.example.org/disclaimer.html',channel.rulesUrl]);
   assert.equal(articleReviewStillValid({...task,articleReview:review},site,channel,settings),true);
+});
+
+test('review contract permits a clearly self-described promotional publishing role without external employment proof',async()=>{
+  const selfRole={...task,draft:{title:'A reproducible referral-offer check',description:'A promotional publishing note with a source-backed checklist.',body:'This article is promotional content for the linked Example Product website. I publish this promotional article; it is not an independent third-party recommendation. Example Product participates in an affiliate referral program and may receive a commission. Readers can compare eligibility dates and record the source before making a decision.'}};
+  const authorPage='https://product.example.org/new-author',testSite={...site,qualifications:{...site.qualifications,author:authorPage}},baseFetch=fetcher();
+  let instruction='',seenDraft:unknown;
+  const semantic:AiPort={json:async(prompt,data)=>{
+    instruction=prompt;seenDraft=(data as {draft:unknown}).draft;
+    return aiResult({reason:'The draft describes its current promotional publishing role; site affiliate facts and channel rules have separate public citations.'}).json('',{});
+  }};
+  const review=await reviewArticleDraft(selfRole,testSite,channel,settings,semantic,undefined,{fetchHtml:async url=>url===authorPage?{url,html:'<p>This is a new author page with no public employment or mandate statement.</p>'}:baseFetch(url)});
+  assert.equal(review.status,'passed');
+  assert.deepEqual(seenDraft,selfRole.draft);
+  assert.match(instruction,/当前稿件的推广发布角色与外部身份事实/);
+  assert.match(instruction,/新作者主页尚无雇佣或委托资料/);
+  assert.match(instruction,/不要求固定关键词/);
+  assert.match(instruction,/所有外部事实与政策的关键通过判断仍须引用 evidence/);
+  assert.deepEqual(review.evidenceUrls,['https://product.example.org/disclaimer.html',channel.rulesUrl]);
+});
+
+test('contract 4 invalidates an older cached pass before it can authorize publication',async()=>{
+  assert.equal(ARTICLE_REVIEW_CONTRACT_VERSION,4);
+  const review=await reviewArticleDraft(task,site,channel,settings,aiResult(),undefined,{fetchHtml:fetcher()});
+  assert.equal(review.status,'passed');
+  assert.equal(articleReviewStillValid({...task,articleReview:review},site,channel,settings),true);
+  // Context hash captured from this fixture under review contract 3.
+  const oldReview={...review,contextHash:'9096f9663ffd22eed9986fc81a4f7804eaf4fe253a70cc216b65cc33fb207e74'};
+  assert.notEqual(review.contextHash,oldReview.contextHash);
+  assert.equal(articleReviewStillValid({...task,articleReview:oldReview},site,channel,settings),false);
+});
+
+test('Verbose review stays bound to the exact author account and public profile',()=>{
+  const verbose=CHANNELS.find(item=>item.id==='verbose')!;
+  const account={id:'33333333-3333-4333-8333-333333333333',channelId:'verbose',username:'writer-one',publicationUrl:'https://verbose.blog/writer-one'};
+  const review:ArticleReview={status:'passed',reason:'fixture approval',reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,evidenceUrls:[],draftRevision:task.draftRevision!,contentHash:articleContentHash(task),contextHash:articleContextHash(site,verbose,settings,account)};
+  const reviewedTask={...task,channelId:'verbose',articleReview:review};
+  assert.equal(articleReviewStillValid(reviewedTask,site,verbose,settings,account),true);
+  for(const changed of [
+    {...account,id:'44444444-4444-4444-8444-444444444444'},
+    {...account,username:'writer-two'},
+    {...account,publicationUrl:'https://verbose.blog/writer-two'},
+  ])assert.equal(articleReviewStillValid(reviewedTask,site,verbose,settings,changed),false);
+  assert.equal(articleReviewStillValid(reviewedTask,site,verbose,settings),false);
+});
+
+test('Verbose public author page is fetched as qualification evidence',async()=>{
+  const verbose=CHANNELS.find(item=>item.id==='verbose')!;
+  const profile='https://verbose.blog/writer-one',calls:string[]=[];
+  const evidence=await collectArticleEvidence(site,verbose,undefined,{account:{id:'33333333-3333-4333-8333-333333333333',channelId:'verbose',username:'writer-one',publicationUrl:profile},fetchHtml:async url=>{
+    calls.push(url);
+    return {url,html:url===profile?'<main>This public author profile identifies writer-one and lists the articles published by that author.</main>':'<main>Public website or platform documentation with enough text to review the article and its publication context.</main>'};
+  }});
+  assert.equal(calls.filter(url=>url===profile).length,1);
+  assert.ok(evidence.some(item=>item.url===profile&&item.kind==='qualification'&&item.text.includes('writer-one')));
+});
+
+test('a new Leaflet author page may be empty or unavailable while verified DID identity remains bound to review',async()=>{
+  const leaflet=CHANNELS.find(item=>item.id==='leaflet')!,profile='https://leaflet.pub/p/did:plc:fixtureleaflet123',account={id:'33333333-3333-4333-8333-333333333333',channelId:'leaflet',username:'writer.test',publicationUrl:profile};
+  for(const profileFailure of ['404','empty']){
+    const calls:string[]=[];let observed:unknown,instruction='';
+    const review=await reviewArticleDraft({...task,channelId:'leaflet'},site,leaflet,settings,{json:async(prompt,data)=>{
+      instruction=prompt;observed=data;
+      const policy=leaflet.evidenceSources![0].url;
+      return {verdict:'pass',reason:'The authorized DID identifies the current publishing target; no prior author history is claimed.',checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'},citations:[{url:site.url,quote:'Example Product publishes operator-authored comparison tools.'},{url:policy,quote:'You remain solely responsible for Your Content.'}]} as never;
+    }},undefined,{account,fetchHtml:async url=>{
+      calls.push(url);
+      if(url===profile){if(profileFailure==='404')throw Error('HTTP 404');return {url,html:'<main>Leaflet</main>'}}
+      if(url===site.url)return {url,html:'<main><p>Example Product publishes operator-authored comparison tools.</p></main>'};
+      if(url==='https://product.example.org/project')return {url,html:'<main><p>This maintained project provides a reusable comparison checklist.</p></main>'};
+      if(url===leaflet.evidenceSources![0].url)return {url,html:'<html><body><table><tbody><tr><td>Your Content</td></tr><tr><td>You remain solely responsible for Your Content.</td></tr><tr><td>General Representation and Warranty</td></tr></tbody></table></body></html>'};
+      if(url===leaflet.evidenceSources![1].url)return {url,html:'<html><body><table><tbody><tr><td>site.standard.document</td></tr><tr><td>Document records contain publication content and metadata.</td></tr></tbody></table></body></html>'};
+      if(url===leaflet.evidenceSources![2].url)return {url,html:'<main><p>Leaflet is a place for thoughtful writing and independent publications.</p></main>'};
+      throw Error('unexpected URL '+url);
+    }});
+    assert.equal(review.status,'passed',profileFailure);assert.equal(review.reasonCode,'passed',profileFailure);assert(calls.includes(profile));
+    const input=observed as {channel:{publisherIdentity:string;publicationUrl:string};evidence:{url:string;text:string}[]};
+    assert.equal(input.channel.publisherIdentity,'writer.test');assert.equal(input.channel.publicationUrl,profile);assert(!input.evidence.some(item=>item.url===profile));
+    assert(input.evidence.some(item=>item.url===leaflet.evidenceSources![0].url&&item.text.includes('You remain solely responsible for Your Content.')));
+    assert.match(instruction,/当前已验证的本人账号授权/);assert.match(instruction,/不证明以往发表记录/);
+  }
+});
+
+test('a model verdict of pass still cannot override an unknown authorRelationship check',async()=>{
+  const checks={factualAccuracy:'pass' as const,authorRelationship:'unknown' as const,affiliateDisclosure:'pass' as const,independentValue:'pass' as const,financialSafety:'pass' as const,channelRules:'pass' as const};
+  const review=await reviewArticleDraft(task,site,channel,settings,aiResult({verdict:'pass',reason:'The publisher relationship was not resolved.',checks}),undefined,{fetchHtml:fetcher()});
+  assert.equal(review.status,'failed');
+  assert.equal(review.checks?.authorRelationship,'unknown');
+});
+
+test('unsupported identity or payment claims and hidden affiliate relationships remain blocked',async()=>{
+  const cases=[
+    {draft:{...task.draft!,title:'The official site owner recommends this offer'},reason:'No public evidence supports ownership or official endorsement.',checks:{factualAccuracy:'unknown',authorRelationship:'unknown',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'},verdict:'unknown'},
+    {draft:{...task.draft!,description:'The author was commissioned and has already received a payment.'},reason:'No public evidence supports a commission or actual payment to this author.',checks:{factualAccuracy:'unknown',authorRelationship:'unknown',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'},verdict:'unknown'},
+    {draft:{...task.draft!,body:'This is an independent review with no affiliate relationship. Readers should compare the published eligibility terms.'},reason:'The draft contradicts the site disclosure and hides the actual affiliate relationship.',checks:{factualAccuracy:'fail',authorRelationship:'fail',affiliateDisclosure:'fail',independentValue:'pass',financialSafety:'pass',channelRules:'pass'},verdict:'reject'},
+  ] as const;
+  for(const scenario of cases){
+    let seenDraft:unknown;
+    const review=await reviewArticleDraft({...task,draft:scenario.draft},site,channel,settings,{json:async(_prompt,data)=>{seenDraft=(data as {draft:unknown}).draft;return aiResult({verdict:scenario.verdict,reason:scenario.reason,checks:scenario.checks}).json('',{})}},undefined,{fetchHtml:fetcher()});
+    assert.deepEqual(seenDraft,scenario.draft);
+    assert.equal(review.status,'failed');
+    assert.deepEqual(review.checks,scenario.checks);
+    assert.match(review.reason,new RegExp(scenario.reason.slice(0,20).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  }
+});
+
+test('a current-draft role sentence cannot masquerade as an external source citation',async()=>{
+  const invented='This article is promotional content for the linked Example Product website.';
+  const selfRole={...task,draft:{...task.draft!,body:`${invented} The author publishes this promotional content, not an independent third-party recommendation.`}};
+  const review=await reviewArticleDraft(selfRole,site,channel,settings,aiResult({citations:[{url:site.url,quote:invented},{url:channel.rulesUrl,quote:'Articles must be original, useful, accurate, and disclose commercial relationships.'}]}),undefined,{fetchHtml:fetcher()});
+  assert.equal(review.status,'failed');
+  assert.equal(review.reasonCode,'evidence_invalid');
+});
+
+test('article and social writing prompts describe the promotional publisher role in the target language',async()=>{
+  const writingSite:Site={...site,id:'33333333-3333-4333-8333-333333333333',domain:'prompt-check.example',url:'https://prompt-check.example/',email:'owner@prompt-check.example',name:'Prompt Check',description:'Affiliate research site',category:'business',language:'es',qualifications:undefined};
+  const topicUrl='https://prompt-check.example/guides/check';
+  const vault={ready:true,available:()=>true,get:async()=>undefined,set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault;
+  for(const channelId of ['mataroa','bluesky']){
+    const target=CHANNELS.find(item=>item.id===channelId)!;
+    const draftTask:Task={...task,id:'44444444-4444-4444-8444-444444444444',siteId:writingSite.id,channelId,sourceDomain:target.domain,status:'queued',draft:undefined,draftRevision:0,topicUrl};
+    const store=new Store(':memory:');store.update(state=>{state.sites=[writingSite];state.tasks=[draftTask];state.settings.articleReviewMode='manual'});
+    let instruction='',writingLanguage='';
+    const controller=new Controller(store,vault,'fixture',{readTopicEvidence:async()=>({url:topicUrl,title:'Check',text:'Public educational checklist',contentHash:'c'.repeat(64)}),aiFactory:()=>({json:async(prompt,data)=>{instruction=prompt;writingLanguage=(data as {channel:{writingLanguage:string}}).channel.writingLanguage;throw Error('captured prompt')}})});
+    try{
+      await assert.rejects(controller.generateDraft(draftTask.id),/captured prompt/);
+      assert.equal(writingLanguage,'es');
+      assert.match(instruction,/当前稿件由作者作为推广内容发布者/);
+      assert.match(instruction,/不暗示网站所有权、运营、委托/);
+      assert.match(instruction,/已确认的参与关系不可写成未说明、可能或假设存在/);
+      if(channelId==='bluesky')assert.match(instruction,/作者是本帖的推广内容发布者/);
+    }finally{store.close()}
+  }
 });
 
 test('affiliate disclosure semantics are decided by the independent review and still fail closed',async()=>{
@@ -60,7 +195,7 @@ test('reject, unknown, malformed output and fabricated citations all fail closed
 });
 
 test('missing evidence and AI errors including exhausted budget fail closed without retry',async()=>{
-  const missing=await reviewArticleDraft(task,site,channel,settings,aiResult(),undefined,{fetchHtml:fetcher({failRules:true})});assert.equal(missing.status,'failed');assert.match(missing.reason,/公开证据/);
+  const missing=await reviewArticleDraft(task,site,channel,settings,aiResult(),undefined,{fetchHtml:fetcher({failRules:true})});assert.equal(missing.status,'failed');assert.equal(missing.reviewContractVersion,4);assert.match(missing.reason,/公开证据/);
   let calls=0;const budget=await reviewArticleDraft(task,site,channel,settings,{json:async()=>{calls++;throw Error('今日 AI 调用已达上限，明天继续')}} ,undefined,{fetchHtml:fetcher()});assert.equal(budget.status,'failed');assert.match(budget.reason,/额度已用完/);assert.equal(calls,1);
 });
 

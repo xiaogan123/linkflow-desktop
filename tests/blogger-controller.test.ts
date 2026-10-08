@@ -7,6 +7,7 @@ import {articleContentHash,articleContextHash} from '../src/main/article-review'
 import {nextTask} from '../src/main/planner';
 import {maintainWaitingTasks} from '../src/main/task-recovery';
 import {validateBackup} from '../src/main/backup-validation';
+import {bloggerTesting,verifyBloggerPublication} from '../src/integrations/blogger';
 import type {ExecutionContext,Task} from '../src/shared/types';
 import type {Vault} from '../src/main/vault';
 const sid='11111111-1111-4111-8111-111111111111',tid='22222222-2222-4222-8222-222222222222',aid='33333333-3333-4333-8333-333333333333',stamp='2026-10-01T00:00:00.000Z';
@@ -57,4 +58,36 @@ test('claimed remote Blogger draft survives a temporary AI review failure and re
 test('claimed Blogger manual review remains visible and approval can continue the same remote draft',async()=>{
  const store=fixture();store.update(s=>s.settings.articleReviewMode='manual');let writes=0;const c=new Controller(store,vault,'fixture',{reconcileBlogger:async()=>({status:'draft',blogger}),executeTask:async ctx=>{writes++;assert.equal(ctx.task.blogger?.postId,'200');return {status:'needs_input',message:'fixture done'}}});c.runtime.aiReady=true;
  try{await c.tick();const t=store.read().tasks[0];assert.equal(t.checkpoint,'article_review');assert.equal(t.status,'needs_input');assert.equal(writes,0);const {taskHasArticleReview}=await import('../src/ui/presentation');assert.equal(taskHasArticleReview(t),true);c.patch(tid,{articleApprovedAt:new Date().toISOString(),status:'queued',scheduledAt:stamp});await c.tick();assert.equal(writes,1)}finally{store.close()}
+});
+
+test('found Blogger reconciliation persists the confirmed original post receipt before complete public verification',async()=>{
+ for(const stage of ['inserting','publishing'] as const){
+  const store=fixture();let publishes=0,publicReads=0,verifies=0;
+  store.update(s=>{const t=s.tasks[0];t.articleApprovedAt=stamp;t.draft!.body=['The original article explains reproducible evidence checks and the limits of each observation. Readers record the source and compare the observations before reaching a conclusion.','Keep a separate record of each failure condition and inspect the original evidence before relying on any claim. Promotional statements remain separate from measured facts.','The final record preserves uncertainty and explains what evidence could disprove the result, so the guide remains useful independently of any commercial relationship.'].join('\n\n')});
+  const operationId='55555555-5555-4555-8555-555555555555',url='https://example.blogspot.com/2026/10/original-guide.html';
+  let original:NonNullable<Task['blogger']>,page='';
+  const c=new Controller(store,vault,'fixture',{
+    reconcileBlogger:async()=>({status:'found',publicUrl:url,blogger:{...original,stage:'published',postId:'200'}}),
+    verifyBlogger:async context=>{verifies++;assert.equal(context.task.blogger?.stage,'published');assert.equal(context.task.blogger?.postId,'200');return verifyBloggerPublication(context,{request:async()=>{throw Error('No authenticated request during verification')},publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>{publicReads++;return {status:200,headers:{'content-type':'text/html'},body:Buffer.from(page)}}}})},
+    executeTask:async()=>{publishes++;throw Error('must not create or publish again')},
+  });
+  const context=(c as unknown as {context(t:Task,s:AbortSignal):ExecutionContext}).context(store.read().tasks[0],new AbortController().signal),article=bloggerTesting.approvedArticle(context);
+  original={blogId:'100',operationId,contentHash:article.contentHash,stage,...(stage==='publishing'?{postId:'200'}:{})};
+  page=`<article><h3 class="post-title">${article.title}</h3><div class="post-body">${article.content(operationId)}</div></article>`;
+  store.update(s=>Object.assign(s.tasks[0],{blogger:original,checkpoint:stage==='inserting'?'blogger_insert_submitting':'blogger_publish_submitting'}));
+  try{await c.tick();const saved=store.read().tasks[0];assert.equal(saved.status,'live',stage);assert.equal(saved.linkCheck,'found');assert.ok(saved.firstLiveAt);assert.equal(saved.blogger?.stage,'published');assert.equal(saved.blogger?.postId,'200');assert.equal(saved.blogger?.operationId,operationId);assert.equal(saved.blogger?.contentHash,article.contentHash);assert.equal(saved.submittedAt,stamp);assert.equal(publishes,0);assert.equal(publicReads,1);assert.equal(verifies,1)}finally{store.close()}
+ }
+});
+
+test('Blogger found reconciliation rejects a mismatched or incomplete published receipt without changing the original intent',async()=>{
+ for(const mutation of ['blog','operation','hash','post','stage','missing','origin'] as const){
+  const store=fixture(),original={...blogger,stage:'publishing' as const},receipt={...original,stage:'published' as const};let verifies=0,publishes=0;
+  store.update(s=>Object.assign(s.tasks[0],{blogger:original,checkpoint:'blogger_publish_submitting'}));
+  if(mutation==='blog')receipt.blogId='999';if(mutation==='operation')receipt.operationId='different';if(mutation==='hash')receipt.contentHash='b'.repeat(64);if(mutation==='post')receipt.postId='999';
+  const c=new Controller(store,vault,'fixture',{
+    reconcileBlogger:async()=>({status:'found',publicUrl:mutation==='origin'?'https://other.blogspot.com/2026/10/original.html':'https://example.blogspot.com/2026/10/original.html',blogger:mutation==='missing'?undefined as unknown as NonNullable<Task['blogger']>:mutation==='stage'?{...receipt,stage:'publishing'}:receipt}),
+    verifyBlogger:async()=>{verifies++;throw Error('invalid identity reached public verification')},executeTask:async()=>{publishes++;throw Error('must not publish')},
+  });
+  try{await c.tick();const saved=store.read().tasks[0];assert.deepEqual(saved.blogger,original,mutation);assert.equal(saved.publicUrl,undefined,mutation);assert.equal(saved.submittedAt,stamp);assert.equal(saved.checkpoint,'blogger_publish_submitting');assert.equal(verifies,0);assert.equal(publishes,0)}finally{store.close()}
+ }
 });

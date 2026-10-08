@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
 import {Controller} from '../src/main/controller';
+import {saveAccountAtomic} from '../src/main/account-service';
 import {connectBluesky} from '../src/main/bluesky-management';
 import {connectParagraph} from '../src/main/paragraph-management';
 import {CHANNELS} from '../src/integrations/catalog';
@@ -80,4 +81,19 @@ test('a new Paragraph connection adds selected sites to an existing publication;
     await connectParagraph(store,vault,'synthetic-paragraph-key',[two],first.id,{fetch:paragraph});
     assert.deepEqual(store.read().accountBindings.map(binding=>binding.siteId),[two]);
   }finally{store.close()}
+});
+
+
+test('generic password import cannot overwrite an OAuth identity even when switching to a browser channel',()=>{
+  for(const channelId of ['blogger','wordpress-com']){
+    const {store}=fixture();let encryptions=0;
+    const id='55555555-5555-4555-8555-555555555555',destination=CHANNELS.find(channel=>channel.id==='github')!;
+    try{
+      store.update(state=>state.accounts.push({id,channelId,username:'original-author',email:'owner@example.com',credentialKind:'oauth',status:'registered',hasPassword:true,createdAt:stamp}));
+      store.setCipher('account:'+id,'synthetic-oauth-cipher');
+      const before=store.read(),ciphers=store.allCiphers();
+      assert.throws(()=>saveAccountAtomic(store,{id,channelId:destination.id,email:'owner@example.com',username:'replacement-author',password:'synthetic-password'},destination,()=>{encryptions++;return {['account:'+id]:'replacement-cipher'}}),/专用连接入口/);
+      assert.equal(encryptions,0);assert.deepEqual(store.read(),before);assert.deepEqual(store.allCiphers(),ciphers);
+    }finally{store.close()}
+  }
 });

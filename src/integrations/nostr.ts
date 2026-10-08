@@ -41,7 +41,7 @@ export interface NostrSocket {
 }
 
 export type NostrWebSocketFactory = (url: string) => NostrSocket;
-export type NostrHtmlFetcher = (url: string, signal?: AbortSignal) => Promise<{ url: string; html: string }>;
+export type NostrHtmlFetcher = (url: string, signal?: AbortSignal) => Promise<{ url: string; html: string; robotsHeader?:string }>;
 
 export interface NostrDependencies {
   webSocketFactory?: NostrWebSocketFactory;
@@ -361,11 +361,11 @@ async function readExactEvent(
   return results.some(result => result.status === 'invalid') ? { status: 'invalid' } : { status: 'unknown' };
 }
 
-async function defaultFetchHtml(url: string, signal?: AbortSignal): Promise<{ url: string; html: string }> {
+async function defaultFetchHtml(url: string, signal?: AbortSignal): Promise<{ url: string; html: string; robotsHeader?:string }> {
   const result = await fetchPublicText(url, signal, undefined, {
     allowRedirect: (_from, to) => to.origin === READER_ORIGIN,
   });
-  return { url: result.url, html: result.text };
+  return { url: result.url, html: result.text,robotsHeader:result.robotsHeader };
 }
 
 function unavailable(url: string, reason: string, outcome: LinkResult['outcome'] = 'unreachable'): LinkResult {
@@ -404,7 +404,7 @@ export async function verifyNostrPublication(
   if (relay.status === 'invalid') return unavailable(publicUrl, 'Nostr relay 返回的签名、事件身份或全文与原回执不一致', 'invalid');
   if (relay.status !== 'found') return unavailable(publicUrl, '固定 Nostr relay 暂未回读到原事件；不会据此重发');
 
-  let fetched: { url: string; html: string };
+  let fetched: { url: string; html: string;robotsHeader?:string };
   try { fetched = await (dependencies.fetchHtml ?? defaultFetchHtml)(publicUrl, signal); }
   catch { return unavailable(publicUrl, 'njump 暂时无法确认文章的公开静态页面'); }
   if (Buffer.byteLength(fetched.html, 'utf8') > MAX_READER_HTML_BYTES || !publicUrlMatches(fetched.url, receipt)) {
@@ -417,7 +417,7 @@ export async function verifyNostrPublication(
       article.content,
       article.target,
       '[itemprop="articleBody"]',
-      { title: article.title },
+      { title: article.title,pageUrl:fetched.url,robotsHeader:fetched.robotsHeader },
     );
     if (!rendering.found) {
       const reason = rendering.reason === 'body' ? 'njump 页面缺少唯一可呈现的 articleBody'

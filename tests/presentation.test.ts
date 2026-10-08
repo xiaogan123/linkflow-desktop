@@ -101,3 +101,13 @@ test('claimed Blogger draft displays the scheduled bounded recovery instead of a
  for(const blocked of [{...draft,recoveryAttempts:1},{...draft,blogger:{...draft.blogger!,stage:'inserting' as const}},{...draft,cost:{aiCalls:6}}])assert.equal(taskWorkKind(blocked,'ai'),'user_action');
  assert.equal(taskWorkKind(draft,'ai',false),'user_action');
 });
+
+test('Paper and Hive uncertain results show bounded automatic queries without a resend action',()=>{
+ for(const channelId of ['paper-wf','hive']){
+  const receipt=channelId==='paper-wf'?{paper:{username:'fixture',slug:'fixture-post',contentHash:'a'.repeat(64),stage:'submitting' as const}}:{hive:{author:'fixture',permlink:'fixture-post',contentHash:'a'.repeat(64),stage:'submitting' as const}};
+  const uncertain=task({channelId,status:'needs_input',checkpoint:channelId==='paper-wf'?'paper_publish_submitting':'hive_publish_submitting',submittedAt:stamp,reconcileAttempts:1,reconcileAfter:'2026-10-04T01:00:00.000Z',...receipt});
+  assert.equal(taskPresentation(uncertain,'ai').label,'自动查询发布结果');assert.equal(taskAutomaticFollowupAt(uncertain),uncertain.reconcileAfter);assert.equal(canRetryTaskManually(uncertain,'ai'),false);
+  assert.equal(taskHasAutomaticFollowup({...uncertain,reconcileAttempts:3}),false);assert.equal(taskHasAutomaticFollowup(uncertain,false),false);
+  const brokenCheckpoint={...uncertain,checkpoint:undefined,submittedAt:undefined};assert.equal(canRetryTaskManually(brokenCheckpoint,'ai'),false);assert.equal(canResumeDeferredTask({...brokenCheckpoint,deferredAt:stamp}),false);
+ }
+});

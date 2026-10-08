@@ -9,9 +9,12 @@ import { z } from 'zod';
 import { Store, defaultSettings } from './store';
 import { Vault, encryptBackup, decryptBackup } from './vault';
 import {connectBlogger,reconnectBlogger,listBloggerBlogs,bindBloggerBlog,bindBloggerBlogs,disconnectBlogger} from './blogger-management';
+import {WordPressConnections} from './wordpress-management';
 import {connectParagraph} from './paragraph-management';
+import {accountLoginPassword,connectArticleAccount} from './article-connections';
 import {connectBluesky} from './bluesky-management';
-import { Controller } from './controller';
+import {connectLeaflet} from './leaflet-management';
+import { Controller,isConfirmedBetterThanHtmlResultUrl } from './controller';
 import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
@@ -54,6 +57,7 @@ if(!single)app.quit();
 let win:BrowserWindow|null=null,tray:Tray|null=null,quitting=false,restoring=false,updating=false,runtimeStarted=false,controller:Controller,localBackups:LocalBackups,updater:UpdateManager,maintenanceTimer:ReturnType<typeof setInterval>|undefined;
 const activeCommands=new Set<symbol>();
 let bloggerConnect:AbortController|undefined;
+let wordpressConnections:WordPressConnections;
 const root=join(__dirname,'..');
 const file=join(root,'dist/index.html');
 const devUrl=!app.isPackaged?process.env.LINKFLOW_DEV_URL:undefined;
@@ -144,7 +148,23 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:bind-blogger':{const d=z.object({siteId:z.string().uuid(),accountId:z.string().uuid(),blogId:z.string().regex(/^\d{1,64}$/)}).strict().parse(p);return controller.manageIdentity(()=>bindBloggerBlog(store,vault,d.siteId,d.accountId,d.blogId));}
     case 'site:bind-blogger-batch':{const d=z.object({siteIds:z.array(z.string().uuid()).min(1).max(100),accountId:z.string().uuid(),blogId:z.string().regex(/^\d{1,64}$/)}).strict().parse(p);return controller.manageIdentity(()=>bindBloggerBlogs(store,vault,d.siteIds,d.accountId,d.blogId));}
     case 'account:disconnect-blogger':{const d=z.object({accountId:z.string().uuid()}).strict().parse(p);return controller.manageIdentity(async()=>{await disconnectBlogger(store,vault,d.accountId);return {disconnected:true}});}
+    case 'account:connect-paper':
+    case 'account:connect-hive':
+    case 'account:connect-mataroa':{
+      const d=z.object({username:z.string().trim().min(1).max(100),credential:z.string().min(1).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional(),acknowledgePermanent:z.boolean().optional()}).strict().parse(p);
+      const channelId=name==='account:connect-hive'?'hive':name==='account:connect-mataroa'?'mataroa':'paper-wf';
+      if(channelId==='hive'&&d.acknowledgePermanent!==true)throw Error('请先确认 Hive 文章会保留在公开链上历史中');
+      return controller.manageIdentity(()=>connectArticleAccount(store,vault,{...d,channelId}));
+    }
+    case 'account:wordpress-status':z.object({}).strict().parse(p??{});return wordpressConnections.status();
+    case 'account:authorize-wordpress':z.object({}).strict().parse(p??{});return wordpressConnections.authorize({openExternal:url=>openInPreferredBrowser(url,store.read().settings.preferredBrowser,value=>shell.openExternal(value))});
+    case 'account:cancel-wordpress':z.object({}).strict().parse(p??{});wordpressConnections.cancel();return {cancelled:true};
+    case 'account:connect-wordpress':{
+      const d=z.object({sessionId:z.string().uuid(),blogId:z.string().regex(/^\d{1,32}$/),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);
+      return controller.manageIdentity(()=>wordpressConnections.connect(d));
+    }
     case 'account:connect-paragraph':{const d=z.object({apiKey:z.string().trim().min(8).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectParagraph(store,vault,d.apiKey,d.siteIds,d.accountId));}
+    case 'account:connect-leaflet':{const d=z.object({handle:z.string().trim().min(3).max(253),appPassword:z.string().min(1).max(128),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).max(1000)}).strict().parse(p);return controller.manageIdentity(()=>connectLeaflet(store,vault,d));}
     case 'account:connect-bluesky':{const d=z.object({handle:z.string().trim().min(3).max(253),appPassword:z.string().min(1).max(128),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).max(1000),mailboxId:z.string().uuid().nullable().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectBluesky(store,vault,d.handle.replace(/^@/,''),d.appPassword,{},d.accountId,{siteIds:d.siteIds,mailboxId:d.mailboxId}));}
     case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512),accountId:z.string().uuid().optional()}).parse(p);return await controller.connectGist(d.token,d.accountId);}
     case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
@@ -158,11 +178,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||(task.submittedAt&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||((task.submittedAt||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.wordpress||task.leaflet)&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
-      if(t.submittedAt&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error('已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if(t.checkpoint==='verbose_account_create_pending'&&!t.deferredAt)throw Error('Verbose 一次性令牌注册结果未明，原身份不可重注册');
+      if((t.submittedAt||t.paper||t.hive||t.mataroa||t.verbose||t.rentry||t.lucid||t.wordpress||t.leaflet)&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error(t.channelId==='mataroa'?'已有 Mataroa 投稿意图；原账号只读核对最多三次，不会重新投稿。':t.channelId==='verbose'?'已有 Verbose 投稿意图；仅按原作者与 slug 只读核对，不会重新投稿。':'已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
       if(t.deferredAt){store.update(state=>resumeDeferredTask(state.tasks,id,state.settings));void controller.tick();break;}
       if(t.attempts>=store.read().settings.maxAttempts)throw Error('已达重试上限，请检查原因或跳过此渠道。');
       controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;
@@ -172,7 +193,23 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'task:set-url':{
       const input=z.object({id:z.string().uuid(),url:z.string().max(2048)}).parse(p),u=publicUrl(input.url);const t=store.read().tasks.find(t=>t.id===input.id);if(!t)throw Error('任务不存在');
       if(t.channelId==='github-gist'){forbidBusy();await controller.adoptGist(t.siteId,u.href);break;}
-      if(!belongsToSource(u.href,t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const,reviewKind:'manual_url' as const,reviewUntil:new Date(Date.now()+30*86400000).toISOString(),nextCheckAt:new Date().toISOString(),health:'unknown' as const}: {})});await controller.verify(input.id);break;
+      if(t.channelId==='leaflet'){
+        if(t.leaflet?.stage!=='published'||!t.submittedAt||t.publicUrl!==u.href||t.leaflet.url!==u.href)throw Error('仅核验原 Leaflet 回执确认的文章；未知结果会按原作者和稿件只读核对');
+      }
+      if(t.channelId==='wordpress-com'){
+        if(t.wordpress?.stage!=='published'||!t.submittedAt||t.publicUrl!==u.href||t.wordpress.url!==u.href)throw Error('仅核验原博客回执中已确认的文章；未知结果将按原博客和原稿只读核对');
+      }else if(t.channelId==='mataroa'){
+        const receipt=t.mataroa;
+        if(!receipt?.slug||u.protocol!=='https:'||u.port||u.username||u.password||u.search||u.hash||u.hostname!==`${receipt.username}.mataroa.blog`||![`/blog/${receipt.slug}/`,`/p/${receipt.slug}/`].includes(u.pathname))throw Error('请等待原账号只读核对找回 Mataroa 结果，不接受其他页面代替原投稿');
+      }else if(t.channelId==='verbose'){
+        const receipt=t.verbose;
+        if(!receipt||receipt.stage!=='published'||!t.submittedAt||t.publicUrl!==u.href||u.href!==`https://verbose.blog/${receipt.username}/${receipt.slug}`)throw Error('Verbose 仅核验已由原账号只读对账确认的同一文章；不接受手动代填发布结果');
+      }else if(t.channelId==='rentry'||t.channelId==='lucid-page'){
+        const receipt=t.channelId==='rentry'?t.rentry:t.lucid,origin=t.channelId==='rentry'?'https://rentry.co':'https://lucid.page';
+        if(!receipt?.slug||receipt.stage!=='published'||!t.submittedAt||t.publicUrl!==u.href||u.href!==`${origin}/${receipt.slug}`)throw Error('仅核验原投稿回执中的完整文章，不接受其他页面代替结果');
+      }else if(t.channelId==='betterthanhtml'){
+        if(!isConfirmedBetterThanHtmlResultUrl(t,u.href))throw Error('Better Than HTML 仅核验原回执已确认的同一 Workshop 文章；未知结果不接受手动代填');
+      }else if(!belongsToSource(u.href,t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const,reviewKind:'manual_url' as const,reviewUntil:new Date(Date.now()+30*86400000).toISOString(),nextCheckAt:new Date().toISOString(),health:'unknown' as const}: {})});await controller.verify(input.id);break;
     }
     case 'task:open':{
       const id=getId(p),state=store.read(),task=state.tasks.find(item=>item.id===id);
@@ -226,14 +263,14 @@ async function command(name:string,p:unknown):Promise<unknown>{
       forbidBusy();const {items}=z.object({items:z.array(MailboxPayload).min(1).max(100)}).parse(p);importMailboxesAtomic(store,items,secrets=>vault.encryptSecrets(secrets));return controller.snapshot();
     }
     case 'account:save':{
-      forbidBusy();const input=AccountInput.parse(p);if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
+      forbidBusy();const input=AccountInput.parse(p);if(['verbose','rentry','lucid-page'].includes(input.channelId))throw Error('此渠道由任务自动准备，不接受手工账号导入');if(['paper-wf','hive','mataroa','wordpress-com','leaflet'].includes(input.channelId))throw Error('请使用对应渠道的连接入口验证账号');if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
       const channel=controller.channels().find(item=>item.id===input.channelId)!;saveAccountAtomic(store,input,channel,secrets=>vault.encryptSecrets(secrets));break;
     }
     case 'account:bind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p),channel=controller.channels().find(item=>item.id===d.channelId);if(!channel)throw Error('渠道不存在');if(channel.id==='blogger')throw Error('请使用Blogger专用入口绑定博客');store.update(state=>bindAccount(state,d.accountId,d.siteId,channel));break;}
     case 'account:unbind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p);store.update(state=>unbindAccount(state,d.accountId,d.siteId,d.channelId));break;}
     case 'account:set-bindings':{
       forbidBusy();const d=z.object({accountId:z.string().uuid(),mailboxId:z.string().uuid().nullable(),siteIds:z.array(z.string().uuid()).max(1000)}).parse(p),state=store.read(),account=state.accounts.find(item=>item.id===d.accountId);if(!account)throw Error('账号不存在');if(d.mailboxId&&!state.mailboxes.some(item=>item.id===d.mailboxId))throw Error('收件箱不存在');const channel=controller.channels().find(item=>item.id===account.channelId);if(!channel)throw Error('渠道不存在');if(account.credentialKind==='oauth')throw Error('请使用Blogger专用入口管理授权和博客绑定');const selected=new Set(d.siteIds);if([...selected].some(id=>!state.sites.some(site=>site.id===id)))throw Error('绑定的网站不存在');
-      store.update(draft=>{const current=draft.accounts.find(item=>item.id===d.accountId);if(!current)throw Error('账号不存在');current.mailboxId=d.mailboxId??undefined;current.updatedAt=new Date().toISOString();for(const siteId of selected)bindAccount(draft,current.id,siteId,channel);draft.accountBindings=draft.accountBindings.filter(binding=>binding.accountId!==current.id||binding.channelId!==current.channelId||selected.has(binding.siteId));});break;
+      store.update(draft=>{const current=draft.accounts.find(item=>item.id===d.accountId);if(!current)throw Error('账号不存在');current.mailboxId=d.mailboxId??undefined;current.updatedAt=new Date().toISOString();for(const siteId of selected)bindAccount(draft,current.id,siteId,channel);if(['wordpress-com','leaflet'].includes(current.channelId))for(const binding of [...draft.accountBindings])if(binding.accountId===current.id&&binding.channelId===current.channelId&&!selected.has(binding.siteId))unbindAccount(draft,current.id,binding.siteId,current.channelId);draft.accountBindings=draft.accountBindings.filter(binding=>binding.accountId!==current.id||binding.channelId!==current.channelId||selected.has(binding.siteId));if(current.channelId==='mataroa')current.mataroaExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);if(current.channelId==='verbose')current.verboseExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);if(current.channelId==='rentry')current.rentryExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);});break;
     }
     case 'account:retry':{
       forbidBusy();const {id}=AccountRetry.parse(p),account=store.read().accounts.find(a=>a.id===id);if(!account)throw Error('账号不存在');
@@ -242,20 +279,22 @@ async function command(name:string,p:unknown):Promise<unknown>{
       if(account.status==='unknown')throw Error('账号状态尚未确认，请先检查平台记录或导入正确凭据');
       if(account.status==='registered')throw Error('账号已注册，无需重试注册');
       if(account.status==='draft'&&account.source!=='generated')throw Error('只能重试本机生成且尚未创建的注册草稿');
+      if(account.channelId==='verbose'&&(account.registrationAttempts??0)>0)throw Error('Verbose 注册只返回一次性令牌，已尝试的原身份不能自动重注册');
       if(account.diagnostic&&!account.diagnostic.retryable&&account.status!=='draft')throw Error('该账号异常需要人工处理');
-      const now=new Date().toISOString();store.update(s=>{const a=s.accounts.find(a=>a.id===id);if(a){a.updatedAt=now;a.diagnostic=undefined}const sites=new Set(s.accountBindings.filter(binding=>binding.accountId===id).map(binding=>binding.siteId));for(const task of s.tasks){if((task.accountId===id||!task.accountId&&sites.has(task.siteId)&&task.channelId===account.channelId)&&!task.submittedAt&&['needs_input','failed'].includes(task.status)){task.accountId=id;task.status='queued';task.scheduledAt=now;task.updatedAt=now;task.message=account.status==='needs_verification'?'准备继续验证账号':'准备重试未提交的注册草稿';}}});void controller.tick();break;
+      const now=new Date().toISOString();store.update(s=>{const a=s.accounts.find(a=>a.id===id);if(a){a.updatedAt=now;a.diagnostic=undefined}const sites=new Set(s.accountBindings.filter(binding=>binding.accountId===id).map(binding=>binding.siteId));for(const task of s.tasks){if((task.accountId===id||!task.accountId&&sites.has(task.siteId)&&task.channelId===account.channelId)&&!task.submittedAt&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.wordpress&&!task.leaflet&&!['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')&&['needs_input','failed'].includes(task.status)){task.accountId=id;task.status='queued';task.scheduledAt=now;task.updatedAt=now;task.message=account.status==='needs_verification'?'准备继续验证账号':'准备重试未提交的注册草稿';}}});void controller.tick();break;
     }
-    case 'account:reveal':{const id=getId(p);if(['api_token','oauth'].includes(store.read().accounts.find(a=>a.id===id)?.credentialKind??''))throw Error('API 令牌不支持明文显示，请通过连接入口更新');await confirmSecret();return {password:(await vault.get('account:'+id))||''};}
-    case 'account:delete':{forbidBusy();const id=getId(p),state=store.read();if(state.accounts.find(a=>a.id===id)?.credentialKind==='oauth')throw Error('请使用Blogger专用入口断开授权，身份和历史记录会保留');if(state.tasks.some(task=>task.accountId===id))throw Error('该账号已归属历史任务，不能删除');if(state.accountBindings.some(binding=>binding.accountId===id))throw Error('该账号仍绑定网站，请先解除绑定');await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}
+    case 'account:reveal':{const id=getId(p),account=store.read().accounts.find(a=>a.id===id);if(!account)throw Error('账号不存在');if(!['paper-wf','mataroa'].includes(account.channelId)&&['api_token','oauth'].includes(account.credentialKind??''))throw Error('API 令牌不支持明文显示，请通过连接入口更新');await confirmSecret();return {password:accountLoginPassword(account,await vault.get('account:'+id))};}
+    case 'account:delete':{forbidBusy();const id=getId(p),state=store.read();if(state.accounts.find(a=>a.id===id)?.credentialKind==='oauth')throw Error('此账号使用平台授权；请在对应平台的应用授权设置中撤销，身份和历史任务保留');if(state.tasks.some(task=>task.accountId===id))throw Error('该账号已归属历史任务，不能删除');if(state.accountBindings.some(binding=>binding.accountId===id))throw Error('该账号仍绑定网站，请先解除绑定');await vault.delete('account:'+id);store.update(s=>{s.accounts=s.accounts.filter(a=>a.id!==id)});break;}
     case 'channel:save':{forbidBusy();const d=z.object({channel:z.unknown()}).parse(p);store.update(state=>{state.customChannels=saveCustomChannel(state.customChannels??[],d.channel,CHANNELS)});break;}
     case 'channel:delete':{forbidBusy();const {id}=z.object({id:z.string().regex(/^custom-[0-9a-f-]{36}$/)}).parse(p);store.update(state=>{state.customChannels=deleteCustomChannel(state.customChannels??[],id,state.tasks.map(task=>task.channelId))});break;}
     case 'channel:import-metrics':{forbidBusy();const d=z.object({rows:z.array(z.unknown()).min(1).max(1000)}).parse(p);const channels=controller.channels();store.update(state=>{state.channelMetrics=importChannelMetrics(state.channelMetrics??{},d.rows,channels)});break;}
     case 'backup:export':{
       const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showSaveDialog(win!,{title:'导出加密备份',defaultPath:'Linkflow-备份.lfb',filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled||!path.filePath)return {ok:false,message:'已取消'};
-      const buffer=encryptBackup({state:store.read(),secrets:await vault.exportSecrets()},passphrase);await writeFile(path.filePath,buffer,{mode:0o600});return {ok:true,message:'加密备份已保存，请妥善保管口令'};
+      if(controller.hasPendingWork()||activeCommands.size>1)throw Error('请等待当前操作完成后再导出备份');
+      const buffer=encryptBackup({state:store.read(),secrets:vault.exportSecrets()},passphrase);await writeFile(path.filePath,buffer,{mode:0o600});return {ok:true,message:'加密备份已保存，请妥善保管口令'};
     }
     case 'backup:import':{
-      ensureRestoreIdle();restoring=true;try{const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showOpenDialog(win!,{title:'恢复加密备份',properties:['openFile'],filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled)return {ok:false,message:'已取消'};
+      ensureRestoreIdle();restoring=true;wordpressConnections.cancel();try{const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showOpenDialog(win!,{title:'恢复加密备份',properties:['openFile'],filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled)return {ok:false,message:'已取消'};
       const data=validateBackup(decryptBackup(await readFile(path.filePaths[0]),passphrase));
       const confirm=await dialog.showMessageBox(win!,{type:'warning',message:'用备份替换本机数据？',detail:'当前数据会自动保存为同口令的恢复前备份。恢复后自动执行保持暂停。',buttons:['取消','恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return {ok:false,message:'已取消'};
       ensureRestoreIdle();controller.closeTaskBrowsers();
@@ -266,7 +305,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'backup:auto-configure':{const d=z.object({enabled:z.boolean(),keep:z.number().int().min(3).max(30).default(7)}).parse(p);const status=await localBackups.configure(d.enabled,d.keep);return d.enabled&&!controller.hasPendingWork()?localBackups.run(true):status;}
     case 'backup:auto-run':{forbidBusy();return localBackups.run(true);}
     case 'backup:auto-restore':{
-      ensureRestoreIdle();restoring=true;try{const {id}=z.object({id:z.string().max(200)}).parse(p),payload=await localBackups.read(id) as {state?:unknown;ciphers?:unknown};if(!payload||typeof payload!=='object'||!payload.state||!payload.ciphers||typeof payload.ciphers!=='object'||Array.isArray(payload.ciphers))throw Error('本机备份结构无效');
+      ensureRestoreIdle();restoring=true;wordpressConnections.cancel();try{const {id}=z.object({id:z.string().max(200)}).parse(p),payload=await localBackups.read(id) as {state?:unknown;ciphers?:unknown};if(!payload||typeof payload!=='object'||!payload.state||!payload.ciphers||typeof payload.ciphers!=='object'||Array.isArray(payload.ciphers))throw Error('本机备份结构无效');
       if(!vault.available())throw Error('系统钥匙串不可用，无法恢复本机备份');const secrets:Record<string,string>={};for(const [key,cipher]of Object.entries(payload.ciphers)){if(typeof cipher!=='string'||cipher.length>10000)throw Error('本机备份凭据结构无效');try{secrets[key]=safeStorage.decryptString(Buffer.from(cipher,'base64'))}catch{throw Error('本机备份与当前系统账号不匹配')}}
       const data=validateBackup({state:payload.state,secrets}),confirm=await dialog.showMessageBox(win!,{type:'warning',message:'恢复这份本机自动备份？',detail:'当前状态会先另存一份本机恢复点。恢复后自动执行与开机启动都保持关闭。',buttons:['取消','恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return {ok:false,message:'已取消'};
       ensureRestoreIdle();controller.closeTaskBrowsers();await localBackups.run(true);ensureRestoreIdle();data.state.settings={...defaultSettings(),...data.state.settings,autoRun:false,launchAtLogin:false};recoverInterrupted(data.state);for(const site of data.state.sites)if(site.status==='analyzing')site.status='attention';withLoginItemPreference({packaged:app.isPackaged,platform:process.platform,read:()=>app.getLoginItemSettings(loginItemReadOptions(process.platform,process.execPath)),write:(openAtLogin,enabled)=>app.setLoginItemSettings({openAtLogin,...(enabled===undefined?{}:{enabled})})},false,()=>store.restore(data.state,vault.encryptSecrets(data.secrets)));await detectAi();return {ok:true,message:'本机备份已恢复，检查后再手动恢复执行'};}finally{restoring=false}
@@ -299,7 +338,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
 app.on('second-instance',()=>{if(!win)createWindow();else{win.show();win.focus()}});
 app.whenReady().then(async()=>{
   if(!single)return;await mkdir(app.getPath('userData'),{recursive:true,mode:0o700});
-  const store=new Store(join(app.getPath('userData'),'linkflow.sqlite'));const vault=new Vault(store);controller=new Controller(store,vault,app.getPath('userData'));store.onChange=broadcast;controller.runtime.version=app.getVersion();
+  const store=new Store(join(app.getPath('userData'),'linkflow.sqlite'));const vault=new Vault(store);controller=new Controller(store,vault,app.getPath('userData'));wordpressConnections=new WordPressConnections(store,vault);store.onChange=broadcast;controller.runtime.version=app.getVersion();
   localBackups=new LocalBackups(join(app.getPath('userData'),'automatic-backups'),{encrypt:clear=>{if(!vault.available())throw Error('系统钥匙串不可用');return safeStorage.encryptString(clear)},decrypt:cipher=>{if(!vault.available())throw Error('系统钥匙串不可用');return safeStorage.decryptString(cipher)},snapshot:()=>({state:store.read(),ciphers:store.allCiphers()})});
   const runtimeApplicationPath=process.platform==='darwin'?(macApplicationPath(process.execPath)??''):dirname(process.execPath),runtimeHelperPath=join(root,'dist-electron/update-helper.cjs');
   const macTarget=process.platform==='darwin'&&app.isPackaged&&!selfTest?await resolveMacUpdateTarget({runningApplicationPath:runtimeApplicationPath,runningExecutablePath:process.execPath,runningHelperPath:runtimeHelperPath,homeDirectory:app.getPath('home'),currentVersion:app.getVersion()}):undefined;
@@ -325,5 +364,5 @@ app.whenReady().then(async()=>{
   createWindow();if(selfTest){void runPackagedSelfTest(win!,controller);return;}await detectAi();runtimeStarted=true;if(!updating&&!quitting)controller.start();maintenanceTimer=setInterval(()=>{if(!updating&&!controller.hasPendingWork())void localBackups.run().catch(()=>broadcast())},10*60_000);maintenanceTimer.unref();
 });
 app.on('activate',()=>{if(!win)createWindow();else win.show()});
-app.on('before-quit',()=>{quitting=true;bloggerConnect?.abort();if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();updater?.dispose()});
+app.on('before-quit',()=>{quitting=true;bloggerConnect?.abort();wordpressConnections?.cancel();if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();updater?.dispose()});
 app.on('window-all-closed',()=>{if(!tray){quitting=true;app.quit()}});

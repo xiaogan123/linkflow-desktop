@@ -4,7 +4,7 @@ import {getArticleReviewMode} from '../shared/article-review-mode';
 import { randomUUID } from 'node:crypto';
 import type { CapacityBlockReason,Channel, Site, SiteCapacity, Task, LinkResult } from '../shared/types';
 import type { State } from './store';
-import {boundAccount,channelExecutionReadiness} from './account-bindings';
+import {accountForSiteChannel,boundAccount,channelExecutionReadiness} from './account-bindings';
 import {eligibilityFor} from '../integrations/eligibility';
 
 export function dateKey(value:Date|string,timeZone:string):string{
@@ -20,7 +20,7 @@ export {reservesSlot,reservesMonthlySlot} from '../shared/publication';
 export function recoverInterrupted(state:State,now=new Date()){
   for(const t of state.tasks){
     if(state.sites.find(site=>site.id===t.siteId)?.status==='paused')continue;
-    const uncertain=!!t.submittedAt||['submitting','submitted','submission_uncertain'].includes(t.checkpoint||'');
+    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
     const paidAiUncertain=t.status==='running'&&!uncertain&&((['article_review','article_repair_review'].includes(t.checkpoint??'')&&t.articleReview?.status==='running')||(!t.draft&&(t.cost?.aiCalls??0)>0));
     if(paidAiUncertain){
       const eligible=(t.cost?.aiCalls??0)<6&&(t.recoveryAttempts??0)<1;
@@ -84,9 +84,26 @@ export function earliestPublicationAt(siteId:string,channelId:string,tasks:Task[
 }
 
 function sharedDestinationKey(state:State,siteId:string,channelId:string,accountId?:string,receipt?:Task):string|undefined{
+  if(channelId==='rentry'||channelId==='lucid-page'||channelId==='betterthanhtml')return `${channelId}:workspace`;
   if(channelId==='blogger'){const blogId=receipt?.blogger?.blogId??state.sites.find(item=>item.id===siteId)?.blogger?.blogId;return blogId?`blogger:${blogId}`:undefined;}
+  if(channelId==='wordpress-com'){
+    const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;
+    const blogId=receipt?.wordpress?.blogId??state.accounts.find(item=>item.id===id&&item.channelId===channelId)?.username;
+    return blogId?`wordpress-com:${blogId}`:undefined;
+  }
+  if(channelId==='leaflet'){
+    const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;
+    const account=state.accounts.find(item=>item.id===id&&item.channelId===channelId),match=account?.publicationUrl?.match(/^https:\/\/leaflet\.pub\/p\/(did:(?:plc|web):[A-Za-z0-9:._%-]{1,240})$/);
+    const did=receipt?.leaflet?.did??match?.[1];
+    return did?`leaflet:${did}`:undefined;
+  }
   if(channelId==='paragraph'){const publicationId=receipt?.paragraph?.publicationId??state.sites.find(item=>item.id===siteId)?.paragraph?.publicationId;return publicationId?`paragraph:${publicationId}`:undefined;}
   if(channelId==='nostr'){const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;const pubkey=receipt?.nostr?.pubkey??state.accounts.find(item=>item.id===id&&item.channelId===channelId)?.username;return pubkey?`nostr:${pubkey}`:undefined;}
+  if(['paper-wf','hive','mataroa','verbose'].includes(channelId)){
+    const username=channelId==='paper-wf'?receipt?.paper?.username:channelId==='hive'?receipt?.hive?.author:channelId==='mataroa'?receipt?.mataroa?.username:receipt?.verbose?.username;
+    const identity=username??accountForSiteChannel(state,siteId,channelId,accountId)?.username;
+    return identity?`${channelId}:${identity.trim().toLowerCase()}`:undefined;
+  }
   if(channelId!=='bluesky')return;
   const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;
   const did=receipt?.bluesky?.did??state.accounts.find(item=>item.id===id&&item.channelId===channelId)?.username;
@@ -95,7 +112,8 @@ function sharedDestinationKey(state:State,siteId:string,channelId:string,account
 
 /** Spread shared publisher activity across sites: one post per destination per day. */
 export function socialPublicationAt(state:State,siteId:string,channelId:string,requestedAt:Date,options:PublicationTimingOptions={}):Date{
-  const destination=sharedDestinationKey(state,siteId,channelId);if(!destination)return new Date(requestedAt);
+  const current=options.excludeTaskId?state.tasks.find(task=>task.id===options.excludeTaskId&&task.siteId===siteId&&task.channelId===channelId):undefined;
+  const destination=sharedDestinationKey(state,siteId,channelId,current?.accountId,current);if(!destination)return new Date(requestedAt);
   const related=state.tasks.filter(task=>task.channelId===channelId&&task.id!==options.excludeTaskId&&sharedDestinationKey(state,task.siteId,task.channelId,task.accountId,task)===destination);
   const gap=86400000,anchors=related.flatMap(task=>[Date.parse(task.submittedAt??''),Date.parse(task.firstLiveAt??'')]).filter(Number.isFinite);
   let at=Math.max(requestedAt.getTime(),anchors.length?Math.max(...anchors)+gap:Number.NEGATIVE_INFINITY);
@@ -113,11 +131,24 @@ export function reflowQueuedSchedules(state:State,channels:Channel[]=[],now=new 
   const changes:QueuedScheduleChange[]=[],ready=new Map(state.sites.filter(site=>site.status==='ready').map(site=>[site.id,site]));
   const queued=state.tasks.filter(task=>ready.has(task.siteId)&&task.status==='queued'&&!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt).sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt)||a.id.localeCompare(b.id));
   const priorBySite=new Map<string,Date>(),priorByChannel=new Map<string,Date>(),priorByDestination=new Map<string,Date>();
+  const taskById=new Map(state.tasks.map(task=>[task.id,task]));
   for(const task of queued){
     const site=ready.get(task.siteId)!,original=new Date(task.scheduledAt);if(!Number.isFinite(original.getTime()))continue;
-    let actual=socialPublicationAt(state,site.id,task.channelId,earliestPublicationAt(site.id,task.channelId,state.tasks,original,{excludeTaskId:task.id,includeReservations:false}),{excludeTaskId:task.id,includeReservations:false});
-    if(original.getTime()<=now.getTime()&&monthKey(original,state.settings.timezone)!==monthKey(now,state.settings.timezone))actual=new Date(Math.max(actual.getTime(),now.getTime()));
+    const savedProvenance=task.autoSchedule;
+    const provenance=savedProvenance?.plannedAt===task.scheduledAt&&savedProvenance.channelId===task.channelId&&
+      savedProvenance.sourceDomain===task.sourceDomain&&savedProvenance.accountId===task.accountId?savedProvenance:undefined;
+    if(savedProvenance&&!provenance)delete task.autoSchedule;
+    const base=provenance&&new Date(provenance.baseAt);
+    const applied=new Set(provenance?.appliedReleaseIds);
+    const released=provenance?.reservationTaskIds.filter(id=>{const other=taskById.get(id);return !applied.has(id)&&!!other&&!reservesSlot(other,now)&&!other.submittedAt&&!other.firstLiveAt&&!other.publicUrl;})??[];
     const channel=channels.find(item=>item.id===task.channelId);
+    const reclaim=provenance?.kind==='planner'&&provenance.plannedAt===task.scheduledAt&&released.length>0&&untouchedAutomaticTask(task)&&
+      Number.isFinite(base?.getTime())&&original.getTime()>now.getTime()&&monthKey(original,state.settings.timezone)===monthKey(now,state.settings.timezone)&&
+      monthKey(task.createdAt,state.settings.timezone)===monthKey(now,state.settings.timezone)&&site.monthlyTarget>liveThisMonth(site.id,state.tasks,now,state.settings.timezone)&&
+      state.settings.channelOverrides[task.channelId]!==false&&(!channel||channel.enabled);
+    const requested=reclaim?new Date(Math.max(now.getTime(),base!.getTime())):original;
+    let actual=socialPublicationAt(state,site.id,task.channelId,earliestPublicationAt(site.id,task.channelId,state.tasks,requested,{excludeTaskId:task.id,includeReservations:false}),{excludeTaskId:task.id,includeReservations:false});
+    if(original.getTime()<=now.getTime()&&monthKey(original,state.settings.timezone)!==monthKey(now,state.settings.timezone))actual=new Date(Math.max(actual.getTime(),now.getTime()));
     if(channel&&isRepeatableOfficialArticleChannel(channel)){
       const thisMonth=publicationDates(state.tasks.filter(item=>item.siteId===site.id&&item.channelId===task.channelId)).filter(date=>monthKey(date,state.settings.timezone)===monthKey(now,state.settings.timezone)).length;
       if(thisMonth>=2)actual=new Date(Math.max(actual.getTime(),nextNaturalMonthStart(now,state.settings.timezone).getTime()));
@@ -126,8 +157,9 @@ export function reflowQueuedSchedules(state:State,channels:Channel[]=[],now=new 
     if(prior)actual=new Date(Math.max(actual.getTime(),prior.getTime()+CROSS_PLATFORM_GAP_MS));
     if(samePlatformPrior)actual=new Date(Math.max(actual.getTime(),samePlatformPrior.getTime()+PUBLICATION_GAP_MS));
     if(destinationPrior)actual=new Date(Math.max(actual.getTime(),destinationPrior.getTime()+86400000));
-    if(actual.getTime()>original.getTime()){
-      task.scheduledAt=actual.toISOString();task.updatedAt=now.toISOString();task.message='前一页面实际完成较晚，已按发布间隔顺延本任务。';
+    if(actual.getTime()!==original.getTime()){
+      task.scheduledAt=actual.toISOString();task.updatedAt=now.toISOString();task.message=actual.getTime()<original.getTime()?'此前自动占位已释放，原任务按实际发布间隔提前继续。':'前一页面实际完成较晚，已按发布间隔顺延本任务。';
+      if(provenance){provenance.plannedAt=task.scheduledAt;if(actual.getTime()<original.getTime())provenance.appliedReleaseIds=[...new Set([...provenance.appliedReleaseIds,...released])];}
       changes.push({id:task.id,scheduledAt:task.scheduledAt});
     }
     priorBySite.set(site.id,actual);priorByChannel.set(platformKey,actual);if(destination)priorByDestination.set(destination,actual);
@@ -137,11 +169,17 @@ export function reflowQueuedSchedules(state:State,channels:Channel[]=[],now=new 
 
 export interface QueuedSourceChange {id:string;fromChannelId:string;toChannelId:string;scheduledAt:string}
 function fullArticleChannel(channel:Channel):boolean{return channel.kind==='article'&&channel.articleRequired===true&&channel.contentFormat!=='social'}
-function channelSourceDomain(site:Site,channel:Channel):string{return channel.id==='blogger'&&site.blogger?new URL(site.blogger.url).hostname:channel.domain}
+function channelSourceDomain(site:Site,channel:Channel,account?:{publicationUrl?:string}):string{
+  if(channel.id==='blogger'&&site.blogger)return new URL(site.blogger.url).hostname;
+  if(['paper-wf','hive','mataroa','verbose'].includes(channel.id)&&account?.publicationUrl){
+    try{const url=new URL(account.publicationUrl);if(url.protocol==='https:'&&url.hostname.toLowerCase()===channel.domain.toLowerCase()&&!url.username&&!url.password)return url.hostname.toLowerCase()}catch{/* Invalid account identity is blocked by readiness. */}
+  }
+  return channel.domain;
+}
 function untouchedAutomaticTask(task:Task):boolean{
   const cost=task.cost,spent=!!cost&&[cost.aiCalls,cost.durationMs,cost.inputTokens,cost.outputTokens,cost.amount].some(value=>(value??0)>0);
   return task.status==='queued'&&task.attempts===0&&!task.draft&&!spent&&!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.verifiedAt&&
-    !task.blogger&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
+    !task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
     task.draftRevision===undefined&&!task.draftUpdatedAt&&!task.topicContentHash&&!task.articleAutomationVersion&&!task.articleRepairAttempts&&
     !task.articleAttempts?.length&&!task.topicSwitchAttempts&&!task.recoveryAttempts&&!task.recoveryEligible&&!task.reconcileAttempts&&!task.reconcileAfter&&
     !task.waitingSince&&!task.deferredAt&&!task.reviewUntil&&!task.reviewKind&&!task.lastCheckedAt&&!task.nextCheckAt&&!task.lostAt&&!task.linkRel&&!task.linkCheck&&
@@ -169,7 +207,7 @@ export function rebalanceQueuedSources(state:State,site:Site,matches:Match[],now
     const withoutTask=state.tasks.filter(item=>item.id!==task.id),related=withoutTask.filter(item=>item.siteId===site.id);
     const ordered=rankedMatches(state,site,matches,related,now,timeZone);
     for(const {match:{channel,reason},readiness} of ordered){
-      const candidateSource=sourceKey(channelSourceDomain(site,channel));
+      const candidateSource=sourceKey(channelSourceDomain(site,channel,readiness.account));
       if(channel.id===task.channelId||candidateSource===sourceKey(task.sourceDomain)||!fullArticleChannel(channel)||channel.free==='paid'||channel.free==='unknown'||
         !['browser','api'].includes(channel.automation)||!channel.enabled||state.settings.channelOverrides[channel.id]===false||!eligibilityFor(site,channel).eligible||
         !['ready','autocreate'].includes(readiness.kind)||related.some(item=>sourceKey(item.sourceDomain)===candidateSource&&taskOccupiesSource(item)))continue;
@@ -181,7 +219,8 @@ export function rebalanceQueuedSources(state:State,site:Site,matches:Match[],now
       const when=socialPublicationAt(simulated,site.id,channel.id,policyAt);
       if(!Number.isFinite(when.getTime())||when.getTime()<originalAt.getTime()||monthKey(when,timeZone)!==currentMonth)continue;
       const fromChannelId=task.channelId;
-      task.channelId=channel.id;task.sourceDomain=channelSourceDomain(site,channel);task.scheduledAt=when.toISOString();task.updatedAt=now.toISOString();
+      task.channelId=channel.id;task.sourceDomain=channelSourceDomain(site,channel,readiness.account);task.scheduledAt=when.toISOString();task.updatedAt=now.toISOString();
+      delete task.autoSchedule; // A source switch changes the original reservation explanation.
       task.message='尚未开始的重复来源排期已改为新的可执行文章来源。';task.reason=`${reason} ${opportunity.reason}`.trim();
       if(readiness.account)task.accountId=readiness.account.id;else delete task.accountId;
       if(opportunity.topicUrl)task.topicUrl=opportunity.topicUrl;else delete task.topicUrl;
@@ -213,7 +252,15 @@ export function makePlan(state:State,site:Site,matches:Match[],now=new Date()):T
     const policyAt=earliestPublicationAt(site.id,channel.id,state.tasks,new Date(opportunity.scheduledAt));
     const when=socialPublicationAt(state,site.id,channel.id,new Date(Math.max(nextPlanAt.getTime(),policyAt.getTime())));
     if(monthKey(when,state.settings.timezone)!==monthKey(now,state.settings.timezone))continue;
-    const t:Task={id:randomUUID(),siteId:site.id,channelId:channel.id,...(readiness.account?{accountId:readiness.account.id}:{}),sourceDomain:channelSourceDomain(site,channel),status:'queued',createdAt:now.toISOString(),scheduledAt:when.toISOString(),updatedAt:now.toISOString(),attempts:0,message:opportunity.repeat?'已按平台发布间隔加入自动计划':'已加入自动计划',reason:`${reason} ${opportunity.reason}`.trim(),...(opportunity.topicUrl?{topicUrl:opportunity.topicUrl}:{})};
+    const destination=sharedDestinationKey(state,site.id,channel.id,readiness.account?.id),baseAt=Date.parse(opportunity.scheduledAt);
+    const reservationTaskIds=state.tasks.filter(task=>{
+      if(task.submittedAt||task.firstLiveAt||task.publicUrl||!reservesSlot(task,now))return false;
+      const at=Date.parse(task.scheduledAt),siteGap=task.channelId===channel.id?PUBLICATION_GAP_MS:CROSS_PLATFORM_GAP_MS;
+      const related=task.siteId===site.id&&at>=baseAt-siteGap||!!destination&&sharedDestinationKey(state,task.siteId,task.channelId,task.accountId,task)===destination&&at>=baseAt-86400000;
+      return Number.isFinite(at)&&at<=when.getTime()&&related;
+    }).map(task=>task.id);
+    const sourceDomain=channelSourceDomain(site,channel,readiness.account);
+    const t:Task={id:randomUUID(),siteId:site.id,channelId:channel.id,...(readiness.account?{accountId:readiness.account.id}:{}),sourceDomain,status:'queued',createdAt:now.toISOString(),scheduledAt:when.toISOString(),updatedAt:now.toISOString(),autoSchedule:{kind:'planner',channelId:channel.id,sourceDomain,...(readiness.account?{accountId:readiness.account.id}:{}),baseAt:opportunity.scheduledAt,plannedAt:when.toISOString(),reservationTaskIds,appliedReleaseIds:[]},attempts:0,message:opportunity.repeat?'已按平台发布间隔加入自动计划':'已加入自动计划',reason:`${reason} ${opportunity.reason}`.trim(),...(opportunity.topicUrl?{topicUrl:opportunity.topicUrl}:{})};
     state.tasks.push(t);created.push(t);
     nextPlanAt=new Date(when.getTime()+CROSS_PLATFORM_GAP_MS);
   }
@@ -227,7 +274,7 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
     const site=state.sites.find(s=>s.id===t.siteId&&s.status==='ready');
     const planned=new Date(t.scheduledAt);
     const draftContinuation=hasRecoverablePublisherDraftReceipt(t);
-    if(!site||t.status!=='queued'||(t.submittedAt&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
+    if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.rentry||t.lucid||t.betterthanhtml)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
     const requested=planned.getTime()<=now.getTime()&&monthKey(planned,state.settings.timezone)!==monthKey(now,state.settings.timezone)?now:planned;
     const actual=socialPublicationAt(state,site.id,t.channelId,earliestPublicationAt(site.id,t.channelId,state.tasks,requested,{excludeTaskId:t.id,includeReservations:false}),{excludeTaskId:t.id,includeReservations:false});
     const channel=channels.find(item=>item.id===t.channelId);

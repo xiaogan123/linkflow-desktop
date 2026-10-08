@@ -1,6 +1,7 @@
+import {marked} from 'marked';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gistTesting, readPublicGist, runGistTask, validateGistToken, type GistTransport } from '../src/integrations/gist';
+import { gistTesting, verifyGistPublication, readPublicGist, runGistTask, validateGistToken, type GistTransport } from '../src/integrations/gist';
 import { defaultSettings } from '../src/main/store';
 import type { Account, Channel, ExecutionContext, Site, Task } from '../src/shared/types';
 
@@ -278,4 +279,22 @@ test('readPublicGist performs anonymous fixed-host adoption and enforces canonic
   await assert.rejects(readPublicGist(`https://gist.github.com/octocat/${GIST_ID}`, {
     fetch: async () => json(gist(context, { login: 'mallory', owner: { login: 'mallory' }, html_url: `https://gist.github.com/mallory/${GIST_ID}` })),
   }), /request failed/);
+});
+
+
+test('managed Gist verification binds anonymous API content and the complete visible README without approval or writes',async()=>{
+  const {context,checkpoints}=fixture();context.task.publicUrl=`https://gist.github.com/octocat/${GIST_ID}`;context.task.submittedAt='2026-09-28T01:00:00Z';
+  delete context.task.articleApprovedAt;
+  const content=expectedReadme(context),original=structuredClone(context.task);
+  const page=`<div class="file"><article class="markdown-body">${marked.parse(content,{async:false})}</article></div>`;
+  for(const variant of ['valid','api-mutated','html-mutated','footer-only','noindex','wrong-link']){
+    const result=await verifyGistPublication(context,{fetch:async(url,init)=>{
+      assert.equal(url,`https://api.github.com/gists/${GIST_ID}`);assert.equal(init.method,'GET');assert.equal(new Headers(init.headers).has('authorization'),false);
+      return json(gist(context,{content:variant==='api-mutated'?content+'\nchanged':content}));
+    },publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html','x-robots-tag':variant==='noindex'?'noindex':''},body:Buffer.from(
+      variant==='html-mutated'?page.replace('durable behavior','other behavior'):variant==='footer-only'?`<article class="markdown-body">Missing article</article><footer>${page}</footer>`:variant==='wrong-link'?page.replace('https://example.com/','https://example.com/different'):page
+    )})}});
+    assert.equal(result.found,variant==='valid',variant);if(variant!=='valid')assert.equal(result.outcome,'invalid',variant);
+  }
+  assert.deepEqual(context.task,original);assert.equal(checkpoints.length,0);
 });

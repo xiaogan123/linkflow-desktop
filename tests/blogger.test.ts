@@ -9,6 +9,7 @@ import {
   parseBloggerDesktopClient,
   reconcileBloggerTask,
   runBloggerTask,
+  verifyBloggerPublication,
   type BloggerLoopback,
   type BloggerTransport,
 } from '../src/integrations/blogger';
@@ -382,9 +383,23 @@ test('read-only reconciliation performs bounded GETs and can recover a live exac
     throw new Error('unexpected');
   });
   const result = await reconcileBloggerTask(context, { request, now: () => NOW });
-  assert.deepEqual(result, { status: 'found', publicUrl: POST_URL });
+  assert.deepEqual(result, { status: 'found', publicUrl: POST_URL,
+    blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'published'} });
   assert.equal(calls.filter(call => call.url.pathname.endsWith('/posts')).length, 3);
   assert.ok(calls.every(call => call.method === 'GET'));
+});
+
+test('Blogger live reconciliation returns the confirmed original post ID and rejects a substituted ID',async()=>{
+  const f=fixture(),article=bloggerTesting.approvedArticle(f.context),operationId='11111111-1111-4111-8111-111111111111';
+  f.setTask({submittedAt:NOW.toISOString(),articleApprovedAt:undefined,blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'publishing'}});
+  for(const id of [POST_ID,'9999999999']){
+    const result=await reconcileBloggerTask(f.context,{now:()=>NOW,request:baseApi(async(url,init)=>{
+      assert.equal(init.method,'GET');assert.equal(url.pathname,`/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}`);
+      return json(post(article.content(operationId),'LIVE',id));
+    })});
+    assert.deepEqual(result,id===POST_ID?{status:'found',publicUrl:POST_URL,blogger:{...f.task.blogger,stage:'published'}}:{status:'unknown'});
+  }
+  assert.equal(f.checkpoints.length,0);assert.equal(f.task.blogger?.stage,'publishing');
 });
 
 test('read-only reconciliation returns the original operation as a claimed draft without checkpointing or publishing', async () => {
@@ -462,4 +477,42 @@ test('403 and 429 are classified without exposing remote bodies or credentials',
   assert.equal(throttled.status, 'failed');
   assert.match(throttled.message, /速率限制/);
   assert.equal(throttled.message.includes(ACCESS_TOKEN), false);
+});
+
+
+test('Blogger public verification binds the persisted operation and exact emitted body without an OAuth write',async()=>{
+  const f=fixture(),article=bloggerTesting.approvedArticle(f.context),operationId='11111111-1111-4111-8111-111111111111';
+  f.setTask({publicUrl:POST_URL,submittedAt:NOW.toISOString(),articleApprovedAt:undefined,blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'published'}});
+  const content=article.content(operationId),page=`<article><h3 class="post-title">${article.title}</h3><div class="post-body">${content}</div></article>`;
+  const original=structuredClone(f.task);
+  for(const variant of ['valid','changed-text','wrong-marker','footer-only','noindex','wrong-title','wrong-link']){
+    const result=await verifyBloggerPublication(f.context,{request:async()=>{throw Error('verification must not use credentials or token refresh');},publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html','x-robots-tag':variant==='noindex'?'noindex':''},body:Buffer.from(
+      variant==='changed-text'?page.replace('Practical checks','Mutated checks'):variant==='wrong-marker'?page.replace(operationId,'22222222-2222-4222-8222-222222222222'):variant==='footer-only'?`<h3 class="post-title">${article.title}</h3><footer><a href="https://example.com/">brand</a></footer>`:variant==='wrong-title'?page.replace(`<h3 class="post-title">${article.title}</h3>`,'<h3 class="post-title">Different title</h3>'):variant==='wrong-link'?page.replace('href="https://example.com/"','href="https://example.com/other"'):page
+    )})}});
+    assert.equal(result.found,variant==='valid',variant);if(variant!=='valid')assert.equal(result.outcome,'invalid');
+  }
+  assert.deepEqual(f.task,original);assert.equal(f.checkpoints.length,0);
+});
+
+test('Blogger title must belong uniquely to the publication containing the original operation',async()=>{
+  const f=fixture(),article=bloggerTesting.approvedArticle(f.context),operationId='11111111-1111-4111-8111-111111111111';
+  f.setTask({publicUrl:POST_URL,submittedAt:NOW.toISOString(),articleApprovedAt:undefined,blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'published'}});
+  const heading=`<h3 class="post-title">${article.title}</h3>`,content=`<div class="post-body">${article.content(operationId)}</div>`;
+  const changed='<h3 class="post-title">Changed article title</h3>';
+  const cases:[string,string,boolean][]=[
+    ['article title',`<article>${heading}${content}</article>`,true],
+    ['classic post container',`<div class="post hentry"><header>${heading}</header>${content}</div>`,true],
+    ['detached sidebar title',`<aside>${heading}</aside><article>${changed}${content}</article>`,false],
+    ['sidebar inside same article',`<article><aside>${heading}</aside>${changed}${content}</article>`,false],
+    ['other publication title',`<article>${heading}</article><article>${changed}${content}</article>`,false],
+    ['nested other publication title',`<article><section class="post">${heading}</section>${changed}${content}</article>`,false],
+    ['body title substitute',`<article><div class="post-body">${heading}</div>${changed}${content}</article>`,false],
+    ['ambiguous publication headings',`<article>${heading}${changed}${content}</article>`,false],
+  ];
+  const before=structuredClone(f.task);
+  for(const [name,html,found] of cases){
+    const result=await verifyBloggerPublication(f.context,{publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from(html)})}});
+    assert.equal(result.found,found,name);if(!found)assert.equal(result.outcome,'invalid');
+  }
+  assert.deepEqual(f.task,before);assert.equal(f.checkpoints.length,0);
 });

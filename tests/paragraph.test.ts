@@ -437,3 +437,18 @@ test('unsupported channel shape and unapproved drafts return explicit needs-inpu
     assert.equal(calls, 0);
   }
 });
+
+test('Paragraph carries HTTP robots policy from anonymous page into verification', async () => {
+  const {task,site}=fixture(),approved=article(task,site);
+  task.paragraph={publicationId:PUBLICATION_ID,slug:approved.slug,contentHash:approved.contentHash,stage:'published',postId:POST_ID};
+  task.publicUrl=`https://paragraph.com/@${PUBLICATION_SLUG}/${approved.slug}`;
+  for(const directive of ['noindex','nofollow','max-image-preview:none']){
+    const result=await verifyParagraphPublication(task,site.url,undefined,{fetch:async(input,init)=>{
+      assert.equal(init.method,'GET');const url=new URL(input);
+      if(url.pathname===`/api/v1/publications/${PUBLICATION_ID}`)return json(publication());
+      if(url.pathname.startsWith(`/api/v1/publications/${PUBLICATION_ID}/posts/`))return json(remotePost(task,site,'published'));
+      const page=html(publicPage().replaceAll('rel="nofollow ugc"',''));page.headers.set('x-robots-tag',directive);return page;
+    }});
+    assert.equal(result.found,directive!=='noindex');if(directive==='nofollow')assert.equal(result.rel,'nofollow');
+  }
+});

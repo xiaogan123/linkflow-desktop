@@ -23,17 +23,17 @@ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.query
  for(let i=0;i<150;i++){win=BrowserWindow.getAllWindows().find(w=>w.getTitle().includes('LINKFLOW'));if(win&&!win.webContents.isLoading()&&await evaluate('!!window.linkflow&&!!document.querySelector("h1")').catch(()=>false))break;await delay(100)}
  await waitUi('document.body.innerText.includes("manual.example")');
  await click('渠道');
- await evaluate(`document.querySelector('[aria-label="查看 WordPress.com 详情"]').click()`);await delay(80);
+ await evaluate(`document.querySelector('[aria-label="查看 Ghost(Pro) 详情"]').click()`);await delay(80);
  check('selection is required before channel task creation',await evaluate('(()=>{const r=document.querySelector(".channel-details-row:not([hidden])");return r.innerText.includes("先在上方选择网站")&&[...r.querySelectorAll("button")].find(b=>b.innerText.trim()==="建立人工待办")?.disabled})()'));
  await evaluate(`(()=>{const e=document.querySelector('[aria-label="按网站筛选相关渠道"]');e.value=${JSON.stringify(siteId)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);await delay(100);
  await click('建立人工待办');await waitUi('document.body.innerText.includes("返回总览")');
- const snapshot=await invoke('snapshot'),tasks=snapshot.tasks.filter(t=>t.siteId===siteId&&t.channelId==='wordpress-com');
- check('actual IPC creates one manual task without publishing',tasks.length===1&&tasks[0].channelId==='wordpress-com'&&tasks[0].status==='needs_input'&&!tasks[0].submittedAt&&!tasks[0].publicUrl&&snapshot.settings.autoRun===false);
+ const snapshot=await invoke('snapshot'),tasks=snapshot.tasks.filter(t=>t.siteId===siteId&&t.channelId==='ghost-pro');
+ check('actual IPC creates one manual task without publishing',tasks.length===1&&tasks[0].channelId==='ghost-pro'&&tasks[0].status==='needs_input'&&!tasks[0].submittedAt&&!tasks[0].publicUrl&&snapshot.settings.autoRun===false);
  await click('渠道');
  await evaluate(`(()=>{const e=document.querySelector('[aria-label="按网站筛选相关渠道"]');e.value=${JSON.stringify(siteId)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);await delay(80);
- await evaluate(`document.querySelector('[aria-label="查看 WordPress.com 详情"]').click()`);await delay(80);
+ await evaluate(`document.querySelector('[aria-label="查看 Ghost(Pro) 详情"]').click()`);await delay(80);
  check('existing source offers continuation rather than duplicate creation',await evaluate('document.querySelector(".channel-details-row:not([hidden])").innerText.includes("查看已有任务")'));
- check('backend rejects duplicate source',await invoke('site:queue-channel',{id:siteId,channelId:'wordpress-com'}).then(()=>false,()=>true));
+ check('backend rejects duplicate source',await invoke('site:queue-channel',{id:siteId,channelId:'ghost-pro'}).then(()=>false,()=>true));
  await evaluate('document.querySelector(".channel-details-row:not([hidden]) .channel-task-action").scrollIntoView({block:"center"})');await delay(80);writeFileSync('.evidence/manual-channel-workflow.png',(await win.webContents.capturePage()).toPNG());
  await click('任务');await click('需你处理');
  await evaluate('document.querySelector(".work-identity").click()');await delay(80);

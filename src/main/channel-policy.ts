@@ -15,7 +15,10 @@ export function canConfirmMissingPolicy(channel:Channel){
 
 /** Evidence coverage only; this does not claim all platform policies are known. */
 export function supportsOfficialGuidanceReview(channel:Channel){
-  return canConfirmMissingPolicy(channel)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
+  const paper=channel.provenance==='built-in'&&channel.id==='paper-wf'&&channel.domain==='paper.wf'&&channel.rulesUrl==='https://paper.wf/about'&&channel.evidenceSources?.length===2&&channel.evidenceSources.every(source=>source.appliesTo==='paper-wf'&&source.applicability==='verified'&&(source.kind==='api'&&source.url==='https://developers.write.as/docs/api/'||source.kind==='product_guidance'&&source.url==='https://paper.wf/about'))&&new Set(channel.evidenceSources.map(source=>source.kind)).size===2;
+  const verbose=channel.provenance==='built-in'&&channel.id==='verbose'&&channel.domain==='verbose.blog'&&channel.rulesUrl==='https://verbose.blog/why'&&channel.evidenceSources?.length===2&&channel.evidenceSources.every(source=>source.appliesTo==='verbose'&&source.applicability==='verified'&&(source.kind==='api'&&source.url==='https://verbose.blog/docs'||source.kind==='product_guidance'&&source.url==='https://verbose.blog/why'))&&new Set(channel.evidenceSources.map(source=>source.kind)).size===2;
+  const betterThanHtml=channel.provenance==='built-in'&&channel.id==='betterthanhtml'&&channel.domain==='betterthanhtml.com'&&channel.rulesUrl==='https://betterthanhtml.com/ai'&&channel.evidenceSources?.length===1&&channel.evidenceSources[0]?.url==='https://betterthanhtml.com/ai'&&channel.evidenceSources[0]?.kind==='product_guidance'&&channel.evidenceSources[0]?.appliesTo==='betterthanhtml'&&channel.evidenceSources[0]?.applicability==='verified';
+  return (canConfirmMissingPolicy(channel)||paper||verbose||betterThanHtml)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
 }
 
 export function channelPolicyScopeHash(site:Site,channel:Channel){

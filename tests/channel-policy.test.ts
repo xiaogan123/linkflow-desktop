@@ -75,3 +75,31 @@ test('guidance approval still requires real citations from both site and channel
   const state=fixture(),r=await reviewArticleDraft(state.tasks[0],state.sites[0],channel,state.settings,model({citations}),undefined,{fetchHtml});assert.equal(r.status,'failed');assert.equal(r.reasonCode,'evidence_invalid');
  }
 });
+
+test('Paper uses exact official guidance with independent review while content policy remains unknown',async()=>{
+ const paper=CHANNELS.find(item=>item.id==='paper-wf')!,state=fixture(),task={...state.tasks[0],channelId:paper.id,sourceDomain:paper.domain};
+ const guidance='Paper.wf lets you publish a blog.';
+ const paperFetch=async(url:string)=>({url,html:'<p>'+(url.startsWith(state.sites[0].url)?siteQuote:guidance)+'</p>'});
+ const paperModel=model({citations:[{url:state.sites[0].url,quote:siteQuote},{url:'https://paper.wf/about',quote:guidance}]});
+ assert.equal(supportsOfficialGuidanceReview(paper),true);
+ const r=await reviewArticleDraft(task,state.sites[0],paper,state.settings,paperModel,undefined,{fetchHtml:paperFetch});
+ assert.equal(r.status,'passed');assert.equal(r.checks?.channelRules,'unknown');assert.equal(r.policyDecision,undefined);
+ for(const source of [{...paper,provenance:'custom' as const},{...paper,domain:'other.example'},{...paper,evidenceSources:paper.evidenceSources?.slice(0,1)}])assert.equal(supportsOfficialGuidanceReview(source),false);
+ const rejected=await reviewArticleDraft(task,state.sites[0],paper,state.settings,model({knownChannelRestrictions:'fail',citations:[{url:state.sites[0].url,quote:siteQuote},{url:'https://paper.wf/about',quote:guidance}]}),undefined,{fetchHtml:paperFetch});
+ assert.equal(rejected.status,'failed');assert.equal(rejected.checks?.channelRules,'fail');
+});
+
+test('Verbose official agent publishing guidance is narrowly bound and keeps full policy unknown',async()=>{
+ const candidate=CHANNELS.find(item=>item.id==='verbose')!,state=fixture(),task={...state.tasks[0],channelId:'verbose',sourceDomain:'verbose.blog'};
+ const quote='An API for agents to publish and manage their writing.';
+ const fetchHtml=async(url:string)=>({url,html:`<p>${url.startsWith(state.sites[0].url)?siteQuote:quote}</p>`});
+ const citations=[{url:state.sites[0].url,quote:siteQuote},{url:'https://verbose.blog/why',quote}];
+ const result=await reviewArticleDraft(task,state.sites[0],candidate,state.settings,model({citations}),undefined,{fetchHtml});
+ assert.equal(result.status,'passed');assert.equal(result.checks?.channelRules,'unknown');assert.equal(result.policyDecision,undefined);
+ for(const variant of [{...candidate,provenance:'custom' as const},{...candidate,domain:'elsewhere.example'},
+   {...candidate,evidenceSources:candidate.evidenceSources?.slice(0,1)},
+   {...candidate,evidenceSources:candidate.evidenceSources?.map(source=>({...source,appliesTo:'other'}))}])
+   assert.equal(supportsOfficialGuidanceReview(variant),false);
+ const rejected=await reviewArticleDraft(task,state.sites[0],candidate,state.settings,model({citations,knownChannelRestrictions:'fail'}),undefined,{fetchHtml});
+ assert.equal(rejected.status,'failed');assert.equal(rejected.checks?.channelRules,'fail');
+});

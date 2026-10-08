@@ -101,6 +101,7 @@ function reviewFor(task: Task, site: Site, status: ArticleReview['status']): Art
     status,
     reason: status === 'passed' ? 'Independent fixture review passed.' : 'Remove the unsupported claim.',
     reasonCode: status === 'passed' ? 'passed' : 'content_rejected',
+    reviewContractVersion: 4,
     reviewedAt: NOW,
     evidenceUrls: [site.url, channel.rulesUrl],
     draftRevision: task.draftRevision ?? 0,

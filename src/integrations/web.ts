@@ -3,6 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import { load } from 'cheerio';
+import {applyDeclaredArticleVisibility,elementConcealed,publicPagePolicy,withPageNofollow} from './article-visibility';
 import type { Category, LinkResult } from '../shared/types.js';
 
 const MAX_HTML_BYTES = 1_000_000;
@@ -46,6 +47,7 @@ export interface PublicTextFetchResult {
   text: string;
   contentType: string;
   bytes: number;
+  robotsHeader?: string;
 }
 
 export function nextHtmlByteCount(current: number, chunkBytes: number): number {
@@ -378,7 +380,8 @@ export async function fetchPublicText(
     if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') {
       throw new Error('Compressed response is unsupported');
     }
-    return { url: current.href, text: response.body.toString('utf8'), contentType, bytes: response.body.length };
+    return { url: current.href, text: response.body.toString('utf8'), contentType, bytes: response.body.length,
+      robotsHeader: String(response.headers['x-robots-tag']??'') };
   }
   throw new Error('Too many redirects');
 }
@@ -437,16 +440,22 @@ export function belongsToSource(actualUrl: string, expectedDomain: string): bool
   return false;
 }
 
-export function findDirectLink(html: string, pageUrl: string, targetUrl: string): LinkResult {
+export function findDirectLink(html: string, pageUrl: string, targetUrl: string, robotsHeader=''): LinkResult {
   const targetHost = normalizedHost(targetUrl);
   const $ = load(html);
+  applyDeclaredArticleVisibility($);
+  const policy=publicPagePolicy($,pageUrl,robotsHeader);
+  if(!policy.valid)return {found:false,outcome:'invalid',url:pageUrl,rel:'unknown',reason:'Public page has an indexing restriction, redirect or conflicting canonical; publication is retained but not counted as a qualified source'};
   const baseHref = $('base[href]').first().attr('href');
   const base = baseHref ? new URL(baseHref, pageUrl).href : pageUrl;
   $('template, script, style, noscript, head').remove();
   let result: LinkResult | undefined;
   $('a[href]').each((_index, element) => {
     if (result) return;
-    if ($(element).closest('template, head').length) return;
+    if ($(element).add($(element).parents()).toArray().some(node=>elementConcealed($,node))) return;
+    const visible=$(element).clone();
+    visible.find('*').toArray().filter(node=>elementConcealed($,node)).forEach(node=>$(node).remove());
+    if(!visible.text().trim()&&!visible.find('img[alt]').toArray().some(node=>!!$(node).attr('alt')?.trim()))return;
     try {
       const destination = new URL($(element).attr('href')!, base);
       if (!['https:', 'http:'].includes(destination.protocol)) return;
@@ -455,7 +464,7 @@ export function findDirectLink(html: string, pageUrl: string, targetUrl: string)
         found: true,
         outcome: 'found',
         url: pageUrl,
-        rel: clean($(element).attr('rel')).toLowerCase(),
+        rel: withPageNofollow(clean($(element).attr('rel')),policy.nofollow),
         reason: 'Public HTML contains a direct anchor to the target host; indexing is not verified',
       };
     } catch { /* Ignore malformed anchors. */ }
@@ -475,11 +484,11 @@ export async function verifyLink(publicUrl: string, targetUrl: string, expectedD
     return { found: false, outcome: 'invalid', url: sourceUrl, rel: '', reason: error instanceof Error ? error.message : 'Invalid verification input' };
   }
   try {
-    const fetched = await fetchPublicHtml(sourceUrl, signal, dependencies);
+    const fetched = await fetchPublicText(sourceUrl, signal, dependencies);
     if (expectedDomain && !belongsToSource(fetched.url, expectedDomain)) {
       return { found: false, outcome: 'invalid', url: fetched.url, rel: '', reason: 'Public page redirected outside the expected channel domain' };
     }
-    return findDirectLink(fetched.html, fetched.url, targetUrl);
+    return findDirectLink(fetched.text, fetched.url, targetUrl,fetched.robotsHeader);
   } catch (error) {
     return { found: false, outcome: 'unreachable', url: sourceUrl, rel: '', reason: error instanceof Error ? error.message : 'Verification failed' };
   }

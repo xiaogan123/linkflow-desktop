@@ -1,13 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {ArticleReviewReasonCode,Channel,Site,Snapshot,Task} from '../src/shared/types';
-import {articleReviewDetail,canRestartArticleReview,canRetryTaskManually,channelReadinessForDisplay,isUserActionTask,taskHasAutomaticFollowup,taskPresentation,taskReservesPlanningSlot,taskSortRank,taskWorkKind} from '../src/ui/presentation';
+import {articleReviewDetail,canRestartArticleReview,canRetryTaskManually,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskHasAutomaticFollowup,taskPresentation,taskReservesPlanningSlot,taskSortRank,taskWorkKind} from '../src/ui/presentation';
 
 const stamp='2026-10-03T00:00:00.000Z';
 const site:Site={id:'site-1',domain:'example.com',url:'https://example.com',email:'owner@example.com',publicEmail:'owner@example.com',name:'Example',description:'Example software',category:'software',language:'zh',monthlyTarget:2,articleReviewMode:'ai',status:'ready',createdAt:stamp};
 const channel=(id:string,automation:Channel['automation'],accountRequired=true):Channel=>({id,name:id,domain:`${id}.example`,url:`https://${id}.example`,submitUrl:`https://${id}.example/new`,categories:['general'],languages:['zh'],kind:'profile',emailRequired:true,accountRequired,articleRequired:false,free:'yes',freeNote:'fixture',automation,quality:'A',qualityReason:'fixture',rulesUrl:`https://${id}.example/rules`,checkedAt:'2026-10-03',notes:'',allowedHosts:[`${id}.example`],enabled:true});
 const task=(status:Task['status']='queued'):Task=>({id:'task-1',siteId:site.id,channelId:'telegraph',sourceDomain:'telegra.ph',status,createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'fixture'});
 const failedReview=(reasonCode:ArticleReviewReasonCode)=>({status:'failed' as const,reason:'fixture failure',reasonCode,reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)});
+
+test('draft caption reports saved publication result even after the AI channel is disabled',()=>{
+  const published:Task={...task('live'),draft:{title:'Published article',description:'Description',body:'Body'},publicUrl:'https://author.mataroa.blog/blog/post/',firstLiveAt:stamp,health:'healthy',linkCheck:'found',articleReview:{status:'passed',reason:'fixture',reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+  assert.equal(published.articleApprovedAt,undefined);
+  assert.equal(draftStatusLabel(published,'ai',false),'已发布 · 当前有效');
+  assert.equal(draftStatusLabel({...published,health:'unknown'},'ai',false),'已发布 · 待重新确认');
+  assert.equal(draftStatusLabel({...published,status:'expired'},'ai',false),'曾发布 · 当前待复核');
+  assert.equal(draftStatusLabel({...published,status:'review',firstLiveAt:undefined},'ai',false),'已有公开地址 · 等待核验');
+  const awaiting={...task('queued'),draft:published.draft,articleReview:published.articleReview};
+  assert.equal(draftStatusLabel(awaiting,'ai',false),'待独立 AI 审核');
+});
 
 test('terminal invalid topic has a precise label without offering a generic paid retry',()=>{
   const invalid={...task('failed'),checkpoint:'invalid_topic'};
@@ -57,6 +68,12 @@ test('display readiness prefers a usable compatible identity and rejects profile
   const stale={id:'stale',channelId:gist.id,email:site.email,username:'stale',createdAt:stamp,status:'credentials_invalid' as const,hasPassword:false,credentialKind:'api_token' as const};
   const ready={...stale,id:'ready',status:'registered' as const,hasPassword:true};
   assert.equal(channelReadinessForDisplay({...base,accounts:[stale,ready]},site,gist),'ready');
+  const mataroa={...channel('mataroa','api'),kind:'article' as const};
+  const author={...ready,channelId:'mataroa',username:'author',publicationUrl:'https://author.mataroa.blog/'};
+  assert.equal(channelReadinessForDisplay({...base,accounts:[author]},site,mataroa),'ready');
+  assert.equal(channelReadinessForDisplay({...base,accounts:[{...author,mataroaExcludedSiteIds:[site.id]}]},site,mataroa),'handoff_required');
+  assert.equal(channelReadinessForDisplay({...base,accounts:[{...author,id:'excluded',mataroaExcludedSiteIds:[site.id]},author]},site,mataroa),'ready');
+
   assert.equal(channelReadinessForDisplay({...base,accounts:[{...ready,channelId:telegraph.id,credentialKind:'password'}]},site,telegraph),'autocreate');
   const otherSite={...site,id:'site-2',domain:'other.example',url:'https://other.example'};
   const profileAccount={...ready,channelId:github.id,credentialKind:'password' as const};

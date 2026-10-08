@@ -44,3 +44,27 @@ test('connection validates before saving encrypted secret, reuses one identity a
 test('Gist requires a project qualification and always requires draft review; token error text is masked',()=>{
  const store=fixture();try{const site=store.read().sites[0],c=CHANNELS.find(c=>c.id==='github-gist')!;assert.equal(matchChannels(site,[c]).length,0);site.qualifications={developer:'https://example.com/templates'};assert.equal(matchChannels(site,[c]).length,1);site.category='ai';assert.equal(requiresArticleReview(site,c),true);assert.equal(safeMessage('failed ghp_123456789abcdefgh github_pat_12345abc').includes('12345'),false)}finally{store.close()}
 });
+
+test('failed Gist state save restores old credentials and removes new orphan credentials',async()=>{
+ for(const reconnect of [false,true]){
+  const store=fixture(),secrets=new Map<string,string>(),vault={get:async(k:string)=>secrets.get(k),set:async(k:string,v:string)=>{secrets.set(k,v)},delete:async(k:string)=>{secrets.delete(k)}};
+  try{
+   const account=reconnect?await connectGist(store,vault,'original-token',async()=> 'octocat'):undefined;
+   const before=store.read(),beforeSecrets=[...secrets];
+   const failingStore={read:()=>store.read(),update:()=>{throw Error('synthetic state write failure')}};
+   await assert.rejects(connectGist(failingStore,vault,'replacement-token',account?.id,async()=> 'octocat'),/state write failure/);
+   assert.deepEqual(store.read(),before);assert.deepEqual([...secrets],beforeSecrets);
+  }finally{store.close()}
+ }
+});
+
+test('Gist token refresh preserves existing mailbox and website bindings',async()=>{
+ const store=fixture(),secrets=new Map<string,string>(),vault={get:async(k:string)=>secrets.get(k),set:async(k:string,v:string)=>{secrets.set(k,v)},delete:async(k:string)=>{secrets.delete(k)}};
+ try{
+  const account=await connectGist(store,vault,'original-token',async()=> 'octocat'),mailboxId='22222222-2222-4222-8222-222222222222';
+  store.update(state=>{state.accounts[0].mailboxId=mailboxId;state.accountBindings.push({id:'33333333-3333-4333-8333-333333333333',siteId:id,channelId:'github-gist',accountId:account.id,createdAt,updatedAt:createdAt})});
+  const bindings=store.read().accountBindings;
+  const updated=await connectGist(store,vault,'replacement-token',account.id,async()=> 'octocat');
+  assert.equal(updated.mailboxId,mailboxId);assert.equal(store.read().accounts[0].mailboxId,mailboxId);assert.deepEqual(store.read().accountBindings,bindings);
+ }finally{store.close()}
+});

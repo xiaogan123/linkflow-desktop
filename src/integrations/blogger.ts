@@ -1,6 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, SecretStore, Task } from '../shared/types';
+import {load} from 'cheerio';
+import {fetchPublicText,type PublicFetchDependencies} from './web';
+import {inspectRenderedArticle} from './article-rendering';
+import {applyDeclaredArticleVisibility,elementConcealed} from './article-visibility';
+import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, SecretStore, Task,LinkResult } from '../shared/types';
 
 const AUTHORIZATION_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -28,6 +32,7 @@ export interface BloggerDependencies {
   timeoutMs?: number;
   signal?: AbortSignal;
   uuid?: () => string;
+  publicFetch?: PublicFetchDependencies;
 }
 
 export interface BloggerDesktopClient {
@@ -768,11 +773,42 @@ function validBloggerState(value: NonNullable<Task['blogger']>): boolean {
     && ['inserting', 'draft', 'publishing', 'published'].includes(value.stage);
 }
 
+/** Public HTML retains the immutable operation marker written with the full article. */
+export async function verifyBloggerPublication(context:ExecutionContext,dependencies:BloggerDependencies={}):Promise<LinkResult>{
+  const fallback=context.task.publicUrl??context.site.blogger?.url??'https://www.blogger.com/';
+  const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:fallback,rel:'unknown',reason});
+  let article:ArticlePayload,state:NonNullable<Task['blogger']>,url:string;
+  try{
+    const saved=context.task.blogger,bound=context.site.blogger;
+    if(context.task.channelId!=='blogger'||!saved||!validBloggerState(saved)||!saved.postId||saved.stage!=='published'||!bound||bound.blogId!==saved.blogId)throw Error();
+    url=canonicalPublicUrl(fallback);if(new URL(url).origin!==new URL(canonicalPublicUrl(bound.url)).origin)throw Error();
+    article=articlePayload(context,false);state=saved;if(article.contentHash!==state.contentHash)throw Error();
+  }catch{return fail('invalid','Blogger 原稿、博客绑定或发布回执不一致；不会重发');}
+  try{
+    const page=await fetchPublicText(url,context.signal,dependencies.publicFetch,{allowRedirect:(_from,to)=>to.href===url});
+    if(page.url!==url)return fail('invalid','Blogger 公开地址与原记录不一致');
+    const $=load(page.text);applyDeclaredArticleVisibility($);
+    const selector=`[data-linkflow-operation="${state.operationId}"][data-linkflow-content-sha256="${state.contentHash}"]`;
+    const marker=$(selector);
+    if(marker.length!==1||!marker.closest('.post-body,.entry-content,article').length||marker.closest('header,footer,nav,aside').length)return fail('invalid','Blogger 原操作标记不在文章正文中');
+    const publicationSelector='article,.post,.hentry',publication=marker.closest(publicationSelector).first();
+    if(publication.length!==1)return fail('invalid','Blogger 原稿缺少可确认的文章容器');
+    const titles=publication.find('.post-title,.entry-title,h1,h2').toArray().filter(node=>
+      $(node).closest(publicationSelector)[0]===publication[0]
+      &&!$(node).closest('aside,footer,nav,.post-body,.entry-content').length
+      &&!$(node).add($(node).parents()).toArray().some(item=>elementConcealed($,item)));
+    if(titles.length!==1||$(titles[0]).text().normalize('NFC').replace(/\s+/g,' ').trim()!==article.title.normalize('NFC').replace(/\s+/g,' ').trim())return fail('invalid','Blogger 原文章未唯一呈现原稿标题');
+    const rendered=inspectRenderedArticle(page.text,article.baseContent,canonicalPublicUrl(context.site.url,true),selector,{pageUrl:page.url,robotsHeader:page.robotsHeader});
+    if(!rendered.found)return fail('invalid','Blogger 原操作标记、完整可见正文、全部链接或索引规则不一致；原投稿仍保留');
+    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Blogger 原稿、公开操作标记、可见完整正文及全部链接一致；不代表搜索收录'};
+  }catch{return fail('unreachable','Blogger 原公开文章暂时无法完整核验；不会重发');}
+}
+
 export async function reconcileBloggerTask(
   context: ExecutionContext,
   dependencies: BloggerDependencies = {},
 ): Promise<
-  | { status: 'found'; publicUrl: string }
+  | { status: 'found'; publicUrl: string; blogger:NonNullable<Task['blogger']> }
   | { status: 'draft'; blogger: NonNullable<Task['blogger']> }
   | { status: 'unknown' }
 > {
@@ -799,8 +835,9 @@ export async function reconcileBloggerTask(
     const found = state.postId
       ? await getPost(state.blogId, state.postId, access.accessToken, { ...dependencies, signal: context.signal })
       : await findExactPost(state.blogId, access.accessToken, article.title, article.content(state.operationId), state.operationId, { ...dependencies, signal: context.signal });
-    if (found && !exactPost(found, article.title, article.content(state.operationId), state.operationId)) return unknown;
-    if (found?.status === 'live' && found.url) return { status: 'found', publicUrl: found.url };
+    if (found && (state.postId&&found.id!==state.postId||!exactPost(found, article.title, article.content(state.operationId), state.operationId))) return unknown;
+    if (found?.status === 'live' && found.url) return { status: 'found', publicUrl: found.url,
+      blogger:bloggerState(state.blogId,state.operationId,state.contentHash,'published',found.id) };
     if (found?.status === 'draft' && state.stage !== 'published') {
       return { status: 'draft', blogger: bloggerState(state.blogId, state.operationId, state.contentHash, 'draft', found.id) };
     }

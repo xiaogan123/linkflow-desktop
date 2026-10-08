@@ -230,7 +230,7 @@ async function fixedRequest(
   init: RequestInit,
   dependencies: ParagraphDependencies | undefined,
   maxBytes: number,
-): Promise<string> {
+): Promise<{text:string;robotsHeader:string}> {
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new ParagraphError('invalid_response');
   if (dependencies?.signal?.aborted) throw new ParagraphError('cancelled');
   const controller = new AbortController();
@@ -264,7 +264,7 @@ async function fixedRequest(
     if (response.status === 429) throw new ParagraphError('rate_limited');
     if (response.status >= 500) throw new ParagraphError('network');
     if (!response.ok) throw new ParagraphError('rejected');
-    try { return await readBounded(response,maxBytes,controller.signal); }
+    try { return {text:await readBounded(response,maxBytes,controller.signal),robotsHeader:response.headers.get('x-robots-tag')??''}; }
     catch(error){if(timedOut)throw new ParagraphError('timeout');if(dependencies?.signal?.aborted)throw new ParagraphError('cancelled');throw error;}
   } finally {
     clearTimeout(timer);
@@ -293,7 +293,7 @@ async function apiRequest(
     body: options.body ? JSON.stringify(options.body) : undefined,
   }, dependencies, MAX_JSON_BYTES);
   try {
-    const value = JSON.parse(response) as unknown;
+    const value = JSON.parse(response.text) as unknown;
     if (!object(value)) throw new Error('shape');
     return value;
   } catch (error) {
@@ -302,7 +302,7 @@ async function apiRequest(
   }
 }
 
-async function publicHtml(url: string, dependencies?: ParagraphDependencies): Promise<string> {
+async function publicHtml(url: string, dependencies?: ParagraphDependencies): Promise<{text:string;robotsHeader:string}> {
   const expected = new URL(url);
   if (expected.origin !== PUBLIC_ORIGIN || !/^\/@[^/]+\/[^/]+$/.test(expected.pathname) || expected.search || expected.hash) {
     throw new ParagraphError('invalid_response');
@@ -636,9 +636,11 @@ function failureMessage(error: unknown, writeStarted: boolean): string {
   return 'Paragraph 返回了无法安全确认的结果';
 }
 
-function renderedArticle(html:string,article:ApprovedArticle,publicPage:boolean){
+function renderedArticle(html:string|{text:string;robotsHeader:string},article:ApprovedArticle,publicPage:boolean,pageUrl?:string){
+  const robotsHeader=typeof html==='string'?undefined:html.robotsHeader;
+  html=typeof html==='string'?html:html.text;
   const selector=publicPage?(load(html)('article .prose').length?'article .prose':'article'):'body';
-  return inspectRenderedArticle(html,article.markdown,article.target,selector);
+  return inspectRenderedArticle(html,article.markdown,article.target,selector,{pageUrl,robotsHeader});
 }
 
 async function readPublicPost(
@@ -660,7 +662,7 @@ async function readPublicPost(
   const rendered = renderedArticle(post.staticHtml, article, false);
   if (!rendered.found) throw new ParagraphError('invalid_response');
   const url = publicPostUrl(publication.slug, state.slug);
-  const page = renderedArticle(await publicHtml(url, dependencies), article, true);
+  const page = renderedArticle(await publicHtml(url, dependencies), article, true,url);
   if (!page.found) throw new ParagraphError('invalid_response');
   return { post, url, rel: page.rel === 'unknown' ? rendered.rel : page.rel };
 }
@@ -702,8 +704,10 @@ export async function verifyParagraphPublication(
     }
     const rendered = renderedArticle(post.staticHtml, article, false);
     if (!rendered.found) return unavailable(expectedUrl, 'Paragraph 公开 API 渲染正文或目标链接与审核原文不一致', 'invalid');
-    const pageAnchor = renderedArticle(await publicHtml(expectedUrl, { ...dependencies, signal }), article, true);
-    if (!pageAnchor.found) return unavailable(expectedUrl, 'Paragraph 公开页面尚未完整呈现审核正文及目标链接');
+    const pageAnchor = renderedArticle(await publicHtml(expectedUrl, { ...dependencies, signal }), article, true,expectedUrl);
+    if (!pageAnchor.found) return pageAnchor.reason==='policy'
+      ?unavailable(expectedUrl,'Paragraph 原文章已保留，但公开页有索引限制、跳转或 canonical 冲突，不能计为合格来源','invalid')
+      :unavailable(expectedUrl, 'Paragraph 公开页面尚未完整呈现审核正文及目标链接');
     return {
       found: true,
       outcome: 'found',

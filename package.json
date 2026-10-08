@@ -1,7 +1,7 @@
 {
   "name": "linkflow",
   "productName": "外链助手",
-  "version": "1.2.12",
+  "version": "1.2.13",
   "description": "个人免费外链计划客户端",
   "private": true,
   "type": "module",
@@ -31,6 +31,7 @@
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
     "cheerio": "^1.1.2",
+    "hive-tx": "7.2.1",
     "imapflow": "^2.0.7",
     "mailparser": "^3.9.0",
     "marked": "18.1.0",

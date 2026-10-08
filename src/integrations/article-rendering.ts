@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 import { marked } from 'marked';
+import {applyDeclaredArticleVisibility,styleConcealsArticle,publicPagePolicy,withPageNofollow} from './article-visibility';
 
 interface HtmlNodeLike {
   type?: string;
@@ -16,7 +17,7 @@ export interface RenderedArticleMatch {
   rel: string;
 }
 
-export type RenderedArticleFailure = 'body' | 'semantics' | 'target' | 'html';
+export type RenderedArticleFailure = 'body' | 'semantics' | 'target' | 'html' | 'policy';
 
 export type RenderedArticleInspection = RenderedArticleMatch | {
   found: false;
@@ -25,6 +26,8 @@ export type RenderedArticleInspection = RenderedArticleMatch | {
 
 export interface RenderedArticleOptions {
   title?: string;
+  pageUrl?: string;
+  robotsHeader?: string;
 }
 
 function canonicalHttps(input: string): string {
@@ -51,14 +54,10 @@ function nodeIsHidden(node: HtmlNodeLike): boolean {
   if (NON_RENDERED_ELEMENTS.has(name) || name === 'input' && (node.attribs?.type ?? '').toLowerCase() === 'hidden') return true;
   const attributes = node.attribs ?? {};
   if (Object.prototype.hasOwnProperty.call(attributes, 'hidden') || attributes['aria-hidden']?.toLowerCase() === 'true') return true;
-  if (name === 'dialog' && !Object.prototype.hasOwnProperty.call(attributes, 'open')) return true;
+  if (['dialog','details'].includes(name) && !Object.prototype.hasOwnProperty.call(attributes, 'open')) return true;
   const classes = new Set((attributes.class ?? '').split(/\s+/).filter(Boolean));
   if (['hidden', 'invisible', 'collapse', 'sr-only'].some(token => classes.has(token))) return true;
-  const style = (attributes.style ?? '').toLowerCase().replace(/\s+/g, '');
-  return /(?:^|;)display:none(?:!important)?(?:;|$)/.test(style)
-    || /(?:^|;)visibility:(?:hidden|collapse)(?:!important)?(?:;|$)/.test(style)
-    || /(?:^|;)content-visibility:hidden(?:!important)?(?:;|$)/.test(style)
-    || /(?:^|;)opacity:0(?:!important)?(?:;|$)/.test(style);
+  return styleConcealsArticle(attributes.style ?? '');
 }
 
 function nodeOrAncestorIsHidden(value: unknown): boolean {
@@ -109,6 +108,17 @@ function expectedArticleTextVariants(article: { content: string; title?: string 
   }
 }
 
+function renderedLinks($:ReturnType<typeof load>, root:unknown):string{
+  return JSON.stringify($(root as Parameters<typeof $>[0]).find('a[href]').toArray()
+    .filter(element=>!nodeOrAncestorIsHidden(element))
+    .map(element=>{
+      const href=$(element).attr('href')??'';
+      let exact=href;
+      try{exact=new URL(href).href;}catch{/* Relative links remain exact. */}
+      return [exact,normalizedVisibleText(renderedVisibleText(element))];
+    }));
+}
+
 export function articleSemanticsMatch(
   value: unknown,
   article: { content: string; title?: string },
@@ -134,13 +144,18 @@ export function inspectRenderedArticle(
     if (!bodySelector.trim()) return { found: false, reason: 'body' };
     const target = canonicalHttps(targetUrl);
     const $ = load(html);
-    const bodies = $(bodySelector).toArray().filter(element => !nodeOrAncestorIsHidden(element));
+    applyDeclaredArticleVisibility($);
+    const policy=publicPagePolicy($,options.pageUrl,options.robotsHeader);
+    if(!policy.valid)return {found:false,reason:'policy'};
+    const bodies = $(bodySelector).toArray().filter(element => !nodeOrAncestorIsHidden(element)&&!$(element).closest('footer,nav,aside').length);
     if (bodies.length !== 1) return { found: false, reason: 'body' };
     if (!articleSemanticsMatch(bodies[0], { content: markdown, title: options.title })) {
       return { found: false, reason: 'semantics' };
     }
+    const expected=load(String(marked.parse(markdown,{async:false,gfm:true})));
+    if(renderedLinks($,bodies[0])!==renderedLinks(expected,expected.root()))return {found:false,reason:'semantics'};
     const targetAnchors = $(bodies[0]).find('a[href]').toArray()
-      .filter(element => !nodeOrAncestorIsHidden(element))
+      .filter(element => !nodeOrAncestorIsHidden(element)&&normalizedVisibleText(renderedVisibleText(element)).length>0)
       .filter(element => {
         const href = $(element).attr('href');
         if (!href) return false;
@@ -148,7 +163,7 @@ export function inspectRenderedArticle(
         catch { return false; }
       });
     if (!targetAnchors.length) return { found: false, reason: 'target' };
-    return { found: true, rel: ($(targetAnchors[0]).attr('rel') ?? '').trim().toLowerCase() };
+    return { found: true, rel: withPageNofollow($(targetAnchors[0]).attr('rel')??'',policy.nofollow) };
   } catch {
     return { found: false, reason: 'html' };
   }

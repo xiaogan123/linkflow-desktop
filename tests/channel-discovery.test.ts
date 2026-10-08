@@ -59,10 +59,16 @@ test('tool wording never invents package or product qualification',()=>{
 
 test('affiliate signals keep hosted publication conditions visible without keyword-only rejection',()=>{
  const s=site('提供交易所邀请码、手续费减免和推荐佣金说明');
- for(const id of ['wordpress-com','paragraph']){
-  const result=channelDiscoveryFor(s,channel(id));
+ const wordpress=channelDiscoveryFor(s,channel('wordpress-com'));
+ assert.equal(wordpress.status,'blocked');assert.equal(wordpress.canQueue,false);assert.match(wordpress.reason,/停用/);
+ const leaflet=channelDiscoveryFor(s,channel('leaflet'));
+ assert.equal(leaflet.status,'blocked');assert.equal(leaflet.canQueue,false);assert.match(leaflet.reason,/停用/);
+ const enabledLeaflet=channelDiscoveryFor(s,{...channel('leaflet'),enabled:true});
+ assert.equal(enabledLeaflet.status,'recommended');assert.equal(enabledLeaflet.canQueue,true);assert.doesNotMatch(enabledLeaflet.reason,/联盟导流为主要目的/);
+ for(const candidate of [{...channel('wordpress-com'),enabled:true},channel('paragraph')]){
+  const result=channelDiscoveryFor(s,candidate),id=candidate.id;
   assert.equal(result.status,'needs_preparation',id);
-  assert.equal(result.canQueue,id!=='paragraph',id);if(id==='paragraph')assert.match(result.nextStep,/账号页连接本人 Paragraph/);
+  assert.equal(result.canQueue,false,id);if(id==='paragraph')assert.match(result.nextStep,/账号页连接本人 Paragraph/);
   assert.equal(result.executionReady,false,id);
   assert.match(result.reason,/联盟导流为主要目的/,id);
   assert.match(result.reason,/仅凭网站简介不能判定/,id);

@@ -69,8 +69,22 @@ test('article conversion preserves safe citations and JSON code while keeping on
   assert.equal(serialized.includes('"href":"https://example.com/other'), false);
   assert.equal(serialized.includes('<script>'), false);
   assert.equal(serialized.includes('<img'), false);
-  assert.match(serialized, /Author disclosure/);
-  assert.match(serialized, /owner or operator/);
+  assert.match(serialized, /Website discussed/);
+  assert.doesNotMatch(serialized, /site owner|owner or operator/i);
+  assert.doesNotMatch(JSON.stringify(nodes.at(-1)), /owner|operator|official source/i);
+  const chinese = JSON.stringify(articleToTelegraphNodes(technicalBody, '示例产品', 'https://example.com/', 'zh'));
+  assert.match(chinese, /文中所述网站/);
+  assert.doesNotMatch(chinese, /所有者|运营方|官方来源/);
+});
+
+test('conversion retains the reviewed commercial disclosure while adding only a neutral site link',()=>{
+  const reviewedBody=[body,'Commercial relationship disclosure: This article is promotional content for the linked website, not an independent third-party recommendation. The website participates in a referral plan that pays commissions.'].join('\n\n');
+  const nodes=articleToTelegraphNodes(reviewedBody,'Example Product','https://example.com/','en');
+  const serialized=JSON.stringify(nodes);
+  assert.match(serialized,/The website participates in a referral plan that pays commissions/);
+  assert.match(serialized,/not an independent third-party recommendation/);
+  assert.equal(telegraphTesting.countTargetLinks(nodes,'https://example.com/'),1);
+  assert.deepEqual(nodes.at(-1),{tag:'p',children:['Website discussed: ',{tag:'a',attrs:{href:'https://example.com/'},children:['Example Product']},'.']});
 });
 
 test('real-shaped Unicode Telegraph path is accepted as one canonical segment', () => {
@@ -109,6 +123,9 @@ test('new account token is persisted as a vault secret and never placed in a URL
   assert.ok(calls.every(call => !call.url.includes(token) && call.redirect === 'error'));
   assert.equal(calls.find(call => call.url.endsWith('/createPage'))?.params.get('access_token'), token);
   assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.has('access_token'), false);
+  assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.get('author_name'), 'Promotional content publisher');
+  assert.equal(calls.find(call => call.url.endsWith('/createPage'))?.params.get('author_name'), 'Promotional content publisher');
+  assert.doesNotMatch(JSON.stringify(publishedContent), /site owner|owner or operator|所有者|运营方/i);
   assert.equal(telegraphTesting.countTargetLinks(publishedContent, 'https://example.com/'), 1);
 });
 

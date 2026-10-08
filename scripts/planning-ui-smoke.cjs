@@ -116,6 +116,7 @@ if(!process.versions.electron){
     await clickText('渠道');
     await evaluate('(()=>{const e=document.querySelector("[aria-label=按网站筛选相关渠道]");e.value="site-repeat";e.dispatchEvent(new Event("change",{bubbles:true}))})()');await delay(100);
     const telegraphOpened=await evaluate(`(()=>{const button=[...document.querySelectorAll('.channel-identity')].find(item=>item.innerText.includes('Telegraph'));if(!button)return false;button.click();return true})()`);check('repeatable Telegraph channel is visible',telegraphOpened);await delay(80);
+    check('Telegraph explicitly creates its API identity without first-time connection',await evaluate(`(()=>{const row=[...document.querySelectorAll('.channel-identity')].find(item=>item.innerText.includes('Telegraph'))?.closest('tr');return row?.querySelector('.channel-setup-note')?.innerText.includes('自动创建作者身份，无需首次连接')&&row?.querySelector('.onboarding-setup-note')?.innerText.includes('调用 API 自动创建作者身份并加密保存令牌')})()`));
     check('historical Telegraph result exposes the next publication opportunity',await evaluate(`(()=>{const action=document.querySelector('.channel-details-row:not([hidden]) .channel-task-action');return action?.innerText.includes('将按')&&[...action.querySelectorAll('button')].some(item=>item.innerText==='加入执行计划'&&!item.disabled)&&!action.innerText.includes('查看已有任务')})()`));
 
     await clickText('总览');await clickSite('no-auto.example');
@@ -126,7 +127,7 @@ if(!process.versions.electron){
     await clickText('返回总览');await clickSite('policy.example');
     await waitFor('document.body.innerText.includes("不要求你决定例外")');
     check('Telegraph policy setting is optional and automatic flow waits for evidence',await evaluate('document.body.innerText.includes("自动流程会等待新证据，不要求你决定例外")&&document.body.innerText.includes("可选：渠道使用设置")'));
-    check('Telegraph readiness says its official API identity is created automatically',await evaluate('document.body.innerText.includes("任务会自动创建官方 API 身份")'));
+    check('Telegraph site readiness prepares the API identity automatically without account handoff',await evaluate(`(()=>{const row=[...document.querySelectorAll('.site-tools .fit-row')].find(item=>item.querySelector('strong')?.innerText==='Telegraph');return row?.innerText.includes('官方 API')&&row.innerText.includes('任务会自动准备发布身份或本机凭据')&&!row.innerText.includes('需先连接并验证已有账号')})()`));
     await evaluate('document.querySelector(".task-summary").click()');await delay(100);
     check('site timeline preserves policy evidence details without a fake schedule or retry CTA',await evaluate(`(()=>{const card=document.querySelector('.task-card');return card.innerText.includes('等待渠道许可证据')&&card.innerText.includes('当前来源已停止')&&card.innerText.includes('自动后续')&&card.innerText.includes('未安排')&&![...card.querySelectorAll('button')].some(button=>button.innerText.includes('重新 AI 核对')||button.innerText.includes('受控重试'))})()`));
 

@@ -556,3 +556,13 @@ test('a pause during the positive checkpoint retains the exact public receipt in
   assert.equal(result.publicUrl, nostrTesting.publicUrlFor(data.task.nostr!));
   assert.equal([...harness.sends.values()].reduce((sum, count) => sum + count, 0), 2);
 });
+
+test('Nostr public reader headers restrict qualification without changing the signed event', async () => {
+  const base=signedFixture(),harness=new RelayHarness();harness.events.set(base.event.id,base.event);
+  for(const directive of ['noindex','nofollow','max-image-preview:none']){
+    const result=await verifyNostrPublication(base.task,site().url,undefined,dependencies(harness,async()=>({url:base.url,html:readerHtml(base.event),robotsHeader:directive})));
+    assert.equal(result.found,directive!=='noindex');
+    if(directive==='nofollow')assert.match(result.rel,/nofollow/);
+  }
+  assert.deepEqual(base.task.nostr,base.receipt);
+});

@@ -17,13 +17,13 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, 'rules_checked');
+    assert.equal(channel.evidenceStatus, ['betterthanhtml','sigle','nuance'].includes(channel.id)?'source_checked':'rules_checked');
     if(channel.authority) assert.ok(channel.authority.source && channel.authority.asOf);
     if(channel.traffic) assert.ok(channel.traffic.source && channel.traffic.asOf);
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
     assert.match(channel.qualityReason, /[\u3400-\u9fff]/, `${channel.id} qualityReason`);
     assert.match(channel.notes, /[\u3400-\u9fff]/, `${channel.id} notes`);
-    if (channel.kind === 'community' && channel.id!=='bluesky') assert.equal(channel.automation, 'manual');
+    if (channel.kind === 'community' && !['bluesky','hive'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
 });
@@ -76,13 +76,21 @@ test('matches a relevant audience and does not grant general links a high score'
 
 
 test('financial publication candidates require ownership and never gain automatic execution',()=>{
-  const ids=['wordpress-com','ghost-pro','tumblr','linkedin-articles','youtube-channel','x-profile'];
+  const ids=['ghost-pro','tumblr','linkedin-articles','youtube-channel','x-profile'];
   const s=site('finance','zh-hans');
   assert(!matchChannels(s,CHANNELS).some(m=>ids.includes(m.channel.id)));
   s.qualifications={publication:'https://example.com/about'};
   const matched=matchChannels(s,CHANNELS).map(m=>m.channel.id);
   for(const id of ids){const c=CHANNELS.find(c=>c.id===id)!;assert(matched.includes(id),id);assert.equal(c.automation,'manual');assert.equal(c.checkedAt,'2026-09-30');assert.equal(c.authority,undefined);assert.equal(c.traffic,undefined)}
+  const wordpress=CHANNELS.find(c=>c.id==='wordpress-com')!;assert(!matched.includes(wordpress.id));assert.equal(wordpress.automation,'api');assert.equal(wordpress.enabled,false);assert.equal(wordpress.checkedAt,'2026-10-08');assert.match(wordpress.notes,/待实发验收/);
+  const leaflet=CHANNELS.find(c=>c.id==='leaflet')!;assert(!matched.includes(leaflet.id));assert.equal(leaflet.automation,'api');assert.equal(leaflet.enabled,false);assert.equal(leaflet.checkedAt,'2026-10-08');assert.equal(leaflet.requirements,undefined);assert(leaflet.categories.includes('general'));assert(leaflet.categories.includes('finance'));assert.equal(leaflet.authority,undefined);assert.equal(leaflet.traffic,undefined);assert.match(leaflet.notes,/不构成平台.*专门许可/);assert.match(leaflet.notes,/当前保持停用/);
   assert.equal(CHANNELS.find(c=>c.id==='ghost-pro')?.free,'paid');
+});
+
+test('Leaflet review sources use fetchable pinned GitHub HTML pages',()=>{
+  const leaflet=CHANNELS.find(c=>c.id==='leaflet')!;
+  assert.deepEqual(leaflet.evidenceSources?.slice(0,2).map(source=>new URL(source.url).hostname),['github.com','github.com']);
+  for(const source of leaflet.evidenceSources?.slice(0,2)??[]){assert.match(source.url,/\/blob\/a583a135338740205e38e003d9213533f742edb6\//);assert.doesNotMatch(source.url,/raw\.githubusercontent\.com/)}
 });
 test('prohibited AI authorship and unverified financial permissions remain excluded',()=>{
   const s=site('finance');s.qualifications={publication:'https://example.com/about'};
@@ -96,4 +104,13 @@ test('hosted publication results use their public article host rather than the v
  const c=CHANNELS.find(c=>c.id==='ghost-pro')!;assert.equal(c.domain,'ghost.io');
  const result=new URL('https://journal.ghost.io/checklist/');assert(result.hostname.endsWith('.'+c.domain));
  assert(c.allowedHosts.includes(new URL(c.submitUrl).hostname));
+});
+
+
+test('wallet candidates are not automatic and partial documentation is labelled honestly',()=>{
+  for(const id of ['sigle','nuance']){const c=CHANNELS.find(item=>item.id===id)!;assert(c);assert.equal(c.automation,'manual');assert.equal(c.evidenceStatus,'source_checked');assert(c.evidenceSources?.every(source=>source.kind==='product_guidance'));assert(c.categories.includes('finance'));assert.equal(c.authority,undefined);assert.equal(c.traffic,undefined);}
+  assert.match(CHANNELS.find(c=>c.id==='paragraph')!.notes,/Mirror.*同一来源/);
+  assert.match(CHANNELS.find(c=>c.id==='hive')!.notes,/PeakD.*Ecency.*一个来源/);
+  assert.equal(CHANNELS.some(c=>['mirror','peakd','ecency'].includes(c.id)),false);
+  const c=CHANNELS.find(c=>c.id==='betterthanhtml')!;assert.equal(c.accountRequired,false);assert.equal(c.emailRequired,false);assert.equal(c.free,'yes');assert.equal(c.evidenceStatus,'source_checked');assert.match(c.notes,/不承诺发布后可撤回/);
 });

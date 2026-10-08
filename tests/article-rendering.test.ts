@@ -70,3 +70,16 @@ test('unicode exponents and digit separators retain meaning while inline sentenc
   assert.equal(check('Value is 1.2 units.','Value is 1 .2 units.').found,false);
   assert.equal(check('Documentation at example.com/mcp.','Documentation at example.com/mcp .').found,true);
 });
+
+test('closed, clipped, stylesheet-hidden articles and empty target links cannot count as visible results',()=>{
+ const markdown=`Reviewed information with a [Source](${TARGET}).`,body=`<p>Reviewed information with a <a href="${TARGET}">Source</a>.</p>`;
+ for(const page of [
+  `<details><article>${body}</article></details>`,
+  `<article style="height:1px;overflow:hidden">${body}</article>`,
+  `<style>.blocked { display: none }</style><article class="blocked">${body}</article>`,
+  `<style>article a {font-size:0}</style><article>${body}</article>`,
+  `<article><p>Reviewed information with a Source.<a href="${TARGET}"></a></p></article>`,
+ ])assert.equal(verifyRenderedArticle(page,markdown,TARGET,'article'),false);
+ assert.notEqual(verifyRenderedArticle(`<details open><article>${body}</article></details>`,markdown,TARGET,'article'),false);
+ assert.notEqual(verifyRenderedArticle(`<style>.unrelated{display:none}</style><article>${body}</article>`,markdown,TARGET,'article'),false);
+});

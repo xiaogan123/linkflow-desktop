@@ -1,4 +1,6 @@
-import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult } from '../shared/types';
+import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult,LinkResult } from '../shared/types';
+import {fetchPublicText,type PublicFetchDependencies} from './web';
+import {inspectRenderedArticle} from './article-rendering';
 
 const API_ORIGIN = 'https://api.github.com';
 const PUBLIC_ORIGIN = 'https://gist.github.com';
@@ -14,6 +16,7 @@ export interface GistDependencies {
   now?: () => string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  publicFetch?: PublicFetchDependencies;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -217,10 +220,10 @@ function markdownTargets(body: string, target: string): { count: number; extraRa
   return { count, extraRawTarget };
 }
 
-function approvedReadme(context: ExecutionContext): ApprovedReadme {
+function approvedReadme(context: ExecutionContext,requireApproval=true): ApprovedReadme {
   const draft = context.task.draft;
   if (!draft) throw new Error('请先生成并核对 Gist 草稿');
-  if (!context.task.articleApprovedAt || !Number.isFinite(Date.parse(context.task.articleApprovedAt))) throw new Error('请先完成人工核对并批准文章草稿');
+  if (requireApproval&&(!context.task.articleApprovedAt || !Number.isFinite(Date.parse(context.task.articleApprovedAt)))) throw new Error('请先完成人工核对并批准文章草稿');
   if (!draft.title || draft.title.length > 256 || /[\u0000-\u001f\u007f]/.test(draft.title)) throw new Error('Gist 标题不符合发布要求');
   if (!draft.description || draft.description.length > 1_024 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(draft.description)) throw new Error('Gist 描述不符合发布要求');
   if (/\r/.test(draft.body) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(draft.body)) throw new Error('Gist 正文含有不支持的控制字符');
@@ -277,6 +280,29 @@ export async function readPublicGist(url: string, dependencies?: GistDependencie
     ? new Date(value.created_at).toISOString()
     : undefined;
   return { url: identity.url, login: identity.login, ...(createdAt ? { createdAt } : {}) };
+}
+
+/** An existing publication is checked anonymously, without renewing approval or credentials. */
+export async function verifyGistPublication(context:ExecutionContext,dependencies:GistDependencies={}):Promise<LinkResult>{
+  const fallback=context.task.publicUrl??PUBLIC_ORIGIN;
+  const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:fallback,rel:'unknown',reason});
+  let expected:GistIdentity,approved:ApprovedReadme;
+  try{
+    const identity=parsePublicUrl(fallback);
+    if(context.task.channelId!=='github-gist'||context.task.sourceDomain!=='gist.github.com'||!identity)throw Error();
+    expected=identity;approved=approvedReadme(context,false);
+    const account=context.getAccount();
+    if(account&&(account.channelId!=='github-gist'||account.username.toLowerCase()!==expected.login.toLowerCase()))throw Error();
+  }catch{return fail('invalid','Gist 原发布身份或完整稿件无效，保留记录且不重发');}
+  try{
+    const data=await githubRequest(`/gists/${expected.id}`,{signal:context.signal},dependencies);
+    if(!verifyGist(data,expected.login,approved.content,expected.id))return fail('invalid','Gist 匿名 API 的公开性、作者或完整 README 与原稿不一致');
+    const page=await fetchPublicText(expected.url,context.signal,dependencies.publicFetch,{allowRedirect:(_from,to)=>to.href===expected.url});
+    if(page.url!==expected.url)return fail('invalid','Gist 公开地址与原记录不一致');
+    const rendered=inspectRenderedArticle(page.text,approved.content,approved.target,'.file .markdown-body',{pageUrl:page.url,robotsHeader:page.robotsHeader});
+    if(!rendered.found)return fail('invalid','Gist 可见全文、全部链接或页面索引规则未通过核验；原投稿仍保留');
+    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Gist 匿名 API 原文及可见完整 README、全部链接一致；不代表搜索收录'};
+  }catch{return fail('unreachable','Gist 原发布的匿名 API 或页面暂时无法核验；不会重发');}
 }
 
 export async function runGistTask(context: ExecutionContext, dependencies?: GistDependencies): Promise<ExecutionResult> {
