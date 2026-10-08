@@ -5,7 +5,8 @@ export function hasPrivateKeyMaterial(input) {
     .replace(/\\+(?:r\\+n|[rn]|x0[ad]|u000[ad])/gi, '\n')
     .replace(/\\+(['"`/])/g, '$1')
     // Join literal fragments only, never interpolate variables or execute source.
-    .replace(/(['"`])(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\+(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*['"`]/g, '');
+    // Avoid overlapping parses of repeated closed block comments.
+    .replace(/(['"`])(?:\s|\/\*(?:[^*]|\*(?!\/))*\*\/|\/\/[^\n]*(?=\n|$))*\+(?:\s|\/\*(?:[^*]|\*(?!\/))*\*\/|\/\/[^\n]*(?=\n|$))*['"`]/g, '');
   const headers = new RegExp('-----BEGIN ' + '(?:[A-Z0-9]+ )?PRIVATE KEY-----', 'g');
   for (const header of text.matchAll(headers)) {
     let body = text.slice(header.index + header[0].length).trimStart();

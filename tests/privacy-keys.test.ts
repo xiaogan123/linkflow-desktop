@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
 import {createPrivateKey, generateKeyPairSync} from 'node:crypto';
 import {createRequire} from 'node:module';
-const {hasPrivateKeyMaterial} = createRequire(import.meta.url)('../scripts/lib/privacy-keys.mjs');
+const require = createRequire(import.meta.url);
+const privacyKeysPath = require.resolve('../scripts/lib/privacy-keys.mjs');
+const {hasPrivateKeyMaterial} = require(privacyKeysPath);
 const header = (kind = '') => '-----BEGIN ' + kind + 'PRIVATE KEY-----';
 
 test('key detection catches real plain and encrypted private material in source representations', () => {
@@ -56,4 +59,15 @@ test('legal JSON slash escapes and narrow PEM lines retain private-key detection
     assert.equal(createPrivateKey(narrow).asymmetricKeyType, 'ed25519');
     assert.equal(hasPrivateKeyMaterial(narrow), true);
   }
+});
+
+test('key detection stays bounded after many closed comments and reaches later private material', () => {
+  const script = `const {hasPrivateKeyMaterial}=require(${JSON.stringify(privacyKeysPath)});`
+    + `const input='"'+'/*x*/'.repeat(64)+'x'+${JSON.stringify(header() + '\nAbCd')};`
+    + `process.stdout.write(String(hasPrivateKeyMaterial(input)));`;
+  const result = spawnSync(process.execPath, ['-e', script], {encoding: 'utf8', timeout: 2_000});
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'true');
 });
