@@ -143,3 +143,39 @@ test('an alternative softly prefers an ASCII locale prefix matching the site lan
  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:{status:'failed',reason:'Rejected',reasonCode:'content_rejected',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}});
  assert.equal(recoverWithAlternativeTopic(current,aiSite,channel,[current],settings,now).kind,'switched');assert.equal(current.topicUrl,'https://example.com/zh-hans/guides/older');
 });
+
+test('alternative topics remain reserved by a different publisher receipt without submission metadata',()=>{
+ const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp},{url:'https://example.com/guide-three',discoveredAt:stamp}]};
+ const review={status:'failed' as const,reason:'Needs correction',reasonCode:'content_rejected' as const,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
+ const receipts:Partial<Task>[]=[
+  {channelId:'blogger',blogger:{blogId:'123456',postId:'654321',operationId:'synthetic-operation',contentHash:'a'.repeat(64),stage:'draft'}},
+  {channelId:'paragraph',paragraph:{publicationId:'fixture-publication',slug:'fixture-post',contentHash:'a'.repeat(64),stage:'draft',postId:'fixture-post'}},
+  {channelId:'bluesky',checkpoint:'bluesky_publish_uncertain'},
+ ];
+ for(const receipt of receipts)for(const status of ['failed','skipped','expired'] as const){
+  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review});
+  const other=task({...receipt,id:'other',status,topicUrl:'https://example.com/guide-two/'}),before=structuredClone(other);
+  const result=recoverWithAlternativeTopic(current,aiSite,channel,[current,other],settings,now);
+  assert.equal(result.kind,'switched');assert.equal(current.topicUrl,'https://example.com/guide-three',`${receipt.channelId}:${status}`);
+  assert.deepEqual(other,before);assert.equal(current.cost?.aiCalls,2);assert.equal(current.articleAttempts?.[0].draft?.body,'Original');
+ }
+ const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review});
+ const held=task({...receipts[0],id:'held',status:'failed',topicUrl:'https://example.com/guide-two'});
+ const result=recoverWithAlternativeTopic(current,{...aiSite,topics:aiSite.topics!.slice(0,2)},channel,[current,held],settings,now);
+ assert.equal(result.kind,'blocked');assert.equal(current.topicUrl,'https://example.com/guide-one');
+ assert.equal(current.topicSwitchAttempts,undefined);assert.equal(current.draft?.body,'Original');assert.equal(current.cost?.aiCalls,2);
+});
+
+test('a released registration-only wait or unsubmitted failure does not reserve an alternative topic',()=>{
+ const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp}]};
+ const review={status:'failed' as const,reason:'Needs correction',reasonCode:'content_rejected' as const,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
+ for(const extra of [
+  {channelId:'paper-wf',status:'skipped',checkpoint:'paper_account_create_pending',accountId:'original-account',deferredAt:stamp},
+  {channelId:'blogger',status:'failed',checkpoint:'article_rejected'},
+ ] satisfies Partial<Task>[]){
+  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review});
+  const other=task({...extra,id:'other',topicUrl:'https://example.com/guide-two'}),before=structuredClone(other);
+  assert.equal(recoverWithAlternativeTopic(current,aiSite,channel,[current,other],settings,now).kind,'switched');
+  assert.equal(current.topicUrl,'https://example.com/guide-two');assert.deepEqual(other,before);
+ }
+});

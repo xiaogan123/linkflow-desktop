@@ -155,8 +155,7 @@ export function sourceMetrics(siteId:string,tasks:Task[],now:Date,timeZone:strin
 /** Failed/skipped work without submission evidence releases source capacity. */
 export function taskOccupiesSource(task:Task):boolean{
   if(task.checkpoint==='existing_link')return true;
-  if(task.firstLiveAt||task.submittedAt||canonicalPublicPageUrl(task.publicUrl))return true;
-  return !['failed','skipped'].includes(task.status);
+  return taskReservesTopic(task);
 }
 
 export function isRepeatableOfficialArticleChannel(channel:Channel):boolean{
@@ -164,7 +163,14 @@ export function isRepeatableOfficialArticleChannel(channel:Channel):boolean{
 }
 
 function taskReservesTopic(task:Task):boolean{
-  return !!(task.firstLiveAt||task.submittedAt||canonicalPublicPageUrl(task.publicUrl)||!['failed','skipped'].includes(task.status));
+  return !!(task.firstLiveAt||(hasUnresolvedExternalAttempt(task)&&!isPendingPublisherRegistration(task))||!['failed','skipped'].includes(task.status));
+}
+
+/** Registration uncertainty stays pinned, but is not an attempted article publication. */
+export function isPendingPublisherRegistration(task:Task):boolean{
+  const checkpoint=task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':undefined;
+  return !!checkpoint&&task.checkpoint===checkpoint&&!!task.accountId&&
+    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml;
 }
 
 function topicCandidates(site:Site,tasks:Task[]):{known:boolean;available:string[];invalid:boolean}{
@@ -188,7 +194,7 @@ function originalTaskCanRecover(task:Task):boolean{
 }
 
 function hasUnresolvedExternalAttempt(task:Task):boolean{
-  return !!task.bluesky||!!task.leaflet||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|registration)/i.test(task.checkpoint??'');
+  return !!task.blogger||!!task.bluesky||!!task.leaflet||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration)/i.test(task.checkpoint??'');
 }
 
 function terminalBlock(task:Task):PublicationOpportunity|undefined{

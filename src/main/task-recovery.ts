@@ -1,6 +1,7 @@
 import type {ArticleReviewReasonCode,Channel, Settings, Site, Task} from '../shared/types';
 import {getArticleReviewMode} from '../shared/article-review-mode';
-import {articleTopicLanguageScore,canonicalPublicPageUrl,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
+import {articleTopicLanguageScore,canonicalPublicPageUrl,hasRecoverablePublisherDraftReceipt,isPendingPublisherRegistration} from '../shared/publication';
+export {isPendingPublisherRegistration} from '../shared/publication';
 import {isArticleTopicUrl} from '../shared/topic-policy';
 
 export const TASK_AI_BUDGET=6;
@@ -8,13 +9,6 @@ const TEMPORARY=new Set(['ai_unavailable','evidence_fetch_failed','format_invali
 const ALTERNATIVE_TOPIC_CODES=new Set<ArticleReviewReasonCode>(['content_rejected','evidence_invalid','invalid_topic']);
 /** A receipt still protects remote work when an imported task lacks its submission timestamp. */
 export function hasExternalAttempt(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.blogger||task.bluesky||task.paragraph||task.nostr||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.betterthanhtml)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/submitt|uncertain|published|registration/.test(task.checkpoint??'')}
-
-/** Registration uncertainty stays pinned, but is not an attempted article publication. */
-export function isPendingPublisherRegistration(task:Task):boolean{
-  const checkpoint=task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':undefined;
-  return !!checkpoint&&task.checkpoint===checkpoint&&!!task.accountId&&
-    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml;
-}
 
 export type AlternativeTopicRecoveryResult=
   |{kind:'not_applicable'|'ineligible'}
@@ -28,7 +22,7 @@ function alternativeTopic(task:Task,site:Site,tasks:Task[]):string|undefined{
   for(const other of tasks){
     if(other.id===task.id||other.siteId!==task.siteId)continue;
     for(const attempt of other.articleAttempts??[])remember(attempt.topicUrl);
-    const reserved=!!(other.submittedAt||other.publicUrl||other.firstLiveAt)||!['failed','skipped','expired'].includes(other.status);
+    const reserved=(hasExternalAttempt(other)&&!isPendingPublisherRegistration(other))||!['failed','skipped','expired'].includes(other.status);
     if(reserved)remember(other.topicUrl);
   }
   return (site.topics??[]).map((topic,index)=>({topic,index,canonical:canonicalPublicPageUrl(topic.url),language:articleTopicLanguageScore(topic,site.language),updated:Date.parse(topic.lastModified??topic.discoveredAt)}))

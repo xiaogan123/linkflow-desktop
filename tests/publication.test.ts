@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {capacityFor,makePlan,recoverInterrupted} from '../src/main/planner';
 import {emptyState} from '../src/main/store';
-import {canonicalPublicPageUrl,publicationCounts,publicationOpportunity} from '../src/shared/publication';
+import {canonicalPublicPageUrl,publicationCounts,publicationOpportunity,taskOccupiesSource} from '../src/shared/publication';
 import type {Channel,Site,Task} from '../src/shared/types';
 
 const day=86400000;
@@ -71,6 +71,48 @@ test('unresolved external submissions remain blocked even if a newer task succee
   const success=live(target.id,channel,'2026-09-10','https://telegra.ph/two','https://example.com/topic-2');
   const result=publicationOpportunity(target,channel,[unknown,success],at('2026-09-25'),'UTC',{officialApiConnected:true});
   assert.equal(result.allowed,false);assert.equal(result.blockingReason,'cooldown');assert.equal(result.nextAvailableAt,undefined);
+});
+
+test('planning reserves other-platform receipts and uncertain checkpoints without submission timestamps',()=>{
+  const receipt:Task['blogger']={blogId:'123',postId:'456',operationId:'operation',contentHash:'a'.repeat(64),stage:'draft'};
+  for(const external of [
+    {channelId:'blogger',checkpoint:'system_wait',blogger:receipt},
+    {channelId:'paragraph',checkpoint:'system_wait',paragraph:{publicationId:'publication',postId:'post',slug:'article',contentHash:'b'.repeat(64),stage:'draft' as const}},
+    {channelId:'bluesky',checkpoint:'bluesky_create_uncertain'},
+  ])for(const status of ['failed','skipped','expired'] as const){
+    const target=site(),channel=article('telegraph');
+    const pending=task(target.id,generic(external.channelId),{...external,status,topicUrl:'https://www.example.com/topic-1/?utm_source=test#section'}),before=structuredClone(pending);
+    const result=publicationOpportunity(target,channel,[pending],at('2026-09-15'),'UTC');
+    assert.equal(result.topicUrl,'https://example.com/topic-2',`${external.channelId}:${status}`);
+    assert.equal(taskOccupiesSource(pending),true);
+    assert.equal(publicationOpportunity({...target,topics:[topic(1)]},channel,[pending],at('2026-09-15'),'UTC').blockingReason,'topics_exhausted');
+    const state=emptyState();state.settings.timezone='UTC';state.sites.push(target);state.tasks.push(pending);
+    const made=makePlan(state,target,[{channel,score:100,reason:'ready'}],at('2026-09-15'));
+    assert.ok(made.length);assert.equal(made[0].topicUrl,'https://example.com/topic-2');assert.deepEqual(pending,before);
+    assert.equal(publicationOpportunity(target,channel,[{...pending,siteId:'unrelated-site'}],at('2026-09-15'),'UTC').topicUrl,'https://example.com/topic-1');
+  }
+});
+
+test('an older Blogger receipt still blocks new same-platform work after a newer successful post',()=>{
+  const target=site(),channel:Channel={...article('telegraph'),id:'blogger',domain:'blogspot.com'};
+  const pending=task(target.id,channel,{status:'failed',checkpoint:'system_wait',topicUrl:topic(1).url,blogger:{blogId:'123',postId:'456',operationId:'operation',contentHash:'a'.repeat(64),stage:'draft'}});
+  const success=live(target.id,channel,'2026-09-10','https://example.blogspot.com/2026/09/second.html',topic(2).url);
+  const result=publicationOpportunity(target,channel,[pending,success],at('2026-09-25'),'UTC',{officialApiConnected:true});
+  assert.equal(result.allowed,false);assert.equal(result.blockingReason,'cooldown');assert.equal(result.nextAvailableAt,undefined);
+});
+
+test('released registration-only waits free their topic for other platforms but never permit duplicate registration',()=>{
+  for(const channelId of ['paper-wf','mataroa','verbose']){
+    const target=site(),channel=article('telegraph'),publisher:Channel={...channel,id:channelId,domain:`${channelId}.example`};
+    const checkpoint=channelId==='paper-wf'?'paper_account_create_pending':`${channelId}_account_create_pending`;
+    const registration=task(target.id,publisher,{status:'skipped',deferredAt:at('2026-09-03').toISOString(),checkpoint,accountId:'account',topicUrl:topic(1).url});
+    assert.equal(publicationOpportunity(target,channel,[registration],at('2026-09-15'),'UTC').topicUrl,topic(1).url);
+    assert.equal(taskOccupiesSource(registration),false);
+    assert.equal(publicationOpportunity(target,publisher,[registration],at('2026-09-15'),'UTC').allowed,false);
+    assert.equal(publicationOpportunity(target,channel,[{...registration,status:'needs_input'}],at('2026-09-15'),'UTC').topicUrl,topic(2).url);
+    assert.equal(publicationOpportunity(target,channel,[{...registration,accountId:undefined}],at('2026-09-15'),'UTC').topicUrl,topic(2).url);
+    assert.equal(publicationOpportunity(target,channel,[{...registration,blogger:{blogId:'123',operationId:'operation',contentHash:'a'.repeat(64),stage:'inserting'}}],at('2026-09-15'),'UTC').topicUrl,topic(2).url);
+  }
 });
 
 test('a newer success supersedes only an older failed task with no external attempt',()=>{

@@ -14,7 +14,7 @@ const did='did:plc:abcdefghijklmnopqrstuvwx',password='abcd-efgh-ijkl-mnop';
 const publication={id:'PublicationFixture0001',name:'Fixture Publication',ownerUserId:'OwnerFixture00000001',slug:'fixture-publication'};
 function fixture(){
   const store=new Store(':memory:'),secrets=new Map<string,string>();
-  const vault:SecretStore={get:async key=>secrets.get(key),set:async(key,value)=>{secrets.set(key,value)},delete:async key=>{secrets.delete(key)}};
+  const vault:SecretStore&Pick<Vault,'encryptSecrets'>={get:async key=>secrets.get(key),set:async(key,value)=>{secrets.set(key,value)},delete:async key=>{secrets.delete(key)},encryptSecrets:values=>values};
   store.update(state=>{state.settings.autoRun=false;state.sites=[one,two].map((id,index):Site=>({id,url:`https://site${index}.example.com/`,domain:`site${index}.example.com`,name:'Fixture',email:'owner@example.com',description:'Original educational publication',category:'content',language:'en',monthlyTarget:2,status:'ready',createdAt:stamp}))});
   const remote=async()=>new Response(JSON.stringify({did,handle:'fixture.bsky.social',accessJwt:'synthetic.access.token',refreshJwt:'synthetic.refresh.token',active:true}),{status:200,headers:{'content-type':'application/json'}});
   const paragraph=async()=>new Response(JSON.stringify(publication),{status:200,headers:{'content-type':'application/json'}});

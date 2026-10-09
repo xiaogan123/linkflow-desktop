@@ -5,7 +5,7 @@ import {encryptBackup,decryptBackup} from '../src/main/backup';
 import {validateBackup} from '../src/main/backup-validation';
 import {Store,emptyState} from '../src/main/store';
 import type {ParagraphTransport} from '../src/integrations/paragraph';
-import type {SecretStore,Site,Task} from '../src/shared/types';
+import type {Site,Task} from '../src/shared/types';
 
 const stamp='2026-10-07T00:00:00.000Z';
 const apiKey='synthetic-paragraph-api-key';
@@ -14,45 +14,54 @@ const publicationUrl='https://paragraph.com/@fixture-publication/';
 function json(value:unknown){return new Response(JSON.stringify(value),{status:200,headers:{'content-type':'application/json'}})}
 function transport(value=publication){const calls:string[]=[];const fetch:ParagraphTransport=async(input,init)=>{const url=new URL(input);calls.push(`${init.method} ${url.href}`);assert.equal(url.pathname,'/api/v1/me');return json(value)};return {fetch,calls}}
 function site(id:string,domain:string):Site{return {id,domain,url:`https://${domain}/`,email:`owner@${domain}`,name:domain,description:'Original educational publication',category:'content',language:'en',monthlyTarget:2,articleReviewMode:'ai',status:'ready',createdAt:stamp}}
-function fixture(){const store=new Store(':memory:');store.update(state=>state.sites=[site('11111111-1111-4111-8111-111111111111','one.example.com'),site('22222222-2222-4222-8222-222222222222','two.example.com')]);const secrets=new Map<string,string>();const vault:SecretStore={get:async key=>secrets.get(key),set:async(key,value)=>{secrets.set(key,value)},delete:async key=>{secrets.delete(key)}};return {store,secrets,vault}}
+function fixture(){const store=new Store(':memory:');store.update(state=>state.sites=[site('11111111-1111-4111-8111-111111111111','one.example.com'),site('22222222-2222-4222-8222-222222222222','two.example.com')]);const vault={encryptSecrets:(values:Record<string,string>)=>values};return {store,vault,secret:(key:string)=>store.getCipher(key),ciphers:()=>store.allCiphers()}}
 
 test('verified Paragraph identity stores metadata and binds only the selected sites',async()=>{
-  const {store,secrets,vault}=fixture(),remote=transport();
+  const {store,vault,secret,ciphers}=fixture(),remote=transport();
   try{
     const account=await connectParagraph(store,vault,apiKey,[store.read().sites[0].id],undefined,{fetch:remote.fetch,now:()=>new Date(stamp)});
     const state=store.read(),first=state.sites[0],second=state.sites[1];
     assert.equal(account.username,publication.id);assert.equal(account.displayName,publication.name);assert.equal(account.publicationUrl,publicationUrl);assert.equal(account.email,'');
     assert.deepEqual(first.paragraph,{publicationId:publication.id,url:publicationUrl});assert.equal(second.paragraph,undefined);
     assert.deepEqual(state.accountBindings.map(binding=>[binding.siteId,binding.channelId,binding.accountId]),[[first.id,'paragraph',account.id]]);
-    assert.equal(state.accounts.length,1);assert.equal(secrets.size,1);assert.equal(JSON.stringify(state).includes(apiKey),false);assert.equal(remote.calls.length,2);
-    const saved=JSON.parse(secrets.get('account:'+account.id)!);assert.equal(saved.apiKey,apiKey);assert.equal(saved.publicationId,publication.id);assert.equal(saved.ownerUserId,publication.ownerUserId);
+    assert.equal(state.accounts.length,1);assert.equal(Object.keys(ciphers()).length,1);assert.equal(JSON.stringify(state).includes(apiKey),false);assert.equal(remote.calls.length,2);
+    const saved=JSON.parse(secret('account:'+account.id)!);assert.equal(saved.apiKey,apiKey);assert.equal(saved.publicationId,publication.id);assert.equal(saved.ownerUserId,publication.ownerUserId);
   }finally{store.close()}
 });
 
-test('a failed state commit restores the previous secret and never leaves a new orphan secret',async()=>{
+test('a failed SQLite cipher write rolls back the previous account state and secret atomically',async()=>{
   const existing=fixture(),firstTransport=transport();
   try{
     const account=await connectParagraph(existing.store,existing.vault,apiKey,[existing.store.read().sites[0].id],undefined,{fetch:firstTransport.fetch});
-    const beforeSecret=existing.secrets.get('account:'+account.id)!;
-    const replacementKey='synthetic-paragraph-replacement-key',failingStore={read:()=>existing.store.read(),update:()=>{throw Error('synthetic state commit failure')}};
-    await assert.rejects(connectParagraph(failingStore,existing.vault,replacementKey,[existing.store.read().sites[0].id],account.id,{fetch:transport().fetch}),/synthetic state commit failure/);
-    assert.equal(existing.secrets.get('account:'+account.id),beforeSecret);assert.equal(existing.store.read().accounts[0].username,publication.id);
+    const before=existing.store.read(),beforeSecret=existing.secret('account:'+account.id)!,setCipher=existing.store.setCipher.bind(existing.store);
+    existing.store.setCipher=()=>{throw Error('synthetic cipher failure')};
+    await assert.rejects(connectParagraph(existing.store,existing.vault,'synthetic-paragraph-replacement-key',[existing.store.read().sites[0].id],account.id,{fetch:transport().fetch}),/synthetic cipher failure/);
+    existing.store.setCipher=setCipher;assert.deepEqual(existing.store.read(),before);assert.equal(existing.secret('account:'+account.id),beforeSecret);
   }finally{existing.store.close()}
 
   const fresh=fixture();try{
-    const failingStore={read:()=>fresh.store.read(),update:()=>{throw Error('synthetic state commit failure')}};
-    await assert.rejects(connectParagraph(failingStore,fresh.vault,apiKey,[fresh.store.read().sites[0].id],undefined,{fetch:transport().fetch}),/synthetic state commit failure/);
-    assert.equal(fresh.secrets.size,0);assert.equal(fresh.store.read().accounts.length,0);
+    const setCipher=fresh.store.setCipher.bind(fresh.store);fresh.store.setCipher=()=>{throw Error('synthetic cipher failure')};
+    await assert.rejects(connectParagraph(fresh.store,fresh.vault,apiKey,[fresh.store.read().sites[0].id],undefined,{fetch:transport().fetch}),/synthetic cipher failure/);
+    fresh.store.setCipher=setCipher;assert.equal(Object.keys(fresh.ciphers()).length,0);assert.equal(fresh.store.read().accounts.length,0);
   }finally{fresh.store.close()}
 });
 
 test('an API key for another publication cannot overwrite an existing identity or its bindings',async()=>{
-  const {store,secrets,vault}=fixture();try{
-    const first=await connectParagraph(store,vault,apiKey,[store.read().sites[0].id],undefined,{fetch:transport().fetch}),before=store.read(),secret=secrets.get('account:'+first.id);
+  const {store,vault,secret,ciphers}=fixture();try{
+    const first=await connectParagraph(store,vault,apiKey,[store.read().sites[0].id],undefined,{fetch:transport().fetch}),before=store.read(),saved=secret('account:'+first.id);
     const other={id:'OtherPublication0001',name:'Other Publication',ownerUserId:'OtherOwner000000001',slug:'other-publication'};
     await assert.rejects(connectParagraph(store,vault,'synthetic-other-paragraph-key',[store.read().sites[1].id],first.id,{fetch:transport(other).fetch}),/another publication|another|different|\u53e6一出版物/);
-    assert.deepEqual(store.read(),before);assert.equal(secrets.get('account:'+first.id),secret);
+    assert.deepEqual(store.read(),before);assert.equal(secret('account:'+first.id),saved);assert.equal(Object.keys(ciphers()).length,1);
   }finally{store.close()}
+});
+
+test('Paragraph final identity mismatch and cancellation never persist captured credentials',async()=>{
+  const changed={...publication,ownerUserId:'OtherOwner000000001'};
+  for(const mode of ['changed','cancelled'] as const){const f=fixture(),abort=new AbortController();let calls=0;try{
+    const fetch:ParagraphTransport=async()=>{calls++;if(mode==='cancelled'&&calls===2)abort.abort();return json(calls===1?publication:mode==='changed'?changed:publication)};
+    await assert.rejects(connectParagraph(f.store,f.vault,apiKey,[f.store.read().sites[0].id],undefined,{fetch,signal:abort.signal}),mode==='changed'?/身份发生变化/:/取消|cancel/i);
+    assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);
+  }finally{f.store.close()}}
 });
 
 test('encrypted backup roundtrips Paragraph and Nostr receipts with empty-email API identities',()=>{

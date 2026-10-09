@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import type {Account,Snapshot,Task} from '../src/shared/types';
 import {connectionOverview} from '../src/ui/channel-connections';
 import {CHANNELS} from '../src/integrations/catalog';
+import {bindAccount,channelExecutionReadiness,unbindAccount} from '../src/main/account-bindings';
+import {emptyState} from '../src/main/store';
 
 const at='2026-10-07T00:00:00.000Z';
 function account(channelId:string,extra:Partial<Account>={}):Account{return {id:`${channelId}-identity`,channelId,email:'',username:'author',credentialKind:channelId==='blogger'?'oauth':'api_token',status:'registered',hasPassword:true,createdAt:at,...extra};}
@@ -130,4 +132,41 @@ test('every disabled API stays unavailable without erasing connection or histori
     assert.equal(found.checkedCount,1,channel.id);
     if(!['wordpress-com','blogger'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
   }
+});
+
+test('revoked automatic publisher bindings require reassociation without promising a new identity',()=>{
+  for(const id of ['mataroa','verbose','rentry'] as const){
+    const channel={...CHANNELS.find(item=>item.id===id)!,enabled:true},state=emptyState();
+    state.sites=snapshot().sites;
+    const identity=account(id,{source:'generated',email:'',username:id==='rentry'?'anonymous':'author',...(id==='rentry'?{}:{publicationUrl:id==='mataroa'?'https://author.mataroa.blog/':'https://verbose.blog/author'})});
+    state.accounts=[identity];
+    const display=()=>row({...state,channels:[channel]},id);
+    bindAccount(state,identity.id,state.sites[0].id,channel,new Date(at));
+    assert.equal(channelExecutionReadiness(state,state.sites[0].id,channel).kind,'ready');
+    assert.equal(display().state,'no_setup');
+    unbindAccount(state,identity.id,state.sites[0].id,id);
+    const before=structuredClone(state),after=display();
+    assert.equal(channelExecutionReadiness(state,state.sites[0].id,channel).kind,'handoff_required');
+    assert.equal(after.state,'attention',id);assert.match(after.detail,/关联/);assert.doesNotMatch(after.detail,/自动建号/);
+    assert.equal(after.attentionAccountId,identity.id);assert.equal(after.connectedCount,1);assert.equal(after.boundSiteCount,0);
+    assert.deepEqual(state,before);
+    state.sites.push({...state.sites[0],id:'site-2'});
+    assert.equal(channelExecutionReadiness(state,'site-2',channel).kind,'ready');assert.equal(display().state,'no_setup');
+    state.sites.pop();bindAccount(state,identity.id,state.sites[0].id,channel,new Date(at));
+    assert.equal(display().state,'no_setup');assert.equal(display().boundSiteCount,1);
+    assert.equal(row({...state,channels:[{...channel,enabled:false}]},id).state,'unavailable');
+    state.sites=[];assert.equal(display().state,'no_setup');
+  }
+});
+
+test('multiple valid automatic identities require choosing one until a current site can reuse it',()=>{
+  const channel=CHANNELS.find(item=>item.id==='mataroa')!,state=emptyState();state.sites=snapshot().sites;
+  state.accounts=['first','second'].map(username=>account('mataroa',{id:username,username,source:'imported',publicationUrl:`https://${username}.mataroa.blog/`}));
+  const display=()=>row({...state,channels:[channel]},'mataroa');
+  assert.equal(channelExecutionReadiness(state,'site-1',channel).kind,'handoff_required');assert.equal(display().state,'attention');
+  assert.match(display().detail,/身份.*关联/);assert.equal(display().connectedCount,2);assert.equal(display().boundSiteCount,0);
+  bindAccount(state,'second','site-1',channel,new Date(at));
+  assert.equal(channelExecutionReadiness(state,'site-1',channel).kind,'ready');assert.equal(display().state,'no_setup');
+  unbindAccount(state,'second','site-1','mataroa');
+  assert.equal(channelExecutionReadiness(state,'site-1',channel).kind,'ready');assert.equal(display().state,'no_setup');
 });

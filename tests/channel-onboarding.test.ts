@@ -82,27 +82,29 @@ test('a setup filter never enables a disabled catalog candidate',()=>{
 });
 
 test('verified account setup does not turn manual or disabled publishers into automatic channels',()=>{
-  for(const id of ['hashnode','medium','substack','dev','hackernoon','tumblr','ghost-pro','beehiiv','kit-newsletter','product-hunt','alternativeto','vocus','publish0x','flipboard-publisher','gravatar','linktree','linkedin-articles','youtube-channel','x-profile','tradingview-profile','pinterest','linkedin-company','bluesky-domain','crunchbase-company','trustpilot-business','bing-places','g2','capterra','clutch','google-business','apple-business','yelp-business','codeberg','huggingface','sourceforge','itch-io','show-hn','npm','pypi','nuget','crates-io','packagist','pub-dev']){
+  for(const id of ['hashnode','medium','substack','dev','hackernoon','tumblr','ghost-pro','beehiiv','kit-newsletter','product-hunt','alternativeto','vocus','publish0x','flipboard-publisher','gravatar','linktree','linkedin-articles','youtube-channel','x-profile','tradingview-profile','pinterest','linkedin-company','bluesky-domain','crunchbase-company','trustpilot-business','bing-places','g2','capterra','clutch','google-business','apple-business','yelp-business','codeberg','huggingface','sourceforge','itch-io','show-hn','npm','pypi','nuget','crates-io','packagist','pub-dev','uneed','betalist','wellfound','docker-hub','firefox-addons','vscode-marketplace','jetbrains-marketplace','flathub','fdroid','snap-store','wordpress-plugins','drupal','rubygems']){
     const item=channel(id),view=channelOnboardingView(item);
     assert.equal(view.kind,'existing_account',id);
     assert.equal(channelMatchesOnboarding(item,'unknown'),false,id);
     assert.equal(channelMatchesAutomation(item,'ai_auto'),false,id);
     assert.equal(channelMatchesAutomation(item,'connected_auto'),false,id);
-    assert.equal(channelAutomationKind(item),['medium','dev','vocus','publish0x','pinterest','bluesky-domain'].includes(id)?'disabled':'manual',id);
+    assert.equal(channelAutomationKind(item),['medium','dev','vocus','publish0x','pinterest','bluesky-domain','flathub'].includes(id)?'disabled':'manual',id);
     assert.equal(view.verification?.checkedAt,'2026-10-09',id);
     assert.ok(view.verification?.sourceUrl.startsWith('https://'),id);
-    // Login-only evidence must not refresh policy dates; Show HN policies were also rechecked.
-    if(id!=='show-hn')assert.notEqual(item.checkedAt,view.verification?.checkedAt,id);
+    // Login-only evidence must not refresh policy dates; Show HN and Tumblr had separate policy research.
+    if(!['show-hn','tumblr'].includes(id))assert.notEqual(item.checkedAt,view.verification?.checkedAt,id);
   }
 });
 
 test('user-added copies cannot inherit built-in onboarding evidence',()=>{
-  const verified=channel('medium');
-  assert.ok(channelOnboardingView(verified).verification);
-  for(const provenance of ['custom',undefined] as const){
-    const view=channelOnboardingView({...verified,provenance});
-    assert.equal(view.kind,'unknown');
-    assert.equal(view.verification,undefined);
+  for(const id of ['medium','uneed','betalist','wellfound','docker-hub','firefox-addons','vscode-marketplace','jetbrains-marketplace','flathub','fdroid','snap-store','wordpress-plugins','drupal','rubygems']){
+    const verified=channel(id);
+    assert.ok(channelOnboardingView(verified).verification,id);
+    for(const provenance of ['custom',undefined] as const){
+      const view=channelOnboardingView({...verified,provenance});
+      assert.equal(view.kind,'unknown',id);
+      assert.equal(view.verification,undefined,id);
+    }
   }
 });
 

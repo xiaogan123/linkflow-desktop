@@ -17,7 +17,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, ['betterthanhtml','sigle','nuance','prose'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, ['betterthanhtml','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority) assert.ok(channel.authority.source && channel.authority.asOf);
     if(channel.traffic) assert.ok(channel.traffic.source && channel.traffic.asOf);
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
@@ -81,7 +81,7 @@ test('financial publication candidates require ownership and never gain automati
   assert(!matchChannels(s,CHANNELS).some(m=>ids.includes(m.channel.id)));
   s.qualifications={publication:'https://example.com/about'};
   const matched=matchChannels(s,CHANNELS).map(m=>m.channel.id);
-  for(const id of ids){const c=CHANNELS.find(c=>c.id===id)!;assert(matched.includes(id),id);assert.equal(c.automation,'manual');assert.equal(c.checkedAt,'2026-09-30');assert.equal(c.authority,undefined);assert.equal(c.traffic,undefined)}
+  for(const id of ids){const c=CHANNELS.find(c=>c.id===id)!;assert(matched.includes(id),id);assert.equal(c.automation,'manual');assert.equal(c.checkedAt,id==='tumblr'?'2026-10-09':'2026-09-30');assert.equal(c.authority,undefined);assert.equal(c.traffic,undefined)}
   const wordpress=CHANNELS.find(c=>c.id==='wordpress-com')!;assert(!matched.includes(wordpress.id));assert.equal(wordpress.automation,'api');assert.equal(wordpress.enabled,false);assert.equal(wordpress.checkedAt,'2026-10-08');assert.match(wordpress.notes,/待实发验收/);
   const leaflet=CHANNELS.find(c=>c.id==='leaflet')!;assert(!matched.includes(leaflet.id));assert.equal(leaflet.automation,'api');assert.equal(leaflet.enabled,false);assert.equal(leaflet.checkedAt,'2026-10-08');assert.equal(leaflet.requirements,undefined);assert(leaflet.categories.includes('general'));assert(leaflet.categories.includes('finance'));assert.equal(leaflet.authority,undefined);assert.equal(leaflet.traffic,undefined);assert.match(leaflet.notes,/不构成平台.*专门许可/);assert.match(leaflet.notes,/当前保持停用/);
   assert.equal(CHANNELS.find(c=>c.id==='ghost-pro')?.free,'paid');

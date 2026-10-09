@@ -46,10 +46,13 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
     const connected=accounts.filter(account=>usable(account,id));
     const connectedIds=new Set(connected.map(account=>account.id));
     const accountById=new Map(connected.map(account=>[account.id,account]));
+    const excluded=(account:Account,siteId:string)=>
+      (id==='mataroa'?account.mataroaExcludedSiteIds:id==='verbose'?account.verboseExcludedSiteIds:id==='rentry'?account.rentryExcludedSiteIds:undefined)?.includes(siteId)===true;
     const boundSiteIds=new Set(data.accountBindings.filter(binding=>{
       if(binding.channelId!==id||!connectedIds.has(binding.accountId))return false;
       const site=data.sites.find(candidate=>candidate.id===binding.siteId);
       if(!site)return false;
+      if(excluded(accountById.get(binding.accountId)!,site.id))return false;
       if(id==='blogger')return !!site.blogger?.blogId;
       if(id==='paragraph')return !!site.paragraph?.publicationId&&site.paragraph.publicationId===accountById.get(binding.accountId)?.username;
       return true;
@@ -57,17 +60,22 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
     // firstLiveAt is historical evidence even if the latest check later changes to absent.
     const checkedCount=data.tasks.filter(task=>task.channelId===id&&(!!task.firstLiveAt||task.linkCheck==='found')).length;
     const issue=accounts.find(account=>!usable(account,id));
-    const unbound=needsBinding.has(id)&&connected.length>0&&data.sites.length>0&&boundSiteIds.size===0;
+    const selectionRequired=['mataroa','verbose','rentry'].includes(id)&&connected.length>0&&data.sites.length>0&&!data.sites.some(site=>{
+      const binding=data.accountBindings.find(item=>item.siteId===site.id&&item.channelId===id);
+      if(binding){const account=accountById.get(binding.accountId);return !!account&&!excluded(account,site.id);}
+      return connected.filter(account=>!excluded(account,site.id)).length===1;
+    });
+    const unbound=selectionRequired||needsBinding.has(id)&&connected.length>0&&data.sites.length>0&&boundSiteIds.size===0;
     let state:ConnectionState;
     let detail:string;
     if(!data.channels.find(channel=>channel.id===id&&channel.enabled)){
       state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
-    }else if(selfProvisioned.has(id)&&!issue){state='no_setup';detail=firstStep;}
+    }else if(selfProvisioned.has(id)&&!issue&&!unbound){state='no_setup';detail=firstStep;}
     else if(!accounts.length){state='first_connection';detail=firstStep;}
     else if(issue){
       state='attention';
       detail=id==='verbose'?'原身份或一次性令牌需检查；不能重新注册换号。':['mataroa','paper-wf'].includes(id)&&issue.status==='needs_verification'?'首次验证待完成；沿用下方原身份继续，勿重复注册。':`${accounts.length-connected.length} 个本机身份需检查凭据或状态。`;
-    }else if(unbound){state='attention';detail='身份已保存在本机，尚未关联可发布的网站。';}
+    }else if(unbound){state='attention';detail=selectionRequired?'原身份已保留；请选择要使用的身份并关联网站后继续。':'身份已保存在本机，尚未关联可发布的网站。';}
     else {state='connected';detail=`${connected.length} 个本机身份已连接${needsBinding.has(id)?`，${boundSiteIds.size} 个网站已关联`:''}。`;}
     return {id,name,format,state,detail,connectedCount:connected.length,boundSiteCount:boundSiteIds.size,checkedCount,attentionAccountId:issue?.id??(unbound?connected[0]?.id:undefined)};
   });

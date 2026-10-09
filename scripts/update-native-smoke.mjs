@@ -10,8 +10,29 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.14',candidateVersion:'1.2.15',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.14/Linkflow-1.2.14-windows-x64-setup.exe',sha256:'c2a3c5330c0d48fba456eb97b5a189ee381f479c1513aa5d4c1cdb08b3b5cbb9'};
-const macPublishedUpgrade={sourceVersion:'1.2.14',candidateVersion:'1.2.15',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.14/Linkflow-1.2.14-mac-arm64.zip',sha256:'a57ce525b8dd09b717990c8329ddea0cb69d3d47ae1618b8fe2fa24a9914f6ef'};
+const windowsUpgrade={sourceVersion:'1.2.15',candidateVersion:'1.2.16',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.15/Linkflow-1.2.15-windows-x64-setup.exe',sha256:'a727ea19699050ca2e7eb79720c6d6ec0b74c9e2c08028c1f82d2c3852a5bb52'};
+const macPublishedUpgrade={sourceVersion:'1.2.15',candidateVersion:'1.2.16',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.15/Linkflow-1.2.15-mac-arm64.zip',sha256:'e82f72f06214c36c1f7cc00a279302483802b11bc6083d8d347f411a420b981e'};
+const usage=`Usage:
+  node scripts/update-native-smoke.mjs
+  node scripts/update-native-smoke.mjs --mac-published-source [archive]
+  node scripts/update-native-smoke.mjs --mac-bridge <zip> <sha256> <source-version>
+  node scripts/update-native-smoke.mjs --describe-plan <platform> <arch> <candidate-version> [candidate|published-source]
+  node scripts/update-native-smoke.mjs --verify-asar-replacement <installed-asar> <candidate-asar>
+  node scripts/update-native-smoke.mjs --help|-h
+
+Help prints this text without running a native update.`;
+const sha256Pattern=/^[a-f0-9]{64}$/;
+const versionPattern=/^\d+\.\d+\.\d+$/;
+const invocationFor=args=>{
+ const [command]=args,values=args.slice(1),plainValues=values.every(value=>value.trim().length>0&&!value.trimStart().startsWith('-'));
+ if(args.length===0)return 'native';
+ if((command==='--help'||command==='-h')&&args.length===1)return 'help';
+ if(command==='--describe-plan'&&(args.length===4||(args.length===5&&['candidate','published-source'].includes(args[4])))&&plainValues)return 'describe-plan';
+ if(command==='--verify-asar-replacement'&&args.length===3&&plainValues)return 'verify-asar-replacement';
+ if(command==='--mac-published-source'&&(args.length===1||(args.length===2&&plainValues)))return 'native';
+ if(command==='--mac-bridge'&&args.length===4&&plainValues&&sha256Pattern.test(args[2])&&versionPattern.test(args[3]))return 'native';
+ return 'invalid';
+};
 const run=(file,args,options={})=>new Promise((done,reject)=>execFile(file,args,{timeout:180000,maxBuffer:1024*1024,...options},error=>error?reject(error):done()));
 const delay=milliseconds=>new Promise(done=>setTimeout(done,milliseconds));
 const sha256=value=>createHash('sha256').update(value).digest('hex');
@@ -32,14 +53,14 @@ const bridgeIndex=process.argv.indexOf('--mac-bridge');
 const publishedSourceIndex=process.argv.indexOf('--mac-published-source');
 if(bridgeIndex>=0&&publishedSourceIndex>=0)throw Error('Choose either --mac-published-source or --mac-bridge');
 if(publishedSourceIndex>=0){
- if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.14-zip]');
+ if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.15-zip]');
  Object.assign(plan,probePlan(process.platform,process.arch,version,'published-source'));
  const [path]=process.argv.slice(publishedSourceIndex+1);if(path)plan.sourcePath=resolve(path);
 }
 if(bridgeIndex>=0){
  if(process.platform!=='darwin'||process.argv.length!==bridgeIndex+4)throw Error('Usage: --mac-bridge <zip> <sha256> <source-version>');
  const [path,sha,sourceVersion]=process.argv.slice(bridgeIndex+1);
- if(!/^[a-f0-9]{64}$/.test(sha)||!/^\d+\.\d+\.\d+$/.test(sourceVersion)||sourceVersion===version)throw Error('Bridge must bind a distinct version and exact SHA-256');
+ if(!sha256Pattern.test(sha)||!versionPattern.test(sourceVersion)||sourceVersion===version)throw Error('Bridge must bind a distinct version and exact SHA-256');
  Object.assign(plan,{sourceVersion,sourceArtifact:'private-patched-updater-bridge',sourcePath:resolve(path),sha256:sha,originalPublishedUpdater:false});
 }
 if(process.platform==='win32'){
@@ -118,6 +139,9 @@ console.log('NATIVE_UPDATE_RESULT '+JSON.stringify(report));
 if(process.platform==='win32')await run(join(application,'Uninstall 外链助手.exe'),['/S']);
 }
 
-if(process.argv[2]==='--describe-plan')console.log(JSON.stringify(probePlan(process.argv[3],process.argv[4],process.argv[5],process.argv[6])));
-else if(process.argv[2]==='--verify-asar-replacement'){const before=asarVersion(process.argv[3]);await copyFile(process.argv[4],process.argv[3]);console.log(JSON.stringify({before,after:asarVersion(process.argv[3])}))}
+const invocation=invocationFor(process.argv.slice(2));
+if(invocation==='help')console.log(usage);
+else if(invocation==='invalid'){console.error(`Invalid native update smoke arguments.\n${usage}`);process.exitCode=2}
+else if(invocation==='describe-plan')console.log(JSON.stringify(probePlan(process.argv[3],process.argv[4],process.argv[5],process.argv[6])));
+else if(invocation==='verify-asar-replacement'){const before=asarVersion(process.argv[3]);await copyFile(process.argv[4],process.argv[3]);console.log(JSON.stringify({before,after:asarVersion(process.argv[3])}))}
 else await main();
