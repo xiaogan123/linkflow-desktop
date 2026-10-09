@@ -135,8 +135,8 @@ async function githubRequest(
   };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   if (options.body) headers['content-type'] = 'application/json';
+  let response: Response | undefined;
   try {
-    let response: Response;
     try {
       response = await transport(dependencies)(url, {
         method: options.method ?? 'GET',
@@ -164,6 +164,11 @@ async function githubRequest(
     // recovered task cannot create a duplicate Gist.
     if (!response.ok) throw new GitHubRequestError();
     return await readBoundedJson(response);
+  } catch (error) {
+    // Dispose failed responses without waiting or changing error classification.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
+    throw error;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', abort);

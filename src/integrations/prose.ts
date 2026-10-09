@@ -133,14 +133,18 @@ async function publicPage(url:string,deps:ProseDependencies):Promise<{html:strin
   const controller=new AbortController(),relay=()=>controller.abort();
   if(deps.signal?.aborted)controller.abort();else deps.signal?.addEventListener('abort',relay,{once:true});
   const timer=setTimeout(()=>controller.abort(),Math.min(60_000,Math.max(100,deps.timeoutMs??15_000)));timer.unref?.();
+  let response:Response|undefined;
   try{
     if(controller.signal.aborted)throw Error('Prose 请求已取消');
-    const response=await bounded((deps.fetch??fetch)(url,{method:'GET',redirect:'manual',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',signal:controller.signal,headers:{accept:'text/html','user-agent':'Linkflow (original-article verifier)'}}),controller.signal);
+    response=await bounded((deps.fetch??fetch)(url,{method:'GET',redirect:'manual',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',signal:controller.signal,headers:{accept:'text/html','user-agent':'Linkflow (original-article verifier)'}}),controller.signal);
     if(response.redirected||response.url&&response.url!==url||response.status!==200||!response.headers.get('content-type')?.toLowerCase().includes('text/html')||Number(response.headers.get('content-length'))>MAX_PUBLIC_BYTES)throw Error('Prose 公开页无效');
     const reader=response.body?.getReader();if(!reader)throw Error('Prose 公开页无正文');
     const chunks:Uint8Array[]=[];let size=0;
-    try{for(;;){const next=await bounded(reader.read(),controller.signal);if(next.done)break;size+=next.value.byteLength;if(size>MAX_PUBLIC_BYTES){controller.abort();await reader.cancel().catch(()=>undefined);throw Error('Prose 公开页超过上限')}chunks.push(next.value)}}catch(cause){controller.abort();await reader.cancel().catch(()=>undefined);throw cause}finally{reader.releaseLock()}
+    try{for(;;){const next=await bounded(reader.read(),controller.signal);if(next.done)break;size+=next.value.byteLength;if(size>MAX_PUBLIC_BYTES)throw Error('Prose 公开页超过上限');chunks.push(next.value)}}catch(cause){controller.abort();void reader.cancel().catch(()=>undefined);throw cause}finally{reader.releaseLock()}
     const html=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));return {html,headers:response.headers};
+  }catch(error){
+    // Rejected headers and stalled cancellation must not outlive this request.
+    controller.abort();void response?.body?.cancel().catch(()=>undefined);throw error;
   }finally{clearTimeout(timer);deps.signal?.removeEventListener('abort',relay)}
 }
 

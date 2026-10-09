@@ -628,3 +628,43 @@ test('overlong title and full HTML are rejected explicitly instead of being trun
   assert.match(tooLarge.message, /2 MB|超过/);
   assert.equal(calls, 0);
 });
+
+test('header rejection stops the response body without waiting for cancellation', { timeout: 2_000 }, async t => {
+  for (const kind of ['declared oversize', 'redirect', 'foreign URL', 'hanging cancellation'] as const) {
+    await t.test(kind, async () => {
+      const f = fixture();
+      let cancels = 0;
+      let pulls = 0;
+      let posts = 0;
+      let requestSignal: AbortSignal | undefined;
+      const rejected = new Response(new ReadableStream<Uint8Array>({
+        pull() { pulls++; },
+        cancel() {
+          cancels++;
+          if (kind === 'hanging cancellation') return new Promise<void>(() => {});
+        },
+      }, { highWaterMark: 0 }), {
+        status: kind === 'redirect' ? 302 : 200,
+        headers: { 'content-type': 'application/json',
+          ...(kind === 'declared oversize' || kind === 'hanging cancellation'
+            ? { 'content-length': '128001' } : {}) },
+      });
+      if (kind === 'foreign URL') Object.defineProperty(rejected, 'url', { value: 'https://example.org/unexpected' });
+      const result = await runBetterThanHtmlTask(f.context, { fetch: async (_url, init) => {
+        assert.equal(init.method, 'POST');
+        posts++;
+        requestSignal = init.signal as AbortSignal;
+        return rejected;
+      } });
+      assert.equal(posts, 1);
+      assert.equal(cancels, 1);
+      assert.equal(pulls, 0);
+      assert.equal(requestSignal?.aborted, true);
+      assert.equal(rejected.body?.locked, false);
+      assert.equal(result.status, 'review');
+      assert.equal(result.betterthanhtml?.stage, 'submitting');
+      assert.ok(f.task.submittedAt);
+      assert.equal(result.publicUrl, undefined);
+    });
+  }
+});

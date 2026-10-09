@@ -176,6 +176,30 @@ test('pre-cancellation prevents all network writes and registers no alternative 
   await prepareVerboseIdentity(f.context, { fetch: s.fetch }); assert.equal(s.calls.length, 0); assert.equal(f.account(), undefined);
 });
 
+for (const rejected of ['length', 'redirect', 'foreign-url', 'slow-cancel'] as const)
+test(`Verbose disposes a rejected ${rejected} POST response without repeating publication`, { timeout: 2000 }, async () => {
+  const f = fixture(); let posts = 0, cancels = 0, pulls = 0;
+  let signal: AbortSignal | undefined, releaseCancel!: () => void;
+  const cancellation = new Promise<void>(resolve => { releaseCancel = resolve; });
+  const response = new Response(new ReadableStream<Uint8Array>({
+    pull() { pulls++; }, cancel() { cancels++; return rejected === 'slow-cancel' ? cancellation : undefined; },
+  }, { highWaterMark: 0 }), { status: rejected === 'redirect' ? 302 : 201,
+    headers: { 'content-type': 'application/json', 'content-length': rejected === 'length' || rejected === 'slow-cancel' ? '512001' : '1' } });
+  if (rejected === 'foreign-url') Object.defineProperty(response, 'url', { value: 'https://other.example/' });
+  const fetch: VerboseTransport = async (url, init) => {
+    if (init.method === 'POST') { posts++; signal = init.signal as AbortSignal; assert.ok(f.task.submittedAt); return response; }
+    return url === `https://verbose.blog/v0/profiles/${USER}` ? json({ username: USER }) : json({}, 404);
+  };
+  try {
+    await runVerboseTask(f.context, { fetch });
+    assert.equal(posts, 1); assert.equal(cancels, 1); assert.equal(pulls, 0); assert.equal(signal?.aborted, true);
+    const receipt = structuredClone(f.task.verbose);
+    assert.equal(receipt?.stage, 'submitting'); assert.ok(f.task.submittedAt);
+    await runVerboseTask(f.context, { fetch });
+    assert.equal(posts, 1); assert.deepEqual(f.task.verbose, receipt);
+  } finally { releaseCancel(); }
+});
+
 test('Verbose respects HTTP and HTML indexing policy and keeps original receipt on read-only failure', async () => {
   const f=fixture(),s=server(f);Object.assign(f.task,await runVerboseTask(f.context,{fetch:s.fetch}));
   const original=structuredClone(f.task.verbose);

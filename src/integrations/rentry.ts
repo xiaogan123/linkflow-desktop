@@ -130,9 +130,10 @@ async function request(path:string,deps:RentryDependencies,form?:URLSearchParams
   let timedOut=false;
   const timer=setTimeout(()=>{timedOut=true;controller.abort()},Math.min(60_000,Math.max(100,deps.timeoutMs??15_000)));
   timer.unref?.();
+  let response:Response|undefined;
   try{
     const url=`${ORIGIN}${path}`;
-    const response=await abortable((deps.fetch??fetch)(url,{
+    response=await abortable((deps.fetch??fetch)(url,{
       method:form?'POST':'GET',redirect:'manual',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',
       signal:controller.signal,headers:{accept:form?'application/json':'text/html',
         'user-agent':'Linkflow (original-article publisher)',
@@ -166,6 +167,9 @@ async function request(path:string,deps:RentryDependencies,form?:URLSearchParams
     if(response.status!==200)throw new RentryError('invalid');
     return {response,text};
   }catch(error){
+    // Dispose bodies rejected before reader acquisition without awaiting cleanup.
+    controller.abort();
+    void response?.body?.cancel().catch(()=>undefined);
     if(deps.signal?.aborted)throw new RentryError('cancelled');
     if(timedOut)throw new RentryError('timeout');
     throw error instanceof RentryError?error:new RentryError('network');

@@ -105,6 +105,30 @@ function server(f:ReturnType<typeof fixture>,options:{
   return {fetch,calls,writes:()=>calls.filter(call=>call.init.method==='POST'),reads:()=>calls.filter(call=>call.init.method==='GET')};
 }
 
+for(const rejected of ['length','redirect','foreign-url','slow-cancel'] as const)
+test(`Rentry disposes a rejected ${rejected} POST response without repeating publication`,{timeout:2000},async()=>{
+  const f=fixture();let posts=0,cancels=0,pulls=0;
+  let signal:AbortSignal|undefined,releaseCancel!:()=>void;
+  const cancellation=new Promise<void>(resolve=>{releaseCancel=resolve});
+  const response=new Response(new ReadableStream<Uint8Array>({
+    pull(){pulls++},cancel(){cancels++;return rejected==='slow-cancel'?cancellation:undefined},
+  },{highWaterMark:0}),{status:rejected==='redirect'?302:200,
+    headers:{'content-type':'application/json','content-length':rejected==='length'||rejected==='slow-cancel'?'128001':'1'}});
+  if(rejected==='foreign-url')Object.defineProperty(response,'url',{value:'https://other.example/'});
+  const fetch:RentryTransport=async(_url,init)=>{
+    if(init.method==='POST'){posts++;signal=init.signal as AbortSignal;assert.ok(f.task.submittedAt);return response}
+    return new Response('not found',{status:404});
+  };
+  try{
+    await runRentryTask(f.context,{fetch});
+    assert.equal(posts,1);assert.equal(cancels,1);assert.equal(pulls,0);assert.equal(signal?.aborted,true);
+    const receipt=structuredClone(f.task.rentry);
+    assert.equal(receipt?.stage,'submitting');assert.ok(f.task.submittedAt);
+    await runRentryTask(f.context,{fetch});
+    assert.equal(posts,1);assert.deepEqual(f.task.rentry,receipt);
+  }finally{releaseCancel()}
+});
+
 test('Rentry creates one encrypted local identity without remote registration or a fabricated profile',async()=>{
   const f=fixture(true),calls:string[]=[];
   assert.equal(await prepareRentryIdentity(f.context,{fetch:async url=>{calls.push(url);throw Error('unexpected')}}),undefined);

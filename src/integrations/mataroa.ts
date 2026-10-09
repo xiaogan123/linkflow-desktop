@@ -157,8 +157,9 @@ async function request(url: URL, init: RequestInit, deps: MataroaDependencies, m
   const duration = Math.min(Math.max(deps.timeoutMs ?? TIMEOUT_MS, 100), 60_000);
   const timer = setTimeout(() => { timeout = true; controller.abort(); }, duration);
   timer.unref?.();
+  let response: Response | undefined;
   try {
-    const response = await abortable((deps.fetch ?? fetch)(url.toString(), {
+    response = await abortable((deps.fetch ?? fetch)(url.toString(), {
       ...init, headers: { 'user-agent': 'Linkflow/1.2.12 (single-account publisher)', ...(init.headers as Record<string, string> | undefined) },
       redirect: 'manual', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal,
     }), controller.signal);
@@ -174,6 +175,9 @@ async function request(url: URL, init: RequestInit, deps: MataroaDependencies, m
     if (response.status === 408 || response.status >= 500) throw new MataroaError('network');
     return { response, text };
   } catch (error) {
+    // Header rejection can precede reader acquisition; cleanup must not wait.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
     if (timeout) throw new MataroaError('timeout');
     if (deps.signal?.aborted) throw new MataroaError('cancelled');
     if (error instanceof MataroaError) throw error;

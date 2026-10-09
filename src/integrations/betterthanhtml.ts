@@ -299,8 +299,9 @@ async function request(
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, Math.min(60_000, Math.max(100, deps.timeoutMs ?? 15_000)));
   timer.unref?.();
+  let response: Response | undefined;
   try {
-    const response = await abortable((deps.fetch ?? fetch)(url, {
+    response = await abortable((deps.fetch ?? fetch)(url, {
       method,
       redirect: 'manual',
       credentials: 'omit',
@@ -353,6 +354,9 @@ async function request(
     if (response.status < 200 || response.status >= 300) throw new BetterThanHtmlError('invalid');
     return { response, text };
   } catch (error) {
+    // Header validation can reject before a reader is acquired. Stop that body too.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
     if (deps.signal?.aborted) throw new BetterThanHtmlError('cancelled');
     if (timedOut) throw new BetterThanHtmlError('timeout');
     throw error instanceof BetterThanHtmlError ? error : new BetterThanHtmlError('network');

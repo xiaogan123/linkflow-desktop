@@ -82,8 +82,9 @@ async function request(path: string, deps: VerboseDependencies, payload?: Json, 
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, Math.min(60_000, Math.max(100, deps.timeoutMs ?? 15_000)));
   timer.unref?.();
+  let response: Response | undefined;
   try {
-    const response = await bounded((deps.fetch ?? fetch)(`${ORIGIN}${path}`, {
+    response = await bounded((deps.fetch ?? fetch)(`${ORIGIN}${path}`, {
       method: payload ? 'POST' : 'GET', redirect: 'manual', credentials: 'omit', cache: 'no-store',
       referrerPolicy: 'no-referrer', signal: controller.signal,
       headers: { accept: path.startsWith('/v0/') ? 'application/json' : 'text/html',
@@ -116,6 +117,9 @@ async function request(path: string, deps: VerboseDependencies, payload?: Json, 
     if (![200, 201].includes(response.status)) throw new VerboseError('invalid');
     return { response, text };
   } catch (error) {
+    // Header rejection can happen before the reader owns the response body.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
     if (deps.signal?.aborted) throw new VerboseError('cancelled');
     if (timedOut) throw new VerboseError('timeout');
     throw error instanceof VerboseError ? error : new VerboseError('network');

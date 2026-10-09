@@ -135,6 +135,46 @@ test('public verification is bounded, refuses redirects and pre-aborted requests
   let cancelled=false;const stream=new ReadableStream<Uint8Array>({pull(controller){controller.enqueue(new Uint8Array(1_100_000));},cancel(){cancelled=true}});const oversized=await verifyProsePublication(f.task,f.site.url,{fetch:async(_url,init)=>{assert.ok(!JSON.stringify(init).includes(RAW_KEY));return new Response(stream,{headers:{'content-type':'text/html'}})}});assert.equal(oversized.found,false);assert.equal(cancelled,true);
 });
 
+for(const rejected of ['length','redirect','foreign-url','content-type'] as const)
+test(`Prose disposes a public response rejected for ${rejected} and preserves its receipt`,async()=>{
+  const f=fixture(),transport=new MemoryTransport();
+  Object.assign(f.task,await runProseTask(f.context,{transport,fetch:publicFetch().fetch,now:()=>new Date(NOW)}));
+  const before=structuredClone(f.task);let cancels=0,pulls=0;let signal:AbortSignal|undefined;
+  const result=await verifyProsePublication(f.task,f.site.url,{fetch:async(_url,init)=>{
+    assert.equal(init.method,'GET');signal=init.signal as AbortSignal;
+    const response=new Response(new ReadableStream<Uint8Array>({pull(){pulls++},cancel(){cancels++}},{highWaterMark:0}),{
+      status:rejected==='redirect'?302:200,
+      headers:{'content-type':rejected==='content-type'?'application/json':'text/html','content-length':rejected==='length'?'2000001':'1'},
+    });
+    if(rejected==='foreign-url')Object.defineProperty(response,'url',{value:'https://other.example/'});
+    return response;
+  }});
+  assert.equal(result.found,false);assert.equal(cancels,1);assert.equal(pulls,0);assert.equal(signal?.aborted,true);
+  assert.deepEqual(f.task,before);assert.equal(transport.writes,1);
+});
+
+for(const cause of ['timeout','actual-overlong'] as const)
+test(`Prose ${cause} verification settles while response cancellation is still pending`,{timeout:2000},async()=>{
+  const f=fixture(),transport=new MemoryTransport();
+  Object.assign(f.task,await runProseTask(f.context,{transport,fetch:publicFetch().fetch,now:()=>new Date(NOW)}));
+  const before=structuredClone(f.task);let cancels=0,settled=false;
+  let signal:AbortSignal|undefined,entered!:()=>void,release!:()=>void;
+  const cancelling=new Promise<void>(resolve=>{entered=resolve}),cancellation=new Promise<void>(resolve=>{release=resolve});
+  const operation=verifyProsePublication(f.task,f.site.url,{timeoutMs:100,fetch:async(_url,init)=>{
+    signal=init.signal as AbortSignal;
+    return new Response(new ReadableStream<Uint8Array>({
+      pull(controller){if(cause==='actual-overlong')controller.enqueue(new Uint8Array(2000001))},
+      cancel(){cancels++;entered();return cancellation},
+    },{highWaterMark:0}),{headers:{'content-type':'text/html'}});
+  }}).then(result=>{settled=true;return result});
+  const guard=setTimeout(entered,700);
+  try{
+    await cancelling;await Promise.race([operation,new Promise<void>(resolve=>setTimeout(resolve,150))]);
+    assert.equal(settled,true);assert.equal(cancels,1);assert.equal(signal?.aborted,true);assert.deepEqual(f.task,before);
+    assert.equal((await operation).found,false);assert.equal(transport.writes,1);
+  }finally{clearTimeout(guard);release();await operation}
+});
+
 test('disabled or custom direct contexts and unsupported Markdown images never reach transport',async()=>{
   for(const override of [{enabled:false},{provenance:'custom' as const}]){const f=fixture({channel:override}),transport=new MemoryTransport();const result=await runProseTask(f.context,{transport,fetch:publicFetch().fetch});assert.equal(result.status,'needs_input');assert.equal(transport.reads,0);assert.equal(transport.writes,0)}
   for(const image of [`![diagram](https://example.com/image.png)`,`[diagram]: https://example.org/diagram.png\n\n![diagram]`]){const f=fixture();f.task.draft!.body+=`\n\n${image}`;const transport=new MemoryTransport();await runProseTask(f.context,{transport,fetch:publicFetch().fetch});assert.equal(transport.reads,0);assert.equal(transport.writes,0)}

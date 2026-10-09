@@ -162,8 +162,9 @@ async function fixedFetch(url: string, init: RequestInit, max: number, deps: Hiv
   signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(abort, Math.min(Math.max(deps.timeoutMs ?? REQUEST_TIMEOUT_MS, 100), 60_000));
   timer.unref?.();
+  let response: Response | undefined;
   try {
-    const response = await (deps.fetch ?? fetch)(url, {
+    response = await (deps.fetch ?? fetch)(url, {
       ...init, redirect: 'error', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal,
     });
     if (response.redirected || response.url && new URL(response.url).href !== new URL(url).href || !response.ok) {
@@ -171,6 +172,9 @@ async function fixedFetch(url: string, init: RequestInit, max: number, deps: Hiv
     }
     return {text:await boundedText(response, max),robotsHeader:response.headers.get('x-robots-tag')??''};
   } catch (error) {
+    // Stop rejected responses after boundedText has released its reader.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
     if (error instanceof HiveError) throw error;
     throw new HiveError('network');
   } finally {

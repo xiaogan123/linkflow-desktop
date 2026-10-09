@@ -92,8 +92,9 @@ async function apiCall(
   timer.unref?.();
   const suffix = path ? `/${encodeURIComponent(path)}` : '';
   const url = `${API_ORIGIN}/${method}${suffix}`;
+  let response: Response | undefined;
   try {
-    const response = await transport(url, {
+    response = await transport(url, {
       method: 'POST',
       body: new URLSearchParams(fields),
       headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -109,6 +110,9 @@ async function apiCall(
     if (!body.result || typeof body.result !== 'object' || Array.isArray(body.result)) throw new Error('invalid_result');
     return body.result as ApiSuccess;
   } catch (error) {
+    // Keep uncertain-write handling while releasing rejected response bodies.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
     if (error instanceof TelegraphApiRejection) throw error;
     throw new TelegraphUncertainError(method === 'createAccount' ? 'account' : method === 'createPage' ? 'publish' : 'read');
   } finally {

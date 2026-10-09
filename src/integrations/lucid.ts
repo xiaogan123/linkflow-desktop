@@ -109,10 +109,11 @@ async function request(path: string, method: 'GET' | 'POST', deps: LucidDependen
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, Math.min(60_000, Math.max(100, deps.timeoutMs ?? 15_000)));
   timer.unref?.();
+  let response: Response | undefined;
   try {
     const url = `${ORIGIN}${path}`;
     const accept = publish ? 'application/json' : path.startsWith('/raw/') ? 'text/markdown' : 'text/html';
-    const response = await abortable((deps.fetch ?? fetch)(url, {
+    response = await abortable((deps.fetch ?? fetch)(url, {
       method, redirect: 'manual', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal,
       headers: { accept, 'user-agent': 'Linkflow (reviewed original-article publisher)',
         ...(publish ? { 'content-type': 'application/json' } : {}) },
@@ -151,6 +152,9 @@ async function request(path: string, method: 'GET' | 'POST', deps: LucidDependen
     if (response.status < 200 || response.status >= 300) throw new LucidError('invalid');
     return { response, text };
   } catch (error) {
+    // Header validation can reject before a reader is acquired. Stop that body too.
+    controller.abort();
+    void response?.body?.cancel().catch(() => undefined);
     if (deps.signal?.aborted) throw new LucidError('cancelled');
     if (timedOut) throw new LucidError('timeout');
     throw error instanceof LucidError ? error : new LucidError('network');
