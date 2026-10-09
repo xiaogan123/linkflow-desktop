@@ -90,6 +90,7 @@ const onboardingById:Record<string,OnboardingDefinition>={
   'lucid-page':{kind:'no_signup',setup:'无需账号；直接创建公开页面，后续修改或删除需本人认领'},
   rentry:{kind:'no_signup',setup:'无需账号；发布时生成编辑凭据并加密保存在本机'},
   betterthanhtml:{kind:'no_signup',setup:'无需账号即可发布公开全文；不承诺编辑或删除'},
+  supanote:{kind:'no_signup',setup:'无需账号；匿名发布公开 Markdown。仅在平台返回管理令牌时加密保存，不承诺可编辑或删除',verification:{checkedAt:'2026-10-09',sourceUrl:'https://supanote.app/docs'}},
   telegraph:{kind:'ai_account',setup:'软件调用 API 自动创建作者身份并加密保存令牌'},
   nostr:{kind:'ai_account',setup:'软件在本机创建作者密钥；这不是钱包连接'},
   mataroa:{kind:'ai_account',setup:'首次任务自动建立作者账号；平台要求验证时等待本人处理'},

@@ -15,11 +15,12 @@ import {runBetterThanHtmlTask,reconcileBetterThanHtmlTask} from './betterthanhtm
 import {runWordPressTask,reconcileWordPressTask} from './wordpress';
 import {runLeafletTask,reconcileLeafletTask} from './leaflet';
 import {runGistTask} from './gist';
+import {runSupanoteTask,reconcileSupanoteTask} from './supanote-publisher';
 
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
   publish(context:ExecutionContext):Promise<ExecutionResult>;
-  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
+  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
 }
 const publishers:Readonly<Record<string,ApiPublisher>>={
   paragraph:{publish:runParagraphTask,reconcile:reconcileParagraphTask},
@@ -38,6 +39,7 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   leaflet:{publish:runLeafletTask,reconcile:reconcileLeafletTask},
   telegraph:{publish:runTelegraphTask,reconcile:reconcileTelegraphTask},
   'github-gist':{publish:runGistTask},
+  supanote:{publish:runSupanoteTask,reconcile:reconcileSupanoteTask},
 };
 /** Only registered built-in API adapters may execute; a catalog label grants nothing. */
 export function publisherFor(channel:Channel):ApiPublisher|undefined{

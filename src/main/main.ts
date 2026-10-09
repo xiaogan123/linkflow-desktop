@@ -14,7 +14,7 @@ import {connectParagraph} from './paragraph-management';
 import {accountLoginPassword,connectArticleAccount,connectProseAccount} from './article-connections';
 import {connectBluesky} from './bluesky-management';
 import {connectLeaflet} from './leaflet-management';
-import { Controller,isConfirmedBetterThanHtmlResultUrl } from './controller';
+import { Controller,isConfirmedBetterThanHtmlResultUrl,isConfirmedSupanoteResultUrl } from './controller';
 import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
@@ -188,12 +188,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||((task.submittedAt||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.wordpress||task.leaflet)&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||((task.submittedAt||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.wordpress||task.leaflet||task.supanote)&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
       if(t.checkpoint==='verbose_account_create_pending'&&!t.deferredAt)throw Error('Verbose 一次性令牌注册结果未明，原身份不可重注册');
-      if((t.submittedAt||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.wordpress||t.leaflet)&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error(t.channelId==='mataroa'?'已有 Mataroa 投稿意图；原账号只读核对最多三次，不会重新投稿。':t.channelId==='verbose'?'已有 Verbose 投稿意图；仅按原作者与 slug 只读核对，不会重新投稿。':t.channelId==='prose'?'已有 Prose 原文件回执；仅按原身份与固定文件名只读核对，不会重新上传。':'已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if((t.submittedAt||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.wordpress||t.leaflet||t.supanote)&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error(t.channelId==='mataroa'?'已有 Mataroa 投稿意图；原账号只读核对最多三次，不会重新投稿。':t.channelId==='verbose'?'已有 Verbose 投稿意图；仅按原作者与 slug 只读核对，不会重新投稿。':t.channelId==='prose'?'已有 Prose 原文件回执；仅按原身份与固定文件名只读核对，不会重新上传。':t.channelId==='supanote'?'已有 Supanote 单次提交意图；缺少公开 ID 时停止查询且不会重新投稿。':'已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
       if(t.deferredAt){store.update(state=>resumeDeferredTask(state.tasks,id,state.settings));void controller.tick();break;}
       if(t.attempts>=store.read().settings.maxAttempts)throw Error('已达重试上限，请检查原因或跳过此渠道。');
       controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;
@@ -222,6 +222,8 @@ async function command(name:string,p:unknown):Promise<unknown>{
         if(!receipt?.slug||receipt.stage!=='published'||!t.submittedAt||t.publicUrl!==u.href||u.href!==`${origin}/${receipt.slug}`)throw Error('仅核验原投稿回执中的完整文章，不接受其他页面代替结果');
       }else if(t.channelId==='betterthanhtml'){
         if(!isConfirmedBetterThanHtmlResultUrl(t,u.href))throw Error('Better Than HTML 仅核验原回执已确认的同一 Workshop 文章；未知结果不接受手动代填');
+      }else if(t.channelId==='supanote'){
+        if(!isConfirmedSupanoteResultUrl(t,u.href))throw Error('Supanote 仅核验原 API 回执绑定的同一公开文章；未知结果不接受手动代填');
       }else if(!belongsToSource(u.href,t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const,reviewKind:'manual_url' as const,reviewUntil:new Date(Date.now()+30*86400000).toISOString(),nextCheckAt:new Date().toISOString(),health:'unknown' as const}: {})});await controller.verify(input.id);break;
     }
     case 'task:open':{

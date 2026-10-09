@@ -10,7 +10,7 @@ const site:Site={id:'site',domain:'example.test',url:'https://example.test/',ema
 const snap=()=>({sites:[site],tasks:[],accounts:[],accountBindings:[],channels:CHANNELS} as unknown as Snapshot);
 const channel=(id:string)=>({...CHANNELS.find(c=>c.id===id)!,enabled:true});
 test('anonymous publishers distinguish enabled software capability from incomplete live acceptance',()=>{
-  for(const id of ['rentry','lucid-page']){
+  for(const id of ['rentry','lucid-page','supanote']){
     assert.equal(channelAutomationKind(channel(id)),'ai_auto');
     assert.equal(channelAutomationKind({...channel(id),enabled:false}),'disabled');
     const s=snap();s.channels=s.channels.map(c=>({...c,enabled:c.id!==id}));
@@ -36,4 +36,9 @@ test('anonymous publication intents remain visible as unconfirmed submissions',(
     assert.equal(taskHasSubmissionEvidence(t),true);assert.equal(taskHasUnconfirmedSubmission(t),true);
     t.publicUrl='https://'+channel(id).domain+'/original';assert.equal(taskHasUnconfirmedSubmission(t),false);
   }
+});
+test('Supanote is a no-account enabled channel whose API receipt stays visibly unconfirmed',()=>{
+  const c=channel('supanote'),s=snap();assert.equal(channelAutomationKind(c),'ai_auto');assert.equal(channelReadinessForDisplay(s,site,c),'ready');assert.equal(connectionOverview(s).find(row=>row.id==='supanote')?.state,'no_setup');
+  const publicId='fixture_note',publicUrl=`https://supanote.app/n/${publicId}`,t={id:'task',channelId:'supanote',siteId:site.id,sourceDomain:'supanote.app',status:'review',createdAt:at,scheduledAt:at,updatedAt:at,submittedAt:at,attempts:1,message:'pending',publicUrl,checkpoint:'supanote_api_receipt',supanote:{operationId:'supanote_operation',contentHash:'b'.repeat(64),createdAt:at,stage:'api_receipt',publicId}} as Task;
+  assert.equal(taskHasSubmissionEvidence(t),true);assert.equal(taskHasUnconfirmedSubmission(t),true);
 });

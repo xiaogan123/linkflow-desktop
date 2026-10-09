@@ -1,6 +1,6 @@
 import type {Account,Snapshot} from '../shared/types';
 
-export type ConnectionChannelId='mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'paper-wf'|'hive'|'prose'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky';
+export type ConnectionChannelId='mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'paper-wf'|'hive'|'prose'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -20,6 +20,7 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'rentry',name:'Rentry',format:'全文',firstStep:'无需注册账号；任务自动保存本机编辑凭据后发布。'},
   {id:'lucid-page',name:'Lucid.page',format:'全文',firstStep:'无需注册账号；匿名发布后修改或删除需先认领。'},
   {id:'betterthanhtml',name:'Better Than HTML',format:'全文',firstStep:'无需注册账号；任务直接发布静态全文，尚未确认文章修改或删除接口。'},
+  {id:'supanote',name:'Supanote',format:'全文',firstStep:'无需注册账号；匿名发布 Markdown。平台未返回管理令牌时不承诺可编辑或删除。'},
   {id:'paper-wf',name:'Paper.wf',format:'全文',firstStep:'可连接已有账号；自动建号可能需要首次人机验证。'},
   {id:'hive',name:'Hive',format:'全文',firstStep:'连接本人账号的 posting key，再选择要使用的网站。'},
   {id:'prose',name:'Prose',format:'全文',firstStep:'粘贴本人受邀身份的专用 SSH 私钥，只读核对身份后选择网站。'},
@@ -33,7 +34,7 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
 const needsBinding=new Set<ConnectionChannelId>(['hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky']);
-const selfProvisioned=new Set<ConnectionChannelId>(['mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml']);
+const selfProvisioned=new Set<ConnectionChannelId>(['mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote']);
 
 function usable(account:Account,id:ConnectionChannelId){
   return account.status==='registered'&&account.hasPassword&&account.credentialKind===(id==='blogger'||id==='wordpress-com'?'oauth':'api_token');

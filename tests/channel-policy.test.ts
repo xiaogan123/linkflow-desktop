@@ -89,6 +89,11 @@ test('Paper uses exact official guidance with independent review while content p
  assert.equal(rejected.status,'failed');assert.equal(rejected.checks?.channelRules,'fail');
 });
 
+test('Supanote guidance review is bound to its exact official terms and API evidence',()=>{
+ const supanote=CHANNELS.find(item=>item.id==='supanote')!;assert.equal(supportsOfficialGuidanceReview(supanote),true);
+ for(const variant of [{...supanote,provenance:'custom' as const},{...supanote,domain:'other.example'},{...supanote,evidenceSources:supanote.evidenceSources?.slice(0,1)},{...supanote,evidenceSources:supanote.evidenceSources?.map(source=>({...source,appliesTo:'other'}))}])assert.equal(supportsOfficialGuidanceReview(variant),false);
+});
+
 test('Verbose official agent publishing guidance is narrowly bound and keeps full policy unknown',async()=>{
  const candidate=CHANNELS.find(item=>item.id==='verbose')!,state=fixture(),task={...state.tasks[0],channelId:'verbose',sourceDomain:'verbose.blog'};
  const quote='An API for agents to publish and manage their writing.';

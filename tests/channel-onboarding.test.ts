@@ -13,7 +13,7 @@ const channel=(id:string)=>{
 const builtIn=(id:string):Channel=>CHANNELS.find(item=>item.id===id)??{...channel('telegraph'),id,provenance:'built-in'};
 
 test('verified no-signup and automatic identity flows stay distinct',()=>{
-  for(const id of ['lucid-page','rentry','betterthanhtml'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
+  for(const id of ['lucid-page','rentry','betterthanhtml','supanote'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['mataroa','nostr','paper-wf','telegraph','verbose']);
   assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建作者身份/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/本机创建作者密钥/);
@@ -61,7 +61,7 @@ test('custom and unmapped rows remain unknown even when they reuse a trusted id 
 test('setup combines with capability, free, finance and selected-site visibility using AND',()=>{
   const select=(automation:Parameters<typeof channelMatchesAutomation>[1],setup:Parameters<typeof channelMatchesOnboarding>[1],siteVisible=true)=>CHANNELS.filter(item=>channelMatchesDirectoryFilters(item,{automation,onboarding:setup,freeOnly:true,category:'finance',siteVisible})).map(item=>item.id).sort();
   assert.deepEqual(select('connected_auto','wallet'),['paragraph']);
-  assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','lucid-page']);
+  assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','lucid-page','supanote']);
   assert.deepEqual(select('ai_auto','existing_account'),[]);
   assert.deepEqual(select('connected_auto','ai_account'),[]);
   assert.deepEqual(select('connected_auto','wallet',false),[]);

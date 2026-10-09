@@ -7,6 +7,7 @@ import {getArticleReviewMode} from '../shared/article-review-mode';
 import {canonicalPublicPageUrl} from '../shared/publication';
 import {isArticleTopicUrl} from '../shared/topic-policy';
 import {socialDraftError} from '../shared/social-content';
+import {supanoteDraftError} from '../integrations/supanote-publisher';
 import {TopicDiscoveryError} from '../integrations/topics';
 import {channelEvidenceSources,currentChannelPolicyDecision,supportsOfficialGuidanceReview} from './channel-policy';
 
@@ -166,6 +167,7 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
   const base=()=>fail('AI 核对未通过：无法取得足够且可验证的公开证据。');
   if(!task.draft?.body.trim())return fail('AI 核对未通过：稿件正文为空。');
   const betterThanHtmlError=channel.id==='betterthanhtml'?betterThanHtmlDraftError(task.draft):undefined;if(betterThanHtmlError)return fail(betterThanHtmlError,[],'content_rejected');
+  const supanoteError=channel.id==='supanote'?supanoteDraftError(task.draft):undefined;if(supanoteError)return fail(supanoteError,[],'content_rejected');
   const formatError=socialDraftError(task,site,channel);if(formatError)return fail(formatError,[],'content_rejected');
   let stage:'evidence'|'ai'='evidence';
   try{
