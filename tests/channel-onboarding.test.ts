@@ -13,13 +13,14 @@ const channel=(id:string)=>{
 const builtIn=(id:string):Channel=>CHANNELS.find(item=>item.id===id)??{...channel('telegraph'),id,provenance:'built-in'};
 
 test('verified no-signup and automatic identity flows stay distinct',()=>{
-  for(const id of ['lucid-page','rentry','betterthanhtml','supanote'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
+  for(const id of ['lucid-page','rentry','betterthanhtml','supanote','docs-md'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['mataroa','nostr','paper-wf','telegraph','verbose']);
   assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建作者身份/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/本机创建作者密钥/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/不是钱包连接/);
   assert.match(channelOnboardingView(channel('paper-wf')).setup,/人机验证/);
   assert.match(channelOnboardingView(builtIn('betterthanhtml')).setup,/无需账号.*不承诺编辑或删除/);
+  assert.match(channelOnboardingView(builtIn('docs-md')).setup,/无需账号.*保持停用.*真实托管公开页验收/);
 });
 
 test('wallet means the platform setup while Linkflow states the credential it actually uses',()=>{

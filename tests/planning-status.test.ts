@@ -12,6 +12,23 @@ test('September 30 keeps the configured timezone when displaying a future task',
 test('global pause is explicit even when work is already queued',()=>assert.equal(planningStatus(site,[task('queued')],context(false)).state,'global_paused'));
 test('site pause remains distinct from global pause',()=>assert.equal(planningStatus({...site,status:'paused'},[task('queued')],context()).state,'site_paused'));
 test('running task is surfaced before its schedule',()=>assert.equal(planningStatus(site,[task('running')],context()).state,'running'));
+test('Docs MD no-ID unknown result does not promise platform confirmation or inflate pending counts',()=>{
+ const unknown:Task={...task('review'),channelId:'docs-md',sourceDomain:'docs-md.com',checkpoint:'docs_md_share_submitting',submittedAt:'2026-09-30T00:00:00Z',message:'提交结果尚不能确定，已保留原稿；不会重复发布。',docsMd:{operationId:'fixture-operation',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:'2026-09-30T00:00:00Z',stage:'submitting'}};
+ for(const enabled of [true,false]){
+  const ctx={...context(),articleReviewMode:'ai' as const,channelEnabled:(candidate:Task)=>candidate.channelId==='docs-md'?enabled:true};
+  const result=planningStatus(site,[unknown],ctx);
+  assert.deepEqual([result.state,result.label,result.next],['channel_wait','提交结果未知','当前未安排自动复查']);
+  assert.equal(result.detail,unknown.message);
+  const queued={...task('queued'),id:'other-task'};
+  const withQueue=planningStatus(site,[unknown,queued],ctx);
+  assert.equal(withQueue.next,'今天 10:00');
+  assert.match(withQueue.detail,/另有 1 项尚未完成/);
+  assert.match(withQueue.detail,/提交结果未知且未安排自动检查/);
+  assert.doesNotMatch(withQueue.detail,/由系统等待恢复或渠道结果/);
+ }
+ assert.equal(planningStatus({...site,status:'paused'},[unknown],context()).state,'site_paused');
+ assert.equal(planningStatus(site,[unknown],context(false)).state,'global_paused');
+});
 test('needs-input task is surfaced before its schedule',()=>assert.equal(planningStatus(site,[task('needs_input')],context()).state,'needs_input'));
 test('manual article review uses the real needs-input status and makes human confirmation explicit',()=>{const review={...task('needs_input'),checkpoint:'article_review'};assert.equal(planningStatus(site,[review],context()).label,'稿件待人工审核')});
 test('a queued task keeps its real next time when another task needs human attention',()=>{const blocked={...task('needs_input'),checkpoint:'article_review'};const queued={...task('queued'),id:'task-2',sourceDomain:'second.example'};const result=planningStatus(site,[blocked,queued],context());assert.deepEqual([result.label,result.next],['有稿件待人工审核','今天 10:00'])});

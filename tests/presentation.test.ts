@@ -111,3 +111,10 @@ test('Paper and Hive uncertain results show bounded automatic queries without a 
   const brokenCheckpoint={...uncertain,checkpoint:undefined,submittedAt:undefined};assert.equal(canRetryTaskManually(brokenCheckpoint,'ai'),false);assert.equal(canResumeDeferredTask({...brokenCheckpoint,deferredAt:stamp}),false);
  }
 });
+
+test('a known Docs MD receipt shows bounded GET-only reconciliation and never exposes resend',()=>{
+ const receipt={operationId:'docs_md_11111111111141118111111111111111',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'api_receipt' as const,id:'docs-cycle-51'};
+ const uncertain=task({channelId:'docs-md',sourceDomain:'docs-md.com',status:'needs_input',checkpoint:'docs_md_api_receipt',submittedAt:stamp,publicUrl:'https://docs-md.com/docs-cycle-51',docsMd:receipt,reconcileAttempts:1,reconcileAfter:'2026-10-04T01:00:00.000Z'});
+ assert.equal(taskPresentation(uncertain,'ai').label,'自动查询发布结果');assert.equal(taskAutomaticFollowupAt(uncertain),uncertain.reconcileAfter);assert.equal(taskHasAutomaticFollowup(uncertain),true);assert.equal(canRetryTaskManually(uncertain,'ai'),false);
+ assert.equal(taskHasAutomaticFollowup({...uncertain,reconcileAttempts:3}),false);assert.equal(taskHasAutomaticFollowup(uncertain,false),false);assert.equal(taskPresentation(uncertain,'ai',false).label,'需要确认发布结果');
+});

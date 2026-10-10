@@ -88,6 +88,17 @@ if(!process.versions.electron){
   const clickText=async text=>{const ok=await evaluate('(()=>{const text='+JSON.stringify(text)+';const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()===text&&!item.disabled);if(!button)return false;button.click();return true})()');assert(ok,'button: '+text);await delay(25)};
   const clickLabel=async label=>{const ok=await evaluate('(()=>{const label='+JSON.stringify(label)+';const button=[...document.querySelectorAll("button")].find(item=>item.getAttribute("aria-label")===label&&!item.disabled);if(!button)return false;button.click();return true})()');assert(ok,'button label: '+label);await delay(25)};
   const actionCount=command=>evaluate('window.__wordpressFixture.actions.filter(item=>item.command==='+JSON.stringify(command)+').length');
+  const openWordPress=async()=>{
+    await clickText('添加 / 连接账号');
+    await waitFor('document.querySelector(".account-guide-drawer")!==null');
+    const picked=await evaluate('(()=>{const option=[...document.querySelectorAll(".account-guide-drawer [role=option]")].find(item=>item.querySelector("strong")?.textContent==="WordPress.com");if(!option)return false;option.click();return true})()');
+    assert(picked,'WordPress.com platform option');
+    await waitFor('document.querySelector(".account-guide-drawer .platform-selection")?.innerText.includes("WordPress.com")');
+    const opened=await evaluate('(()=>{const button=[...document.querySelectorAll(".account-guide-drawer .platform-selection button")].find(item=>item.innerText.trim()==="查看 WordPress.com 授权"&&!item.disabled);if(!button)return false;button.click();return true})()');
+    assert(opened,'guided WordPress.com authorization action');
+    await waitFor('document.querySelector(".side-drawer")?.getAttribute("aria-label")==="连接 WordPress.com 博客"');
+    await waitFor('document.querySelector(".account-guide-drawer")===null');
+  };
 
   app.whenReady().then(async()=>{
     try{
@@ -96,8 +107,8 @@ if(!process.versions.electron){
       await win.loadFile(join(dir,'index.html'));
       await waitFor('document.body.innerText.includes("WordPress.com")');
 
-      check('disabled catalog row remains marked pending acceptance',await evaluate('document.body.innerText.includes("浏览器授权和真实公开发布尚待验收")&&document.body.innerText.includes("待验收启用")'));
-      await clickText('查看连接状态');
+      check('disabled catalog row remains explicit about acceptance and publication limits',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="WordPress.com");return !!row&&row.textContent.includes("当前未启用")&&row.textContent.includes("浏览器授权和真实公开发布尚待验收")&&row.querySelector("button")?.textContent.includes("查看 WordPress.com 授权")})()'));
+      await openWordPress();
       await waitFor('document.body.innerText.includes("WordPress.com 浏览器授权待接入验收")');
       check('unconfigured product OAuth disables authorization',await evaluate('(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.includes("待接入验收"));return !!button&&button.disabled})()'));
       check('drawer never asks for or renders a token input',await evaluate('!document.querySelector("[role=dialog] input[type=password]")&&!/access[_ -]?token|client[_ -]?secret/i.test(document.querySelector("[role=dialog]").innerText)'));
@@ -106,7 +117,7 @@ if(!process.versions.electron){
       check('closing an unavailable connection clears the main-process session',await actionCount('account:cancel-wordpress')===1);
 
       await evaluate('window.__wordpressFixture.setConfigured(true)');
-      await clickText('查看连接状态');
+      await openWordPress();
       await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="在浏览器授权 WordPress.com"&&!item.disabled)');
       const doubleStarted=await evaluate('(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()==="在浏览器授权 WordPress.com");button.click();button.click();return true})()');
       check('authorization action is available after product configuration',doubleStarted);
@@ -131,7 +142,7 @@ if(!process.versions.electron){
       await waitFor('document.querySelector("[role=dialog]")===null');
 
       await evaluate('window.__wordpressFixture.setLate(true)');
-      await clickText('查看连接状态');
+      await openWordPress();
       await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="在浏览器授权 WordPress.com"&&!item.disabled)');
       await clickText('在浏览器授权 WordPress.com');
       await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="取消授权")');
@@ -139,7 +150,7 @@ if(!process.versions.electron){
       await waitFor('document.querySelector("[role=dialog]")===null');
       await delay(280);
       check('cancelled authorization late response cannot reopen or mutate the closed drawer',await evaluate('document.querySelector("[role=dialog]")===null')&&await actionCount('account:cancel-wordpress')===3);
-      await clickText('查看连接状态');
+      await openWordPress();
       await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="在浏览器授权 WordPress.com"&&!item.disabled)');
       check('a new drawer does not inherit blogs from the cancelled late response',await evaluate(`document.querySelector('select[aria-label="WordPress.com 博客"]')===null`));
       await clickText('取消');

@@ -92,8 +92,15 @@ if(!process.versions.electron){
     throw Error('UI readiness deadline: '+source);
   };
   const clickText=async label=>{
-    const source='(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()==='+JSON.stringify(label)+'&&!item.disabled);if(!button)return false;button.click();return true})()';
+    const source='(()=>{const dialogs=[...document.querySelectorAll("[role=dialog][aria-modal=true]")];const root=dialogs.at(-1)??document;const button=[...root.querySelectorAll("button")].find(item=>item.innerText.trim()==='+JSON.stringify(label)+'&&!item.disabled);if(!button)return false;button.click();return true})()';
     assert(await evaluate(source),'button: '+label);
+    await delay(35);
+  };
+  const choosePlatform=async label=>{
+    await clickText('添加 / 连接账号');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="添加或连接账号"');
+    const source='(()=>{const button=[...document.querySelectorAll("[role=option]")].find(item=>item.querySelector("strong")?.textContent==='+JSON.stringify(label)+');if(!button||button.disabled)return false;button.click();return true})()';
+    assert(await evaluate(source),'platform: '+label);
     await delay(35);
   };
   const inputInfo=label=>evaluate('(()=>{const input=[...document.querySelectorAll("input")].find(item=>item.getAttribute("aria-label")==='+JSON.stringify(label)+');return input?{type:input.type,autocomplete:input.autocomplete,value:input.value}:{missing:true}})()');
@@ -105,11 +112,6 @@ if(!process.versions.electron){
   const setTextarea=async(label,value)=>{
     const source='(()=>{const input=[...document.querySelectorAll("textarea")].find(item=>item.getAttribute("aria-label")==='+JSON.stringify(label)+');if(!input||input.disabled)return false;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(input,'+JSON.stringify(value)+');input.dispatchEvent(new Event("input",{bubbles:true}));input.dispatchEvent(new Event("change",{bubbles:true}));return true})()';
     assert(await evaluate(source),'textarea: '+label);await delay(35);
-  };
-  const selectHive=async()=>{
-    const source='(()=>{const select=document.querySelector("[role=dialog] select");if(!select)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(select,"hive");select.dispatchEvent(new Event("change",{bubbles:true}));return true})()';
-    assert(await evaluate(source),'Hive selector');
-    await delay(35);
   };
   const setCheckbox=async(text,checked)=>{
     const source='(()=>{const label=[...document.querySelectorAll("[role=dialog] label")].find(item=>item.innerText.includes('+JSON.stringify(text)+'));const input=label?.querySelector("input[type=checkbox]");if(!input||input.disabled)return false;if(input.checked!=='+JSON.stringify(checked)+')input.click();return input.checked==='+JSON.stringify(checked)+'})()';
@@ -125,11 +127,12 @@ if(!process.versions.electron){
     try{
       win=new BrowserWindow({width:1260,height:800,useContentSize:true,show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
       await win.loadFile(join(dir,'index.html'));
-      await waitFor('document.body.innerText.includes("更多全文渠道")');
-      check('anonymous BTH appears as no-setup and never offers an account connection button',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Better Than HTML");return !!row&&row.innerText.includes("无需首次连接")&&row.innerText.includes("无需注册账号")&&!row.querySelector("button")})()'));
-      check('disabled Telegraph never claims automatic preparation or pending acceptance',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Telegraph");return !!row&&row.innerText.includes("当前停用")&&row.innerText.includes("当前不执行")&&!row.innerText.includes("随任务自动准备")&&!row.innerText.includes("待验收启用")})()'));
-      check('disabled Prose offers only read-only SSH identity validation and makes no publishability claim',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Prose");return !!row&&row.innerText.includes("SSH/SFTP")&&row.innerText.includes("邀请")&&row.innerText.includes("当前不会自动发布")&&row.querySelector("button")?.innerText.includes("只读验证")})()'));
-      await clickText('更多全文渠道');
+      await waitFor('document.body.innerText.includes("添加 / 连接账号")');
+      check('anonymous BTH appears as automatically prepared and never offers an account connection button',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Better Than HTML");return !!row&&row.innerText.includes("任务自动准备")&&row.innerText.includes("无需注册账号")&&!row.querySelector("button")})()'));
+      check('disabled Telegraph never claims automatic preparation or pending acceptance',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Telegraph");return !!row&&row.textContent.includes("当前停用")&&row.textContent.includes("不会自动发布")&&!row.textContent.includes("任务自动准备")&&!row.textContent.includes("待验收启用")})()'));
+      check('disabled Prose offers only read-only SSH identity validation and makes no publishability claim',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Prose");return !!row&&row.textContent.includes("SSH/SFTP")&&row.textContent.includes("邀请")&&row.textContent.includes("当前不会自动发布")&&row.querySelector("button")?.textContent.includes("只读验证")})()'));
+      await choosePlatform('Paper.wf');
+      await clickText('连接 Paper.wf');
       await waitFor('document.querySelector("[role=dialog]")!==null');
       check('Paper drawer opens through the accounts page',await evaluate('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接全文发布渠道"'));
       check('Paper submit starts disabled', (await submit()).disabled);
@@ -151,10 +154,10 @@ if(!process.versions.electron){
       check('Paper success closes drawer and adds account',await evaluate('document.body.innerText.includes("paper-author")')&&await noSecretInDom('fixture-paper-success'));
       check('Paper success uses one atomic IPC command',await callCount('account:connect-paper')===2&&await callCount('account:set-bindings')===0);
 
-      await clickText('更多全文渠道');
+      await choosePlatform('Hive');
+      await clickText('连接 Hive');
       await waitFor('document.querySelector("[role=dialog]")!==null');
-      check('new drawer does not retain successful Paper credential',(await inputInfo('Paper.wf 凭据')).value==='');
-      await selectHive();
+      check('Hive drawer contains no Paper credential field',(await inputInfo('Paper.wf 凭据')).missing===true);
       credential=await inputInfo('Hive 凭据');
       check('Hive posting key is masked, empty, and marked as new password',credential.type==='password'&&credential.autocomplete==='new-password'&&credential.value==='');
       await setInput('Hive 账号名','hive-author');
@@ -174,9 +177,9 @@ if(!process.versions.electron){
       await waitFor('document.querySelector("[role=dialog]")===null');
       check('Hive success closes drawer and adds account',await evaluate('document.body.innerText.includes("hive-author")')&&await noSecretInDom('fixture-hive-success'));
       check('Hive success uses one atomic IPC command',await callCount('account:connect-hive')===2&&await callCount('account:set-bindings')===0);
-      await clickText('更多全文渠道');
+      await choosePlatform('Hive');
+      await clickText('管理或新增连接');
       await waitFor('document.querySelector("[role=dialog]")!==null');
-      await selectHive();
       check('new drawer does not retain successful Hive posting key',(await inputInfo('Hive 凭据')).value==='');
       await clickText('取消');
       await waitFor('document.querySelector("[role=dialog]")===null');
@@ -190,7 +193,8 @@ if(!process.versions.electron){
       await evaluate('window.dispatchEvent(new Event("blur"))');
       await waitFor('document.querySelector(".secret-reveal")===null');
       check('Paper password is concealed after window blur',await noSecretInDom('synthetic-paper-login-password'));
-      await clickText('连接已有账号');
+      await choosePlatform('Mataroa');
+      await clickText('连接 Mataroa');
       await waitFor('document.querySelector("[role=dialog]")!==null');
       check('Mataroa action opens the exact platform',!(await inputInfo('Mataroa 凭据')).missing);
       check('Mataroa password starts empty and masked',(await inputInfo('Mataroa 凭据')).value===''&&(await inputInfo('Mataroa 凭据')).type==='password');
@@ -207,6 +211,7 @@ if(!process.versions.electron){
       await waitFor('document.querySelector("[role=dialog]")!==null');
       check('Mataroa repair keeps username and does not prefill secrets',(await inputInfo('Mataroa 账号名')).value==='mataroa-author'&&(await inputInfo('Mataroa 凭据')).value==='');
       await clickText('取消');
+      await choosePlatform('Prose');
       await clickText('只读验证 SSH 身份');
       await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接 Prose SSH 身份"');
       check('Prose explains dedicated SSH/SFTP read-only identity verification and unknown invitation eligibility',await evaluate('document.querySelector("[role=dialog]").innerText.includes("ssh-agent")&&document.querySelector("[role=dialog]").innerText.includes("不会创建账号")&&document.querySelector("[role=dialog]").innerText.includes("身份读取成功不代表")'));
@@ -216,7 +221,7 @@ if(!process.versions.electron){
       check('Prose failure clears both secret inputs and never renders them',await evaluate('document.querySelector("textarea[aria-label=\\"Prose 专用 SSH 私钥\\"]").value===""')&&(await inputInfo('Prose 私钥口令')).value===''&&await noSecretInDom('fixture-prose-fail')&&await noSecretInDom('fixture-prose-pass'));
       await setTextarea('Prose 专用 SSH 私钥','fixture-prose-cancel');await clickText('只读验证并保存');await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="取消验证")');await clickText('取消验证');await waitFor('document.querySelector("[role=dialog]")===null');
       check('Prose cancellation dispatches a dedicated abort and removes the private key from DOM',await callCount('account:cancel-prose')===1&&await noSecretInDom('fixture-prose-cancel'));
-      await clickText('只读验证 SSH 身份');await setTextarea('Prose 专用 SSH 私钥','fixture-prose-success');await setCheckbox('two.example',true);await clickText('只读验证并保存');await waitFor('document.querySelector("[role=dialog]")===null&&document.body.innerText.includes("prose-author")');
+      await choosePlatform('Prose');await clickText('只读验证 SSH 身份');await setTextarea('Prose 专用 SSH 私钥','fixture-prose-success');await setCheckbox('two.example',true);await clickText('只读验证并保存');await waitFor('document.querySelector("[role=dialog]")===null&&document.body.innerText.includes("prose-author")');
       check('Prose success remains waiting for invitation verification and does not expose a generic key reveal',await evaluate('document.body.innerText.includes("等待验证")&&document.body.innerText.includes("邀请资格未知")&&![...document.querySelectorAll("button")].some(item=>item.getAttribute("aria-label")==="查看 prose-author 的密码")')&&await noSecretInDom('fixture-prose-success'));
       const sanitized=await evaluate('window.__articleFixture.calls.map(item=>({command:item.command,keys:Object.keys(item.payload??{}).sort(),siteIds:item.payload?.siteIds,acknowledgePermanent:item.payload?.acknowledgePermanent}))');
       writeFileSync(join(evidence,'article-connection-ui-result.json'),JSON.stringify({passed:true,checks,calls:sanitized},null,2));

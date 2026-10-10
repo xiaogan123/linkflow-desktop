@@ -117,29 +117,33 @@ if(!process.versions.electron){
     await clickText('账号');
     await waitFor('document.body.innerText.includes("telegraph-author")');
 
-    check('accounts page explains automatic Telegraph identities and optional imports',await evaluate(`(()=>{const row=[...document.querySelectorAll('.connection-overview-row')].find(item=>item.querySelector('strong')?.innerText==='Telegraph');return row?.innerText.includes('任务需要时自动建立作者身份')&&row.innerText.includes('随任务自动准备')&&row.querySelectorAll('button').length===0&&[...document.querySelectorAll('button')].some(button=>button.innerText.trim()==='导入已有账号')})()`));
+    check('accounts page explains automatic Telegraph identities and offers the guided account entry',await evaluate(`(()=>{const row=[...document.querySelectorAll('.connection-overview-row')].find(item=>item.querySelector('strong')?.textContent==='Telegraph');return row?.textContent.includes('任务需要时自动建立作者身份')&&row.textContent.includes('任务自动准备')&&row.textContent.includes('无需预先注册')&&row.querySelectorAll('button').length===0&&[...document.querySelectorAll('button')].some(button=>button.innerText.trim()==='添加 / 连接账号')})()`));
     check('Telegraph API identity is identified as task-created',await evaluate('document.body.innerText.includes("任务自动创建的 API 身份")'));
     check('API identities never expose the password reveal action',await evaluate('!document.querySelector("button[aria-label=\\"查看 telegraph-author 的密码\\"]")&&!document.querySelector("button[aria-label=\\"查看 gist-owner 的密码\\"]")'));
     check('ordinary password account keeps its reveal action',await evaluate('!!document.querySelector("button[aria-label=\\"查看 github-user 的密码\\"]")'));
 
-    await clickText('导入已有账号');
+    await clickText('添加 / 连接账号');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="添加或连接账号"');
+    await clickText('导入普通账号');
     await waitFor('!!document.querySelector("[role=dialog] select")');
     const initial=await evaluate(`(()=>{const select=document.querySelector('[role=dialog] select');return {value:select.value,label:select.selectedOptions[0]?.textContent,options:[...select.options].map(option=>({value:option.value,label:option.textContent}))}})()`);
-    check('first visible importable channel is the real default',initial.value==='product-hunt'&&initial.label==='Product Hunt');
-    check('import list excludes Gist and Telegraph API identities',initial.options.map(option=>option.value).join(',')==='product-hunt,github');
+    check('ordinary import requires an explicit platform choice',initial.value===''&&initial.label==='先选择平台');
+    check('import list excludes Gist and Telegraph API identities',initial.options.map(option=>option.value).join(',')===',product-hunt,github');
     await setSelect('[role=dialog] select','github');
     await clickText('取消');
-    await clickText('导入已有账号');
+    await clickText('添加 / 连接账号');
+    await clickText('导入普通账号');
     const reopened=await evaluate(`(()=>{const select=document.querySelector('[role=dialog] select');return {value:select.value,label:select.selectedOptions[0]?.textContent}})()`);
-    check('cancel and reopen resets to the visible import default',reopened.value==='product-hunt'&&reopened.label==='Product Hunt');
-    check('import dialog says Telegraph needs no pre-created account',await evaluate('document.querySelector("[role=dialog]").innerText.includes("无需提前注册")'));
+    check('cancel and reopen resets to no selected platform',reopened.value===''&&reopened.label==='先选择平台');
+    check('import dialog redirects dedicated connection types to the account guide',await evaluate('document.querySelector("[role=dialog]").innerText.includes("API、OAuth、SSH 或只读平台")'));
+    await setSelect('[role=dialog] select','product-hunt');
     await setInput('[role=dialog] input[type=email]','new@example.com');
     await setInput('[role=dialog] .form-grid input:not([type=email])','new-user');
     await setInput('[role=dialog] input[type=password]','new-password');
-    await clickText('保存账号与绑定');
+    await clickText('保存账号');
     await waitFor('!document.querySelector("[role=dialog]")');
     const imported=actions.find(item=>item.name==='account:save'&&!item.payload.id);
-    check('submitted channel matches the visible default',imported?.payload.channelId===reopened.value&&reopened.value==='product-hunt');
+    check('submitted channel matches the explicit selection',imported?.payload.channelId==='product-hunt');
 
     const telegraphCredentialBefore=storedCredentials['telegraph-api'];
     const telegraphBefore=clone(state.accounts.find(item=>item.id==='telegraph-api'));
@@ -147,7 +151,7 @@ if(!process.versions.electron){
     await clickLabel('绑定 telegraph-author');
     await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("编辑身份绑定")');
     const telegraphDialog=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return {text:dialog.innerText,passwords:dialog.querySelectorAll('input[type=password]').length,emails:dialog.querySelectorAll('input[type=email]').length,channelOptions:[...dialog.querySelectorAll('option')].map(option=>option.value)}})()`);
-    check('Telegraph edit is binding-only with no password or login fields',telegraphDialog.passwords===0&&telegraphDialog.emails===0&&telegraphDialog.text.includes('不会覆盖已保存的令牌'));
+    check('Telegraph edit is binding-only with no password or login fields',telegraphDialog.passwords===0&&telegraphDialog.emails===0&&telegraphDialog.text.includes('此处只管理网站与收件箱绑定')&&telegraphDialog.text.includes('不会覆盖已保存的凭据')&&telegraphDialog.text.includes('保存绑定不代表平台当前可发布'));
     check('Telegraph binding dialog has no account channel choices',!telegraphDialog.channelOptions.includes('telegraph')&&!telegraphDialog.channelOptions.includes('product-hunt'));
     await clickText('保存绑定');
     await waitFor('!document.querySelector("[role=dialog]")');
@@ -167,7 +171,7 @@ if(!process.versions.electron){
     await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("编辑账号与绑定")');
     const normalDialog=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');const channel=dialog.querySelector('select');return {channel:channel?.value,email:dialog.querySelector('input[type=email]')?.value,hasPassword:!!dialog.querySelector('input[type=password]')}})()`);
     check('ordinary password account keeps editable login fields',normalDialog.channel==='github'&&normalDialog.email==='login@example.com'&&normalDialog.hasPassword);
-    await clickText('保存账号与绑定');
+    await clickText('保存账号');
     await waitFor('!document.querySelector("[role=dialog]")');
     const normalSave=actions.findLast(item=>item.name==='account:save'&&item.payload.id==='github-password');
     check('ordinary account still submits through account save',normalSave?.payload.channelId==='github'&&normalSave.payload.email==='login@example.com');

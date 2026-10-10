@@ -10,17 +10,20 @@ import { Store, defaultSettings } from './store';
 import { Vault, encryptBackup, decryptBackup } from './vault';
 import {connectBlogger,reconnectBlogger,listBloggerBlogs,bindBloggerBlog,bindBloggerBlogs,disconnectBlogger} from './blogger-management';
 import {WordPressConnections} from './wordpress-management';
+import {connectMarkest,MarkestConnectionInput} from './markest-management';
+import {connectDeno,DenoConnectionInput} from './deno-management';
+import {readDenoApps,validDenoToken} from '../integrations/deno-connection';
 import {connectParagraph} from './paragraph-management';
-import {accountLoginPassword,connectArticleAccount,connectProseAccount} from './article-connections';
+import {accountLoginPassword,connectArticleAccount,connectProseAccount,parseArticleConnectionInput} from './article-connections';
 import {connectBluesky} from './bluesky-management';
 import {connectLeaflet} from './leaflet-management';
-import { Controller,isConfirmedBetterThanHtmlResultUrl,isConfirmedSupanoteResultUrl } from './controller';
+import { Controller,isConfirmedBetterThanHtmlResultUrl,isConfirmedSupanoteResultUrl,isConfirmedDocsMdResultUrl } from './controller';
 import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
 import {publicationOpportunity,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
 import {resumeDeferredTask} from './task-recovery';
-import { IPC_COMMANDS, type Site, type Account } from '../shared/types';
+import { IPC_COMMANDS, type Site, type Account, type BloggerConnectionResult } from '../shared/types';
 import {CHANNELS} from '../integrations/catalog';
 import {belongsToSource} from '../integrations/web';
 import {eligibilityFor} from '../integrations/eligibility';
@@ -58,6 +61,8 @@ let win:BrowserWindow|null=null,tray:Tray|null=null,quitting=false,restoring=fal
 const activeCommands=new Set<symbol>();
 let bloggerConnect:AbortController|undefined;
 let proseConnect:AbortController|undefined;
+let markestConnect:AbortController|undefined;
+let denoConnect:AbortController|undefined;
 let wordpressConnections:WordPressConnections;
 const root=join(__dirname,'..');
 const file=join(root,'dist/index.html');
@@ -133,14 +138,15 @@ async function command(name:string,p:unknown):Promise<unknown>{
           const info=await stat(chosen.filePaths[0]);if(!info.isFile()||info.size>65536)throw Error('客户端配置文件无效或过大');
           const config=await readFile(chosen.filePaths[0],'utf8');
           const result=await connectBlogger(store,vault,config,{signal:abort.signal,openExternal:url=>openInPreferredBrowser(url,store.read().settings.preferredBrowser,value=>shell.openExternal(value))});
-          return result.account;
+          const response:BloggerConnectionResult={account:result.account,blogs:result.blogs.map(({id,name,url})=>({id,name,url}))};
+          return response;
         }finally{if(bloggerConnect===abort)bloggerConnect=undefined}
       });
     }
     case 'account:reconnect-blogger':{
       const d=z.object({accountId:z.string().uuid()}).strict().parse(p);if(bloggerConnect)throw Error('Blogger连接正在进行');
       return controller.manageIdentity(async()=>{const abort=new AbortController();bloggerConnect=abort;
-        try{const result=await reconnectBlogger(store,vault,d.accountId,{signal:abort.signal,openExternal:url=>openInPreferredBrowser(url,store.read().settings.preferredBrowser,value=>shell.openExternal(value))});return result.account;}
+        try{const result=await reconnectBlogger(store,vault,d.accountId,{signal:abort.signal,openExternal:url=>openInPreferredBrowser(url,store.read().settings.preferredBrowser,value=>shell.openExternal(value))});const response:BloggerConnectionResult={account:result.account,blogs:result.blogs.map(({id,name,url})=>({id,name,url}))};return response;}
         finally{if(bloggerConnect===abort)bloggerConnect=undefined}
       });
     }
@@ -152,11 +158,31 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'account:connect-paper':
     case 'account:connect-hive':
     case 'account:connect-mataroa':{
-      const d=z.object({username:z.string().trim().min(1).max(100),credential:z.string().min(1).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional(),acknowledgePermanent:z.boolean().optional()}).strict().parse(p);
       const channelId=name==='account:connect-hive'?'hive':name==='account:connect-mataroa'?'mataroa':'paper-wf';
-      if(channelId==='hive'&&d.acknowledgePermanent!==true)throw Error('请先确认 Hive 文章会保留在公开链上历史中');
-      return controller.manageIdentity(()=>connectArticleAccount(store,vault,{...d,channelId}));
+      const input=parseArticleConnectionInput(channelId,p);
+      return controller.manageIdentity(()=>connectArticleAccount(store,vault,input));
     }
+    case 'account:connect-markest':{
+      const d=MarkestConnectionInput.safeParse(p);if(!d.success)throw Error('Markest 连接资料格式无效');
+      if(markestConnect)throw Error('Markest 读取验证正在进行');
+      const abort=new AbortController();markestConnect=abort;
+      try{return await controller.manageIdentity(()=>connectMarkest(store,vault,d.data,{signal:abort.signal}))}
+      finally{if(markestConnect===abort)markestConnect=undefined}
+    }
+    case 'account:cancel-markest':z.object({}).strict().parse(p??{});markestConnect?.abort();return {cancelled:!!markestConnect};
+    case 'account:list-deno-apps':{
+      const d=z.object({token:z.string().min(1).max(4096)}).strict().parse(p);if(!validDenoToken(d.token))throw Error('Deno 组织令牌格式无效');
+      if(denoConnect)throw Error('Deno 只读验证正在进行');const abort=new AbortController();denoConnect=abort;
+      try{return await controller.manageIdentity(()=>readDenoApps(d.token,{signal:abort.signal}))}
+      finally{if(denoConnect===abort)denoConnect=undefined}
+    }
+    case 'account:connect-deno':{
+      const d=DenoConnectionInput.safeParse(p);if(!d.success)throw Error('Deno 连接资料格式无效');
+      if(denoConnect)throw Error('Deno 只读验证正在进行');const abort=new AbortController();denoConnect=abort;
+      try{return await controller.manageIdentity(()=>connectDeno(store,vault,d.data,{signal:abort.signal}))}
+      finally{if(denoConnect===abort)denoConnect=undefined}
+    }
+    case 'account:cancel-deno':z.object({}).strict().parse(p??{});denoConnect?.abort();return {cancelled:!!denoConnect};
     case 'account:connect-prose':{
       const d=z.object({privateKey:z.string().min(1).max(16_384),passphrase:z.string().max(4096).optional(),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);
       if(proseConnect)throw Error('Prose SSH 身份验证正在进行');
@@ -188,12 +214,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
-    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||((task.submittedAt||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.wordpress||task.leaflet||task.supanote)&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||((task.submittedAt||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.wordpress||task.leaflet||task.supanote||task.docsMd)&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');
       if(t.checkpoint==='verbose_account_create_pending'&&!t.deferredAt)throw Error('Verbose 一次性令牌注册结果未明，原身份不可重注册');
-      if((t.submittedAt||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.wordpress||t.leaflet||t.supanote)&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error(t.channelId==='mataroa'?'已有 Mataroa 投稿意图；原账号只读核对最多三次，不会重新投稿。':t.channelId==='verbose'?'已有 Verbose 投稿意图；仅按原作者与 slug 只读核对，不会重新投稿。':t.channelId==='prose'?'已有 Prose 原文件回执；仅按原身份与固定文件名只读核对，不会重新上传。':t.channelId==='supanote'?'已有 Supanote 单次提交意图；缺少公开 ID 时停止查询且不会重新投稿。':'已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
+      if((t.submittedAt||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.wordpress||t.leaflet||t.supanote||t.docsMd)&&!hasRecoverablePublisherDraftReceipt(t)||t.checkpoint==='submitting'){if(t.publicUrl){await controller.verify(id);break;}throw Error(t.channelId==='mataroa'?'已有 Mataroa 投稿意图；原账号只读核对最多三次，不会重新投稿。':t.channelId==='verbose'?'已有 Verbose 投稿意图；仅按原作者与 slug 只读核对，不会重新投稿。':t.channelId==='prose'?'已有 Prose 原文件回执；仅按原身份与固定文件名只读核对，不会重新上传。':t.channelId==='supanote'?'已有 Supanote 单次提交意图；缺少公开 ID 时停止查询且不会重新投稿。':t.channelId==='docs-md'?'已有 Docs MD 单次提交意图；缺少公开 ID 时停止查询且不会重新投稿。':'已有提交记录。请打开平台检查结果，并填写公开结果网址后核验；不会重复投稿。');}
       if(t.deferredAt){store.update(state=>resumeDeferredTask(state.tasks,id,state.settings));void controller.tick();break;}
       if(t.attempts>=store.read().settings.maxAttempts)throw Error('已达重试上限，请检查原因或跳过此渠道。');
       controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;
@@ -224,6 +250,8 @@ async function command(name:string,p:unknown):Promise<unknown>{
         if(!isConfirmedBetterThanHtmlResultUrl(t,u.href))throw Error('Better Than HTML 仅核验原回执已确认的同一 Workshop 文章；未知结果不接受手动代填');
       }else if(t.channelId==='supanote'){
         if(!isConfirmedSupanoteResultUrl(t,u.href))throw Error('Supanote 仅核验原 API 回执绑定的同一公开文章；未知结果不接受手动代填');
+      }else if(t.channelId==='docs-md'){
+        if(!isConfirmedDocsMdResultUrl(t,u.href))throw Error('Docs MD 仅核验原 API 回执绑定的同一公开文章；未知结果不接受手动代填');
       }else if(!belongsToSource(u.href,t.sourceDomain))throw Error('结果网址必须属于该外链渠道');controller.patch(input.id,{publicUrl:u.href,...(t.publicUrl!==u.href?{verifiedAt:undefined,lastCheckedAt:undefined,linkRel:undefined,linkCheck:undefined,status:'review' as const,reviewKind:'manual_url' as const,reviewUntil:new Date(Date.now()+30*86400000).toISOString(),nextCheckAt:new Date().toISOString(),health:'unknown' as const}: {})});await controller.verify(input.id);break;
     }
     case 'task:open':{
@@ -278,7 +306,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       forbidBusy();const {items}=z.object({items:z.array(MailboxPayload).min(1).max(100)}).parse(p);importMailboxesAtomic(store,items,secrets=>vault.encryptSecrets(secrets));return controller.snapshot();
     }
     case 'account:save':{
-      forbidBusy();const input=AccountInput.parse(p);if(['verbose','rentry','lucid-page'].includes(input.channelId))throw Error('此渠道由任务自动准备，不接受手工账号导入');if(['paper-wf','hive','mataroa','wordpress-com','leaflet','prose'].includes(input.channelId))throw Error('请使用对应渠道的连接入口验证账号');if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
+      forbidBusy();const input=AccountInput.parse(p);if(['verbose','rentry','lucid-page'].includes(input.channelId))throw Error('此渠道由任务自动准备，不接受手工账号导入');if(['paper-wf','hive','mataroa','wordpress-com','leaflet','prose','markest','deno'].includes(input.channelId))throw Error('请使用对应渠道的连接入口验证账号');if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
       const channel=controller.channels().find(item=>item.id===input.channelId)!;saveAccountAtomic(store,input,channel,secrets=>vault.encryptSecrets(secrets));break;
     }
     case 'account:bind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p),channel=controller.channels().find(item=>item.id===d.channelId);if(!channel)throw Error('渠道不存在');if(channel.id==='blogger')throw Error('请使用Blogger专用入口绑定博客');store.update(state=>bindAccount(state,d.accountId,d.siteId,channel));break;}

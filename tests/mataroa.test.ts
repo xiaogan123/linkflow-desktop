@@ -215,6 +215,45 @@ test('imported identity with newsletter on is blocked without changing settings 
   assert.deepEqual(JSON.parse(writes.get('account:existing')!), { version: 1, username: USERNAME, password: PASSWORD, token: TOKEN });
 });
 
+test('explicit existing-account permission disables Newsletter once, preserves every other setting, and stores only verified credentials', async () => {
+  const writes = new Map<string, string>();
+  const vault = { get: async (key: string) => writes.get(key), set: async (key: string, value: string) => { writes.set(key, value); },
+    delete: async (key: string) => { writes.delete(key); } };
+  const remote = transport({ notificationsOn: true });
+  assert.deepEqual(await connectMataroaAccount(vault, 'existing', USERNAME, PASSWORD, { fetch: remote.fetch, allowDisableNewsletter: true }),
+    { username: USERNAME, url: `https://${USERNAME}.mataroa.blog/` });
+  assert.equal(remote.settingsPosts, 1); assert.equal(remote.articlePosts, 0);
+  const posted = new URLSearchParams(remote.calls.find(call => call.path === '/accounts/edit/' && call.method === 'POST')?.body);
+  assert.deepEqual([...posted], [
+    ['csrfmiddlewaretoken', CSRF], ['username', USERNAME], ['email', ''], ['blog_title', 'Example Desk'],
+    ['blog_byline', 'Trusted notes'], ['footer_note', 'About the author'], ['theme_zialucia', 'on'],
+    ['custom_domain', ''], ['comments_on', 'on'],
+  ]);
+  assert.deepEqual(JSON.parse(writes.get('account:existing')!), { version: 1, username: USERNAME, password: PASSWORD, token: TOKEN });
+  const alreadyOff = transport();
+  assert.deepEqual(await connectMataroaAccount(vault, 'existing', USERNAME, PASSWORD, { fetch: alreadyOff.fetch, allowDisableNewsletter: true }),
+    { username: USERNAME, url: `https://${USERNAME}.mataroa.blog/` });
+  assert.equal(alreadyOff.settingsPosts, 0);
+});
+
+test('failed or unknown explicit Newsletter change never succeeds, stores credentials, or retries the settings POST', async () => {
+  for (const kind of ['readback', 'unknown'] as const) {
+    const writes = new Map<string, string>(), baseline = transport({ notificationsOn: true, settingsReadback: kind !== 'readback' });
+    let settingsPosts = 0;
+    const fetch: MataroaTransport = async (input, init) => {
+      if (new URL(input).pathname === '/accounts/edit/' && init.method === 'POST') {
+        settingsPosts++;
+        if (kind === 'unknown') throw Error('synthetic unknown settings outcome');
+      }
+      return baseline.fetch(input, init);
+    };
+    const vault = { get: async (key: string) => writes.get(key), set: async (key: string, value: string) => { writes.set(key, value); },
+      delete: async (key: string) => { writes.delete(key); } };
+    await assert.rejects(connectMataroaAccount(vault, 'existing', USERNAME, PASSWORD, { fetch, allowDisableNewsletter: true }));
+    assert.equal(settingsPosts, 1, kind); assert.equal(writes.size, 0, kind); assert.equal(baseline.articlePosts, 0, kind);
+  }
+});
+
 test('full article POST follows durable receipt and exact list and anonymous page checks; repeated run only GETs', async () => {
   const { context, task, checkpoints } = fixture();
   let published = false;

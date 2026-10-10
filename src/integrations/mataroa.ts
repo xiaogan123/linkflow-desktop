@@ -20,6 +20,7 @@ type Json = Record<string, unknown>;
 
 export type MataroaTransport = (input: string, init: RequestInit) => Promise<Response>;
 export interface MataroaDependencies { fetch?: MataroaTransport; now?: () => Date | string; timeoutMs?: number; signal?: AbortSignal }
+export interface MataroaConnectionOptions extends MataroaDependencies { allowDisableNewsletter?: boolean }
 export interface MataroaExecutionResult extends ExecutionResult { mataroa?: MataroaReceipt }
 export type MataroaReconcileResult = { status: 'found'; publicUrl: string; mataroa: MataroaReceipt } | { status: 'unknown' };
 export type MataroaErrorCode = 'auth' | 'verification_required' | 'forbidden' | 'conflict' | 'rate_limited' | 'not_found' | 'timeout' | 'cancelled' | 'network' | 'rejected' | 'invalid_response';
@@ -490,12 +491,12 @@ async function readyAccount(context: ExecutionContext, deps: MataroaDependencies
   }
 }
 export async function connectMataroaAccount(vault: SecretStore, accountId: string, username: string, password: string,
-  deps: MataroaDependencies = {}): Promise<{ username: string; url: string }> {
+  deps: MataroaConnectionOptions = {}): Promise<{ username: string; url: string }> {
   if (!accountId || accountId.length > 128 || !USERNAME.test(username) || !validPassword(password)) throw new MataroaError('auth');
   const credential: Credential = { version: 1, username, password };
   const session = new Session(deps);
   await login(session, credential);
-  await ensureNotificationsOff(session, username);
+  await ensureNotificationsOff(session, username, deps.allowDisableNewsletter === true ? async () => undefined : undefined);
   credential.token = await tokenFromDocs(session);
   await posts(credential.token, username, deps);
   await vault.set(`account:${accountId}`, JSON.stringify(credential));

@@ -4,6 +4,8 @@ import {CHANNELS} from '../src/integrations/catalog';
 import type {Account,Channel,Site,Snapshot} from '../src/shared/types';
 import {channelAutomationKind,channelAutomationView,channelDiscoveryCopy,channelMatchesAutomation,channelSourceLabels} from '../src/ui/channel-automation';
 import {channelReadinessForDisplay,channelReadinessLabel} from '../src/ui/presentation';
+import {channelExecutionReadiness} from '../src/main/account-bindings';
+import {emptyState} from '../src/main/store';
 
 const channel=(id:string)=>{
   const found=CHANNELS.find(item=>item.id===id);
@@ -42,6 +44,13 @@ test('disabled, custom and unknown API rows do not inflate automatic capability 
   assert.equal(channelMatchesAutomation(wordpress,'connected_auto'),false);
   assert.equal(channelAutomationKind({...wordpress,enabled:true}),'connected_auto');
   assert.match(channelAutomationView({...wordpress,enabled:true}).setup??'',/WordPress\.com.*浏览器授权.*已公开博客/);
+  const docsMd=channel('docs-md'),enabledDocsMd={...docsMd,enabled:true};
+  assert.equal(docsMd.enabled,false);
+  assert.equal(channelAutomationKind(docsMd),'disabled');
+  assert.equal(channelMatchesAutomation(docsMd,'ai_auto'),false);
+  assert.equal(channelAutomationKind(enabledDocsMd),'ai_auto');
+  assert.match(channelAutomationView(enabledDocsMd).setup??'',/免账号匿名分享.*真实托管验收前保持停用/);
+  assert.equal(channelExecutionReadiness(emptyState(),'site',enabledDocsMd).kind,'ready');
 });
 
 test('Leaflet is a distinct full article connection and excluded until live acceptance',()=>{

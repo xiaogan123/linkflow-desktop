@@ -1,17 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
-import {accountLoginPassword,connectArticleAccount} from '../src/main/article-connections';
+import {accountLoginPassword,connectArticleAccount,parseArticleConnectionInput} from '../src/main/article-connections';
 import type {Account,SecretStore,Site} from '../src/shared/types';
 const one='11111111-1111-4111-8111-111111111111',two='22222222-2222-4222-8222-222222222222',stamp=new Date().toISOString();
 function fixture(){const store=new Store(':memory:'),secrets=new Map<string,string>();const vault:SecretStore={get:async key=>secrets.get(key),set:async(key,value)=>{secrets.set(key,value)},delete:async key=>{secrets.delete(key)}};store.update(s=>{s.settings.autoRun=false;s.sites=[one,two].map((id,index):Site=>({id,url:`https://site${index}.example.com/`,domain:`site${index}.example.com`,name:'Fixture',email:'owner@example.com',description:'Educational publication',category:'content',language:'en',monthlyTarget:2,status:'ready',createdAt:stamp}))});return {store,secrets,vault}}
 for(const channelId of ['paper-wf','hive'] as const){
  const connector=async(vault:SecretStore,id:string,username:string,credential:string)=>{await vault.set('account:'+id,credential);return {username,url:channelId==='hive'?`https://hive.blog/@${username}`:`https://paper.wf/${username}/`}};
  test(`${channelId} reconnect preserves identity and existing bindings; explicit edit replaces selection`,async()=>{const {store,vault}=fixture();try{const input={channelId,username:'fixture',credential:'synthetic-secret',siteIds:[one]};const first=await connectArticleAccount(store,vault,input,connector),second=await connectArticleAccount(store,vault,{...input,siteIds:[two]},connector);assert.equal(first.id,second.id);assert.equal(first.credentialKind,'api_token');assert.deepEqual(store.read().accountBindings.map(x=>x.siteId),[one,two]);await connectArticleAccount(store,vault,{...input,accountId:first.id,siteIds:[two]},connector);assert.deepEqual(store.read().accountBindings.map(x=>x.siteId),[two]);}finally{store.close()}});
- test(`${channelId} invalid sites fail before credential use`,async()=>{const {store,vault,secrets}=fixture();let calls=0;try{await assert.rejects(connectArticleAccount(store,vault,{channelId,username:'fixture',credential:'synthetic-secret',siteIds:['missing']},async(...args)=>{calls++;return connector(...args)}));assert.equal(calls,0);assert.equal(secrets.size,0);assert.equal(store.read().accounts.length,0);}finally{store.close()}});
+ test(`${channelId} invalid sites fail before credential use`,async()=>{const {store,vault,secrets}=fixture();let calls=0;try{await assert.rejects(connectArticleAccount(store,vault,{channelId,username:'fixture',credential:'synthetic-secret',siteIds:['missing']},async(v,id,u,c)=>{calls++;return connector(v,id,u,c)}));assert.equal(calls,0);assert.equal(secrets.size,0);assert.equal(store.read().accounts.length,0);}finally{store.close()}});
  test(`${channelId} unconfirmed remote receipt prevents rebinding and rolls back account and secret`,async()=>{const {store,vault,secrets}=fixture();try{const input={channelId,username:'fixture',credential:'old-synthetic-secret',siteIds:[one]};const account=await connectArticleAccount(store,vault,input,connector);store.update(s=>s.tasks.push({id:'33333333-3333-4333-8333-333333333333',siteId:two,channelId,accountId:'old-account',sourceDomain:channelId==='hive'?'hive.blog':'paper.wf',status:'needs_input',checkpoint:channelId==='hive'?'hive_publish_submitting':'paper_publish_submitting',createdAt:stamp,updatedAt:stamp,scheduledAt:stamp,attempts:1,message:'unknown',...(channelId==='hive'?{hive:{author:'old-author',permlink:'old-post',contentHash:'a'.repeat(64),stage:'submitting' as const}}:{paper:{username:'old-author',slug:'old-post',contentHash:'a'.repeat(64),stage:'submitting' as const}})}));const before=store.read();await assert.rejects(connectArticleAccount(store,vault,{...input,accountId:account.id,credential:'new-synthetic-secret',siteIds:[one,two]},connector),/待核验/);assert.deepEqual(store.read(),before);assert.equal(secrets.get('account:'+account.id),'old-synthetic-secret');}finally{store.close()}});
- test(`${channelId} mismatched returned identity leaves no orphan secret or account`,async()=>{const {store,vault,secrets}=fixture();try{await assert.rejects(connectArticleAccount(store,vault,{channelId,username:'fixture',credential:'synthetic-secret',siteIds:[one]},async(...args)=>({...await connector(...args),username:'someone-else'})),/不一致/);assert.equal(secrets.size,0);assert.equal(store.read().accounts.length,0);assert.equal(store.read().accountBindings.length,0);}finally{store.close()}});
+ test(`${channelId} mismatched returned identity leaves no orphan secret or account`,async()=>{const {store,vault,secrets}=fixture();try{await assert.rejects(connectArticleAccount(store,vault,{channelId,username:'fixture',credential:'synthetic-secret',siteIds:[one]},async(v,id,u,c)=>({...await connector(v,id,u,c),username:'someone-else'})),/不一致/);assert.equal(secrets.size,0);assert.equal(store.read().accounts.length,0);assert.equal(store.read().accountBindings.length,0);}finally{store.close()}});
 }
+
+test('Mataroa one-time Newsletter permission is boolean-validated, scoped, and passed only when explicitly true',async()=>{
+ const base={username:'fixture',credential:'synthetic-secret',siteIds:[one]};
+ assert.equal(parseArticleConnectionInput('mataroa',base).allowDisableNewsletter,false);
+ assert.equal(parseArticleConnectionInput('mataroa',{...base,allowDisableNewsletter:true}).allowDisableNewsletter,true);
+ for(const value of ['true',1,null])assert.throws(()=>parseArticleConnectionInput('mataroa',{...base,allowDisableNewsletter:value}));
+ assert.throws(()=>parseArticleConnectionInput('paper-wf',{...base,allowDisableNewsletter:true}),/仅适用于 Mataroa/);
+ assert.throws(()=>parseArticleConnectionInput('hive',{...base,acknowledgePermanent:true,allowDisableNewsletter:false}),/仅适用于 Mataroa/);
+ const {store,vault}=fixture();const seen:boolean[]=[];
+ try{
+  const connector=async(v:SecretStore,id:string,username:string,credential:string,options?:{allowDisableNewsletter:boolean})=>{seen.push(options?.allowDisableNewsletter===true);await v.set('account:'+id,credential);return {username,url:`https://${username}.mataroa.blog/`}};
+  await connectArticleAccount(store,vault,{channelId:'mataroa',...base},connector);
+  await connectArticleAccount(store,vault,{channelId:'mataroa',...base,allowDisableNewsletter:true},connector);
+  await connectArticleAccount(store,vault,{channelId:'paper-wf',...base,siteIds:[],allowDisableNewsletter:true},connector);
+  assert.deepEqual(seen,[false,true,false]);
+ }finally{store.close()}
+});
 
 const revealAccount={id:'paper-test',channelId:'paper-wf',username:'fixture',credentialKind:'api_token',status:'needs_verification',hasPassword:true,source:'generated',email:'',createdAt:stamp,updatedAt:stamp} satisfies Account;
 test('Paper reveal returns only same-identity login password, never its publishing token',()=>{

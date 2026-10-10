@@ -9,11 +9,15 @@ import {wordpressPostSlug} from '../integrations/wordpress';
 import {leafletRecordHash} from '../integrations/leaflet';
 import {composeChannels,importChannelMetrics,saveCustomChannel} from '../integrations/channel-library';
 import {approvedProseArticle,proseFilename,validSerializedProseCredentials} from '../integrations/prose';
+import {validMarkestReadAccount,validStoredMarkestKey} from '../integrations/markest-connection';
+import {validDenoReadAccount,validStoredDenoToken} from '../integrations/deno-connection';
 import {parseSupanotePublicationSecret,supanoteTaskContentHash} from './supanote-publication';
+import {docsMdTaskIdentity,parseDocsMdPublicationSecret} from './docs-md-publication';
+import {parseShareYourHtmlPublicationSecret,shareYourHtmlDraftHash,shareYourHtmlSiteIdentityHash} from './shareyourhtml-publication';
 const id=z.string().uuid(),date=z.string().datetime(),text=z.string().max(30000);
 const accountDiagnostic=z.object({code:z.enum(['legacy_saved','password_missing','bad_password','email_exists','username_taken','verification_required','registration_failed','registration_unknown','restricted']),message:z.string().max(1000),at:date,retryable:z.boolean()});
 const report=z.object({checkedAt:date,method:z.enum(['api','csv']),sources:z.array(z.url().max(4096)).max(20000),complete:z.boolean(),message:text,targetUrl:z.url().optional(),error:z.boolean().optional()});
-const account=z.object({id,mataroaExcludedSiteIds:z.array(id).max(10000).optional(),verboseExcludedSiteIds:z.array(id).max(10000).optional(),rentryExcludedSiteIds:z.array(id).max(10000).optional(),publicationUrl:z.url().max(2048).optional(),displayName:z.string().max(300).optional(),credentialKind:z.enum(['password','api_token','oauth']).optional(),channelId:z.string().max(100),email:z.union([z.email(),z.literal('')]),username:text,mailboxId:id.optional(),createdAt:date,status:z.enum(['saved','draft','registered','needs_verification','credentials_invalid','restricted','unknown']),hasPassword:z.boolean(),source:z.enum(['generated','imported']).optional(),updatedAt:date.optional(),lastUsedAt:date.optional(),registeredAt:date.optional(),verifiedAt:date.optional(),registrationAttempts:z.number().int().min(0).max(20).optional(),diagnostic:accountDiagnostic.optional()}).refine(value=>value.email!==''||value.credentialKind==='oauth'||['bluesky','leaflet','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry'].includes(value.channelId)&&value.credentialKind==='api_token','账号邮箱不可为空').transform(value=>{
+const account=z.object({id,denoReadAccess:z.object({version:z.literal(1),checkedAt:date,appId:id,appSlug:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/),declaredOrgSlug:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])$/),tokenFingerprint:z.string().regex(/^[a-f0-9]{64}$/),identity:z.literal('app_verified_org_declared')}).strict().optional(),markestReadAccess:z.object({version:z.literal(1),checkedAt:date,keyFingerprint:z.string().regex(/^[a-f0-9]{64}$/),identity:z.literal('user_declared')}).strict().optional(),mataroaExcludedSiteIds:z.array(id).max(10000).optional(),verboseExcludedSiteIds:z.array(id).max(10000).optional(),rentryExcludedSiteIds:z.array(id).max(10000).optional(),publicationUrl:z.url().max(2048).optional(),displayName:z.string().max(300).optional(),credentialKind:z.enum(['password','api_token','oauth']).optional(),channelId:z.string().max(100),email:z.union([z.email(),z.literal('')]),username:text,mailboxId:id.optional(),createdAt:date,status:z.enum(['saved','draft','registered','needs_verification','credentials_invalid','restricted','unknown']),hasPassword:z.boolean(),source:z.enum(['generated','imported']).optional(),updatedAt:date.optional(),lastUsedAt:date.optional(),registeredAt:date.optional(),verifiedAt:date.optional(),registrationAttempts:z.number().int().min(0).max(20).optional(),diagnostic:accountDiagnostic.optional()}).refine(value=>value.email!==''||value.credentialKind==='oauth'||['bluesky','leaflet','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','deno'].includes(value.channelId)&&value.credentialKind==='api_token','账号邮箱不可为空').transform(value=>{
   if(value.status!=='saved')return value as Account;
   return {...value,status:'unknown',source:value.source??'imported',updatedAt:value.updatedAt??value.createdAt,diagnostic:value.diagnostic??{code:'legacy_saved',message:'旧版已保存账号，需登录核验后继续。',at:value.updatedAt??value.createdAt,retryable:false}} satisfies Account;
 });
@@ -34,7 +38,11 @@ const rentryReceipt=z.object({slug:z.string().regex(/^lf-[a-z0-9]{32}-[a-f0-9]{1
 const lucidReceipt=z.object({contentHash:z.string().regex(/^[a-f0-9]{64}$/),slug:z.string().regex(/^[a-z0-9][a-z0-9-]{0,80}$/).optional(),stage:z.enum(['submitting','published'])}).strict().refine(value=>value.stage!=='published'||!!value.slug,'已发布回执缺少 slug');
 const betterThanHtmlReceipt=z.object({contentHash:z.string().regex(/^[a-f0-9]{64}$/),id:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/).optional(),stage:z.enum(['submitting','published'])}).strict().refine(value=>value.stage!=='published'||!!value.id,'已发布回执缺少文章 ID');
 const supanoteReceipt=z.object({operationId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/),contentHash:z.string().regex(/^[a-f0-9]{64}$/),createdAt:date,stage:z.enum(['submitting','api_receipt','published']),publicId:z.string().regex(/^[A-Za-z0-9_-]{1,200}$/).optional()}).strict().refine(value=>value.stage==='submitting'||!!value.publicId,'Supanote 远程回执缺少公开身份');
-const hiveReceipt=z.object({author:z.string().min(1).max(200),permlink:z.string().regex(/^[a-z0-9-]{1,255}$/),contentHash:z.string().regex(/^[a-f0-9]{64}$/),stage:z.enum(['submitting','published']),transactionId:z.string().min(1).max(512).optional()}).strict();
+const docsMdReceipt=z.object({operationId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/),sourceHash:z.string().regex(/^[a-f0-9]{64}$/),requestHash:z.string().regex(/^[a-f0-9]{64}$/),createdAt:date,stage:z.enum(['submitting','api_receipt','published']),id:z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(128).optional()}).strict()
+  .refine(value=>value.stage==='submitting'?!value.id:!!value.id,'Docs MD 远程回执身份与阶段不一致');
+const shareYourHtmlReceipt=z.object({operationId:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/),slug:z.string().regex(/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/),sourceHash:z.string().regex(/^[a-f0-9]{64}$/),requestHash:z.string().regex(/^[a-f0-9]{64}$/),createdAt:date,stage:z.enum(['submitting','api_receipt']),requestedExpiry:z.literal('never'),publicVerification:z.literal('pending'),reviewedDraftRevision:z.number().int().nonnegative(),reviewedDraftHash:z.string().regex(/^[a-f0-9]{64}$/),siteId:id,siteIdentityHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
+
+const shareYourHtmlReadback=z.object({checkedAt:date,status:z.enum(['visible_match','unreachable','invalid_response','content_mismatch','content_hidden','visibility_unknown']),content:z.enum(['visible','mismatch','hidden','unknown']),targetLinks:z.array(z.object({href:z.url().max(2048),rel:z.array(z.string().regex(/^[a-z0-9_-]{1,64}$/)).max(32)}).strict()).max(32),indexing:z.object({page:z.enum(['not_restricted','restricted','unknown']),directives:z.array(z.string().max(128)).max(64),robots:z.enum(['allowed','disallowed','unknown'])}).strict()}).strict();const hiveReceipt=z.object({author:z.string().min(1).max(200),permlink:z.string().regex(/^[a-z0-9-]{1,255}$/),contentHash:z.string().regex(/^[a-f0-9]{64}$/),stage:z.enum(['submitting','published']),transactionId:z.string().min(1).max(512).optional()}).strict();
 const blueskyReceipt=z.object({did:z.string().regex(/^did:(?:plc|web):[A-Za-z0-9:._%-]{1,240}$/),rkey:z.string().regex(/^[A-Za-z0-9._~:-]{1,512}$/),recordHash:z.string().regex(/^[a-f0-9]{64}$/),recordCreatedAt:date,stage:z.enum(['creating','published']),uri:z.string().max(2048).optional(),cid:z.string().max(512).optional()}).strict();
 const leafletReceipt=z.object({did:z.string().regex(/^did:(?:plc|web):[A-Za-z0-9:._%-]{1,240}$/),rkey:z.string().regex(/^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/),recordHash:z.string().regex(/^[a-f0-9]{64}$/),recordCreatedAt:date,stage:z.enum(['creating','published']),uri:z.string().max(2048).optional(),cid:z.string().regex(/^[A-Za-z0-9]{8,200}$/).optional(),url:z.url().max(2048).optional()}).strict()
   .refine(value=>!!value.uri===!!value.cid,'Leaflet 回执的 PDS 身份不完整')
@@ -44,7 +52,7 @@ const mailbox=z.object({id,label:z.string().min(1).max(100),host:z.string().max(
 const channelMetric=z.object({authority:z.object({name:z.string().max(80),value:z.number().finite().min(0).max(100),source:z.url(),asOf:z.string().max(10),scope:z.enum(['domain','subdomain','page']).optional()}).optional(),traffic:z.object({monthly:z.number().int().nonnegative(),source:z.url(),asOf:z.string().max(10),region:z.string().max(80).optional(),period:z.string().max(20).optional(),metric:z.enum(['visits','organicVisits']).optional(),estimated:z.boolean().optional()}).optional()});
 const customChannel=z.object({id:z.string().regex(/^custom-[0-9a-f-]{36}$/),name:z.string().max(100),domain:z.string().max(253),url:z.url(),submitUrl:z.url(),categories:z.array(category),languages:z.array(z.string().max(30)),kind:z.enum(['directory','profile','article','community']),emailRequired:z.boolean(),accountRequired:z.boolean(),articleRequired:z.boolean(),free:z.enum(['yes','conditional','unknown','paid']),freeNote:text,automation:z.literal('manual'),quality:z.enum(['A','B','C']),qualityReason:text,provenance:z.literal('custom').optional(),requirements:z.array(z.string()).optional(),evidenceStatus:z.enum(['rules_checked','source_checked','user_added']).optional(),authority:channelMetric.shape.authority.optional(),traffic:channelMetric.shape.traffic.optional(),rulesUrl:z.url(),checkedAt:z.string().max(20),notes:text,allowedHosts:z.array(z.string().max(253)),enabled:z.boolean()});
 const autoSchedule=z.object({kind:z.literal('planner'),channelId:z.string().max(100),sourceDomain:z.string().max(253),accountId:id.optional(),baseAt:date,plannedAt:date,reservationTaskIds:z.array(id).max(50000),appliedReleaseIds:z.array(id).max(50000)}).strict();
-const backup=z.object({state:z.object({schemaVersion:z.number().int().optional(),sites:z.array(z.object({id,paragraph:z.object({publicationId:z.string().min(1).max(200),url:z.url().max(2048)}).strict().optional(),blogger:z.object({blogId:z.string().regex(/^\d{1,64}$/),url:z.url().max(2048)}).strict().optional(),domain:z.string().min(3).max(253),url:z.url(),email:z.email(),publicEmail:z.email().optional(),mailboxId:id.optional(),name:text,description:text,category,language:z.string(),monthlyTarget:z.number().int().min(1).max(20),articleReviewMode:z.enum(['manual','ai']).optional(),status:z.enum(['analyzing','ready','paused','attention']),createdAt:date,analyzedAt:date.optional(),topics:z.array(z.object({url:z.url().max(2048),title:z.string().max(300).optional(),lastModified:z.string().max(64).refine(value=>Number.isFinite(Date.parse(value))).optional(),discoveredAt:date})).max(200).optional(),topicsCheckedAt:date.optional(),topicsAttemptedAt:date.optional(),topicsError:text.optional(),error:text.optional(),qualifications:qualifications.optional(),searchReports:z.object({gsc:report.optional(),bing:report.optional()}).optional()})).max(10000),tasks:z.array(z.object({autoSchedule:autoSchedule.optional(),leaflet:leafletReceipt.optional(),paper:paperReceipt.optional(),hive:hiveReceipt.optional(),mataroa:mataroaReceipt.optional(),verbose:verboseReceipt.optional(),prose:proseReceipt.optional(),rentry:rentryReceipt.optional(),lucid:lucidReceipt.optional(),supanote:supanoteReceipt.optional(),paragraph:paragraphReceipt.optional(),nostr:nostrReceipt.optional(),bluesky:blueskyReceipt.optional(),blogger:z.object({blogId:z.string().regex(/^\d{1,64}$/),postId:z.string().regex(/^\d{1,64}$/).optional(),operationId:z.string().max(100),contentHash:z.string().regex(/^[a-f0-9]{64}$/),stage:z.enum(['inserting','draft','publishing','published'])}).strict().optional(),publicationMethod:z.enum(['client','external']).optional(),id,siteId:id,channelId:z.string().max(100),accountId:id.optional(),sourceDomain:z.string().max(253),status:taskStatus,createdAt:date,scheduledAt:date,updatedAt:date,attempts:z.number().int().min(0).max(100),message:text,draft:z.object({title:text,description:text,body:text}).optional(),draftRevision:z.number().int().nonnegative().optional(),topicUrl:z.url().max(2048).optional(),topicContentHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),waitingSince:date.optional(),deferredAt:date.optional(),recoveryEligible:z.boolean().optional(),recoveryAttempts:z.number().int().min(0).max(1).optional(),reconcileAttempts:z.number().int().min(0).max(3).optional(),reconcileAfter:date.optional(),articleAutomationVersion:z.number().int().min(0).max(100).optional(),articleRepairAttempts:z.number().int().min(0).max(100).optional(),draftUpdatedAt:date.optional(),publicUrl:z.url().optional(),verifiedAt:date.optional(),firstLiveAt:date.optional(),linkRel:text.optional(),reviewUntil:date.optional(),reviewKind:z.enum(['publication','manual_url','lost_link']).optional(),submittedAt:date.optional(),lastCheckedAt:date.optional(),nextCheckAt:date.optional(),lostAt:date.optional(),consecutiveMissing:z.number().int().nonnegative().optional(),health:z.enum(['pending','healthy','missing','unknown']).optional(),history:z.array(z.object({at:date,status:taskStatus,message:text,linkCheck:linkCheck.optional()})).max(50).optional(),cost:z.object({aiCalls:z.number().int().nonnegative(),durationMs:z.number().nonnegative().optional(),inputTokens:z.number().int().nonnegative().optional(),outputTokens:z.number().int().nonnegative().optional(),amount:z.number().nonnegative().optional(),currency:z.string().max(10).optional()}).optional(),checkpoint:text.optional(),reason:text.optional(),linkCheck:linkCheck.optional(),articleApprovedAt:date.optional(),articleReview:articleReview.optional()})).max(50000),accounts:z.array(account).max(10000),mailboxes:z.array(mailbox).max(10000).optional().default([]),accountBindings:z.array(z.object({id,siteId:id,channelId:z.string().max(100),accountId:id,createdAt:date,updatedAt:date})).max(50000).optional().default([]),customChannels:z.array(customChannel).max(1000).optional().default([]),channelMetrics:z.record(z.string().max(100),channelMetric).optional().default({}),settings:SettingsPatch.omit({apiKey:true,mailPassword:true}).extend({hasApiKey:z.boolean(),mail:z.object({host:z.string().max(253),port:z.number().int().min(1).max(65535),user:z.string().max(254),secure:z.literal(true),hasPassword:z.boolean()})}).strict(),events:z.array(z.object({id,at:date,siteId:id.optional(),taskId:id.optional(),level:z.enum(['info','warning','error']),message:text})).max(500),usage:z.record(z.string().regex(/^\d{4}-\d{2}-\d{2}$/),z.number().int().nonnegative())}),secrets:z.record(z.string().regex(/^(apiKey|mailPassword|bingKey|account:[0-9a-f-]{36}|mailbox:[0-9a-f-]{36}|publication:[0-9a-f-]{36})$/),z.string().max(16384))});
+const backup=z.object({state:z.object({schemaVersion:z.number().int().optional(),sites:z.array(z.object({id,paragraph:z.object({publicationId:z.string().min(1).max(200),url:z.url().max(2048)}).strict().optional(),blogger:z.object({blogId:z.string().regex(/^\d{1,64}$/),url:z.url().max(2048)}).strict().optional(),domain:z.string().min(3).max(253),url:z.url(),email:z.email(),publicEmail:z.email().optional(),mailboxId:id.optional(),name:text,description:text,category,language:z.string(),monthlyTarget:z.number().int().min(1).max(20),articleReviewMode:z.enum(['manual','ai']).optional(),status:z.enum(['analyzing','ready','paused','attention']),createdAt:date,analyzedAt:date.optional(),topics:z.array(z.object({url:z.url().max(2048),title:z.string().max(300).optional(),lastModified:z.string().max(64).refine(value=>Number.isFinite(Date.parse(value))).optional(),discoveredAt:date})).max(200).optional(),topicsCheckedAt:date.optional(),topicsAttemptedAt:date.optional(),topicsError:text.optional(),error:text.optional(),qualifications:qualifications.optional(),searchReports:z.object({gsc:report.optional(),bing:report.optional()}).optional()})).max(10000),tasks:z.array(z.object({autoSchedule:autoSchedule.optional(),leaflet:leafletReceipt.optional(),paper:paperReceipt.optional(),hive:hiveReceipt.optional(),mataroa:mataroaReceipt.optional(),verbose:verboseReceipt.optional(),prose:proseReceipt.optional(),rentry:rentryReceipt.optional(),lucid:lucidReceipt.optional(),supanote:supanoteReceipt.optional(),docsMd:docsMdReceipt.optional(),shareYourHtml:shareYourHtmlReceipt.optional(),shareYourHtmlReadback:shareYourHtmlReadback.optional(),paragraph:paragraphReceipt.optional(),nostr:nostrReceipt.optional(),bluesky:blueskyReceipt.optional(),blogger:z.object({blogId:z.string().regex(/^\d{1,64}$/),postId:z.string().regex(/^\d{1,64}$/).optional(),operationId:z.string().max(100),contentHash:z.string().regex(/^[a-f0-9]{64}$/),stage:z.enum(['inserting','draft','publishing','published'])}).strict().optional(),publicationMethod:z.enum(['client','external']).optional(),id,siteId:id,channelId:z.string().max(100),accountId:id.optional(),sourceDomain:z.string().max(253),status:taskStatus,createdAt:date,scheduledAt:date,updatedAt:date,attempts:z.number().int().min(0).max(100),message:text,draft:z.object({title:text,description:text,body:text}).optional(),draftRevision:z.number().int().nonnegative().optional(),topicUrl:z.url().max(2048).optional(),topicContentHash:z.string().regex(/^[a-f0-9]{64}$/).optional(),waitingSince:date.optional(),deferredAt:date.optional(),recoveryEligible:z.boolean().optional(),recoveryAttempts:z.number().int().min(0).max(1).optional(),reconcileAttempts:z.number().int().min(0).max(3).optional(),reconcileAfter:date.optional(),articleAutomationVersion:z.number().int().min(0).max(100).optional(),articleRepairAttempts:z.number().int().min(0).max(100).optional(),draftUpdatedAt:date.optional(),publicUrl:z.url().optional(),verifiedAt:date.optional(),firstLiveAt:date.optional(),linkRel:text.optional(),reviewUntil:date.optional(),reviewKind:z.enum(['publication','manual_url','lost_link']).optional(),submittedAt:date.optional(),lastCheckedAt:date.optional(),nextCheckAt:date.optional(),lostAt:date.optional(),consecutiveMissing:z.number().int().nonnegative().optional(),health:z.enum(['pending','healthy','missing','unknown']).optional(),history:z.array(z.object({at:date,status:taskStatus,message:text,linkCheck:linkCheck.optional()})).max(50).optional(),cost:z.object({aiCalls:z.number().int().nonnegative(),durationMs:z.number().nonnegative().optional(),inputTokens:z.number().int().nonnegative().optional(),outputTokens:z.number().int().nonnegative().optional(),amount:z.number().nonnegative().optional(),currency:z.string().max(10).optional()}).optional(),checkpoint:text.optional(),reason:text.optional(),linkCheck:linkCheck.optional(),articleApprovedAt:date.optional(),articleReview:articleReview.optional()})).max(50000),accounts:z.array(account).max(10000),mailboxes:z.array(mailbox).max(10000).optional().default([]),accountBindings:z.array(z.object({id,siteId:id,channelId:z.string().max(100),accountId:id,createdAt:date,updatedAt:date})).max(50000).optional().default([]),customChannels:z.array(customChannel).max(1000).optional().default([]),channelMetrics:z.record(z.string().max(100),channelMetric).optional().default({}),settings:SettingsPatch.omit({apiKey:true,mailPassword:true}).extend({hasApiKey:z.boolean(),mail:z.object({host:z.string().max(253),port:z.number().int().min(1).max(65535),user:z.string().max(254),secure:z.literal(true),hasPassword:z.boolean()})}).strict(),events:z.array(z.object({id,at:date,siteId:id.optional(),taskId:id.optional(),level:z.enum(['info','warning','error']),message:text})).max(500),usage:z.record(z.string().regex(/^\d{4}-\d{2}-\d{2}$/),z.number().int().nonnegative())}),secrets:z.record(z.string().regex(/^(apiKey|mailPassword|bingKey|account:[0-9a-f-]{36}|mailbox:[0-9a-f-]{36}|publication:[0-9a-f-]{36})$/),z.string().max(16384))});
 function validRentryKey(value:string|undefined):boolean{
   try{const parsed=JSON.parse(value??'null') as {version?:unknown;key?:unknown};if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)||Object.keys(parsed).length!==2||parsed.version!==1||typeof parsed.key!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(parsed.key))return false;const key=Buffer.from(parsed.key,'base64url');return key.length===32&&key.toString('base64url')===parsed.key}catch{return false}
 }
@@ -96,6 +104,14 @@ export function validateBackup(input:unknown):{state:State;secrets:Record<string
   if(out.state.accounts.some(account=>account.channelId==='lucid-page'))throw Error('备份不应包含 Lucid 账号；该渠道只保存逐篇认领凭据');
   if(out.state.accounts.some(account=>account.channelId==='betterthanhtml'))throw Error('备份不应包含 Better Than HTML 账号；该渠道免账号发布');
   if(out.state.accounts.some(account=>account.channelId==='supanote'))throw Error('备份不应包含 Supanote 账号；该渠道只保存逐篇管理凭据');
+  for(const item of out.state.accounts)if(item.channelId==='deno'?!validDenoReadAccount(item):!!item.denoReadAccess)throw Error('备份的 Deno 只读连接无效');
+  const denoAppIds=out.state.accounts.filter(item=>item.channelId==='deno').map(item=>item.denoReadAccess!.appId);
+  if(new Set(denoAppIds).size!==denoAppIds.length)throw Error('备份中 Deno 应用重复');
+  for(const item of out.state.accounts)if(item.channelId==='markest'?!validMarkestReadAccount(item):!!item.markestReadAccess)throw Error('备份的 Markest 只读连接无效');
+  const markestFingerprints=out.state.accounts.filter(item=>item.channelId==='markest').map(item=>item.markestReadAccess!.keyFingerprint);
+  if(new Set(markestFingerprints).size!==markestFingerprints.length)throw Error('备份中 Markest key 重复');
+  if(out.state.accounts.some(account=>account.channelId==='docs-md'))throw Error('备份不应包含 Docs MD 账号；该渠道匿名发布');
+  if(out.state.accounts.some(account=>account.channelId==='shareyourhtml'))throw Error('备份不应包含 ShareYourHTML 账号；该渠道逐篇匿名发布');
   for(const account of out.state.accounts)if(account.mataroaExcludedSiteIds&&(account.channelId!=='mataroa'||new Set(account.mataroaExcludedSiteIds).size!==account.mataroaExcludedSiteIds.length||account.mataroaExcludedSiteIds.some(id=>!siteIds.has(id))))throw Error('备份的 Mataroa 网站撤销记录无效');
   for(const account of out.state.accounts)if(account.verboseExcludedSiteIds&&(account.channelId!=='verbose'||new Set(account.verboseExcludedSiteIds).size!==account.verboseExcludedSiteIds.length||account.verboseExcludedSiteIds.some(id=>!siteIds.has(id))))throw Error('备份的 Verbose 网站撤销记录无效');
   for(const account of out.state.accounts)if(account.rentryExcludedSiteIds&&(account.channelId!=='rentry'||new Set(account.rentryExcludedSiteIds).size!==account.rentryExcludedSiteIds.length||account.rentryExcludedSiteIds.some(id=>!siteIds.has(id))))throw Error('备份的 Rentry 网站撤销记录无效');
@@ -114,10 +130,17 @@ export function validateBackup(input:unknown):{state:State;secrets:Record<string
   const accountById=new Map(out.state.accounts.map(item=>[item.id,item])),bindingKeys=new Set<string>();
   if(out.state.accountBindings.some(binding=>binding.channelId==='betterthanhtml'))throw Error('备份不应包含 Better Than HTML 账号绑定');
   if(out.state.accountBindings.some(binding=>binding.channelId==='supanote'))throw Error('备份不应包含 Supanote 账号绑定');
+  if(out.state.accountBindings.some(binding=>binding.channelId==='docs-md'))throw Error('备份不应包含 Docs MD 账号绑定');
+  if(out.state.accountBindings.some(binding=>binding.channelId==='shareyourhtml'))throw Error('备份不应包含 ShareYourHTML 账号绑定');
   if(out.state.accountBindings.some(binding=>binding.channelId==='mataroa'&&accountById.get(binding.accountId)?.mataroaExcludedSiteIds?.includes(binding.siteId)))throw Error('备份的 Mataroa 绑定与明确撤销记录冲突');
   if(out.state.accountBindings.some(binding=>binding.channelId==='verbose'&&accountById.get(binding.accountId)?.verboseExcludedSiteIds?.includes(binding.siteId)))throw Error('备份的 Verbose 绑定与明确撤销记录冲突');
   if(out.state.accountBindings.some(binding=>binding.channelId==='rentry'&&accountById.get(binding.accountId)?.rentryExcludedSiteIds?.includes(binding.siteId)))throw Error('备份的 Rentry 绑定与明确撤销记录冲突');
   if(new Set(out.state.mailboxes.map(m=>m.id)).size!==out.state.mailboxes.length||new Set(out.state.accountBindings.map(binding=>binding.id)).size!==out.state.accountBindings.length||out.state.accountBindings.some(binding=>{const key=binding.siteId+'|'+binding.channelId,account=accountById.get(binding.accountId);if(bindingKeys.has(key))return true;bindingKeys.add(key);return !siteIds.has(binding.siteId)||!account||account.channelId!==binding.channelId})||out.state.tasks.some(task=>{const account=task.accountId?accountById.get(task.accountId):undefined;return !!task.accountId&&(!account||account.channelId!==task.channelId)})||out.state.sites.some(site=>site.mailboxId&&!mailboxIds.has(site.mailboxId))||out.state.accounts.some(item=>item.mailboxId&&!mailboxIds.has(item.mailboxId)))throw Error('备份存在重复、孤立或不一致关联');
+  const shareOperationIds=new Set<string>(),shareSlugs=new Set<string>();
+  for(const task of out.state.tasks)if(task.shareYourHtml){
+    if(shareOperationIds.has(task.shareYourHtml.operationId)||shareSlugs.has(task.shareYourHtml.slug))throw Error('备份的 ShareYourHTML 操作或 slug 重复');
+    shareOperationIds.add(task.shareYourHtml.operationId);shareSlugs.add(task.shareYourHtml.slug);
+  }
   for(const parsedTask of out.state.tasks){
     const task=parsedTask as typeof parsedTask&Pick<State['tasks'][number],'wordpress'|'betterthanhtml'>;
     const migration=(task as State['tasks'][number]).articleReviewMigration;
@@ -194,6 +217,91 @@ export function validateBackup(input:unknown):{state:State;secrets:Record<string
       const published=receipt.stage==='published'&&!!receipt.publicId&&task.publicUrl===expectedUrl&&task.checkpoint==='supanote_published'&&publishedTimes&&['ugc','nofollow','noopener','noreferrer'].every(value=>rel.has(value))&&(active||missing||unreachable);
       if(!pending&&!published)throw Error('备份的 Supanote 回执阶段无效');
     }else if(task.channelId==='supanote'&&(task.submittedAt||task.publicUrl||task.verifiedAt||task.firstLiveAt||task.linkCheck||task.linkRel||task.publicationMethod||/supanote|submitt|publish|receipt|external|uncertain/.test(task.checkpoint??'')||task.lastCheckedAt||task.lostAt||task.consecutiveMissing!==undefined||task.reviewUntil||task.reviewKind||task.status==='live'||task.health==='healthy'||task.health==='missing'))throw Error('备份的 Supanote 外部状态缺少回执');
+    if(task.docsMd){
+      const receipt=task.docsMd,identity=docsMdTaskIdentity(task),expectedUrl=receipt.id?`https://docs-md.com/${receipt.id}`:undefined;
+      if(task.channelId!=='docs-md'||task.sourceDomain!=='docs-md.com'||task.accountId||identity===undefined
+        ||task.submittedAt!==receipt.createdAt||identity.sourceHash!==receipt.sourceHash
+        ||identity.requestHash!==receipt.requestHash||task.publicationMethod||task.reviewUntil)
+        throw Error('备份的 Docs MD 回执与原稿或任务身份不一致');
+      const submitting=receipt.stage==='submitting'&&!receipt.id&&!task.publicUrl&&task.checkpoint==='docs_md_share_submitting';
+      const apiReceipt=receipt.stage==='api_receipt'&&!!receipt.id&&task.publicUrl===expectedUrl&&task.checkpoint==='docs_md_api_receipt';
+      const publishedReceipt=receipt.stage==='published'&&!!receipt.id&&task.publicUrl===expectedUrl&&task.checkpoint==='docs_md_published';
+      const readTimes=!task.lastCheckedAt&&!task.nextCheckAt||!!task.lastCheckedAt&&!!task.nextCheckAt&&Date.parse(task.nextCheckAt)>Date.parse(task.lastCheckedAt);
+      const reconcileAttempt=task.reconcileAttempts;
+      const pendingReconcile=reconcileAttempt===undefined&&!task.reconcileAfter
+        ||(reconcileAttempt===1||reconcileAttempt===2)&&!!task.reconcileAfter
+        ||reconcileAttempt===3&&!task.reconcileAfter;
+      const pendingLifecycle=['review','needs_input','skipped'].includes(task.status)&&task.health==='pending'
+        &&!task.verifiedAt&&!task.firstLiveAt&&!task.linkCheck&&!task.linkRel
+        &&!task.lostAt&&!task.reviewKind&&task.consecutiveMissing===undefined&&readTimes;
+      const pending=pendingLifecycle&&pendingReconcile&&(submitting?!task.lastCheckedAt:true);
+      const rel=new Set((task.linkRel??'').toLowerCase().split(/\s+/).filter(Boolean));
+      const publishedTimes=!!task.verifiedAt&&!!task.firstLiveAt&&!!task.lastCheckedAt&&!!task.nextCheckAt
+        &&Date.parse(task.firstLiveAt)<=Date.parse(task.verifiedAt)&&Date.parse(task.verifiedAt)<=Date.parse(task.lastCheckedAt)
+        &&Date.parse(task.nextCheckAt)>Date.parse(task.lastCheckedAt);
+      const settledReconcile=!task.reconcileAfter&&(reconcileAttempt===undefined||reconcileAttempt>=1&&reconcileAttempt<=3);
+      const active=['live','skipped'].includes(task.status)&&task.health==='healthy'&&task.linkCheck==='found'
+        &&!task.lostAt&&!task.reviewKind&&task.consecutiveMissing===0;
+      const lossHistory=!!task.lostAt&&task.reviewKind==='lost_link'&&(task.consecutiveMissing??0)>=1
+        &&Date.parse(task.lostAt)>=Date.parse(task.firstLiveAt??'');
+      const missing=['needs_input','skipped'].includes(task.status)&&task.health==='missing'&&task.linkCheck==='absent'&&lossHistory;
+      const unreachable=task.health==='unknown'&&['unreachable','invalid'].includes(task.linkCheck??'')&&(
+        ['live','skipped'].includes(task.status)&&!task.lostAt&&!task.reviewKind&&task.consecutiveMissing===0
+        ||['needs_input','skipped'].includes(task.status)&&lossHistory
+      );
+      const published=publishedReceipt&&settledReconcile&&publishedTimes
+        &&['ugc','nofollow','noopener','noreferrer'].every(value=>rel.has(value))&&(active||missing||unreachable);
+      const publishedPending=publishedReceipt&&pendingLifecycle&&settledReconcile;
+      if(!(submitting||apiReceipt||publishedReceipt)||!((submitting||apiReceipt)&&pending||published||publishedPending))throw Error('备份的 Docs MD 回执阶段无效');
+    }else if(task.channelId==='docs-md'&&(task.submittedAt||task.publicUrl||task.verifiedAt||task.firstLiveAt
+      ||task.linkCheck||task.linkRel||task.publicationMethod||/docs_md|submitt|publish|receipt|external|uncertain/.test(task.checkpoint??'')
+      ||task.lastCheckedAt||task.lostAt||task.consecutiveMissing!==undefined
+      ||task.reviewUntil||task.reviewKind||task.reconcileAttempts!==undefined||task.reconcileAfter||task.status==='live'||task.health==='healthy'
+      ||task.health==='missing'||task.health==='unknown'))throw Error('备份的 Docs MD 外部状态缺少回执');
+    if(task.shareYourHtml){
+      const receipt=task.shareYourHtml,expectedUrl=`https://${receipt.slug}.shareyourhtml.com`,draft=task.draft,targetSite=out.state.sites.find(site=>site.id===task.siteId),readback=task.shareYourHtmlReadback;
+      const secretKey=`publication:${task.id}`,hasSecret=Object.hasOwn(out.secrets,secretKey);
+      if(task.channelId!=='shareyourhtml'||task.sourceDomain!=='shareyourhtml.com'||task.accountId||!draft||!targetSite
+        ||receipt.siteId!==task.siteId||receipt.siteIdentityHash!==shareYourHtmlSiteIdentityHash(targetSite)
+        ||task.submittedAt!==receipt.createdAt||shareYourHtmlDraftHash(draft)!==receipt.reviewedDraftHash
+        ||(task.draftRevision??0)!==receipt.reviewedDraftRevision
+        ||receipt.requestedExpiry!=='never'||receipt.publicVerification!=='pending')
+        throw Error('备份的 ShareYourHTML 回执与原稿或任务身份不一致');
+      const cleanPending=!readback&&task.status==='review'&&task.health==='pending'
+        &&!task.verifiedAt&&!task.firstLiveAt&&!task.linkCheck&&!task.linkRel&&!task.publicationMethod&&!task.lastCheckedAt
+        &&!task.nextCheckAt&&!task.lostAt&&!task.reviewUntil&&!task.reviewKind
+        &&task.consecutiveMissing===undefined&&task.reconcileAttempts===undefined&&!task.reconcileAfter;
+      const submitting=receipt.stage==='submitting'&&!task.publicUrl
+        &&task.checkpoint==='shareyourhtml_create_submitting'&&!hasSecret&&cleanPending;
+      const apiReceipt=receipt.stage==='api_receipt'&&task.publicUrl===expectedUrl
+        &&task.checkpoint==='shareyourhtml_api_receipt'&&hasSecret;
+      let observed=false;
+      if(apiReceipt&&readback){
+        const checked=Date.parse(readback.checkedAt),next=Date.parse(task.nextCheckAt??''),target=task.topicUrl??targetSite.url;
+        const common=Number.isFinite(checked)&&task.lastCheckedAt===readback.checkedAt&&Number.isFinite(next)&&next>checked
+          &&readback.targetLinks.every(link=>link.href===target&&new Set(link.rel).size===link.rel.length)
+          &&new Set(readback.indexing.directives).size===readback.indexing.directives.length&&!task.reviewUntil&&!task.reconcileAfter&&task.reconcileAttempts===undefined;
+        if(readback.status==='visible_match')observed=common&&readback.content==='visible'&&readback.targetLinks.length>0
+          &&task.status==='live'&&task.health==='healthy'&&task.linkCheck==='found'&&task.publicationMethod==='client'
+          &&!!task.firstLiveAt&&task.verifiedAt===readback.checkedAt&&Date.parse(task.firstLiveAt)<=Date.parse(task.verifiedAt)
+          &&task.linkRel===[...new Set(readback.targetLinks.flatMap(link=>link.rel))].sort().join(' ')&&!task.lostAt&&!task.reviewKind&&task.consecutiveMissing===0;
+        else{
+          const shape=readback.content===(readback.status==='content_mismatch'?'mismatch':readback.status==='content_hidden'?'hidden':'unknown')&&!readback.targetLinks.length;
+          if(task.firstLiveAt){
+            const absent=readback.status==='content_mismatch'||readback.status==='content_hidden';
+            observed=common&&shape&&!!task.verifiedAt&&Date.parse(task.firstLiveAt)<=Date.parse(task.verifiedAt)&&Date.parse(task.verifiedAt)<=checked&&task.publicationMethod==='client'&&(absent
+              ?task.status==='needs_input'&&task.health==='missing'&&task.linkCheck==='absent'&&!!task.lostAt&&task.reviewKind==='lost_link'&&(task.consecutiveMissing??0)>=1
+              :['live','needs_input'].includes(task.status)&&task.health==='unknown'&&['unreachable','invalid'].includes(task.linkCheck??''));
+          }else observed=common&&shape&&task.status==='review'&&['pending','unknown'].includes(task.health??'')
+            &&['absent','unreachable','invalid'].includes(task.linkCheck??'')&&!task.verifiedAt&&!task.publicationMethod&&!task.lostAt&&!task.reviewKind;
+        }
+      }
+      if(!submitting&&!apiReceipt||apiReceipt&&!cleanPending&&!observed)throw Error('备份的 ShareYourHTML 回执阶段无效');
+    }else if((task.channelId==='shareyourhtml'||task.shareYourHtmlReadback)&&(task.submittedAt||task.publicUrl||task.verifiedAt||task.firstLiveAt
+      ||task.linkCheck||task.linkRel||task.publicationMethod||/shareyourhtml|submitt|publish|receipt|external|uncertain/.test(task.checkpoint??'')
+      ||task.lastCheckedAt||task.nextCheckAt||task.lostAt||task.consecutiveMissing!==undefined
+      ||task.reviewUntil||task.reviewKind||task.reconcileAttempts!==undefined||task.reconcileAfter||task.status==='live'
+      ||task.health==='healthy'||task.health==='missing'||task.health==='unknown'))throw Error('备份的 ShareYourHTML 外部状态缺少回执');
     if(task.hive&&(task.channelId!=='hive'||task.sourceDomain!=='hive.blog'||identity?.channelId!=='hive'||identity.username!==task.hive.author||!task.submittedAt))throw Error('备份的 Hive 回执与任务身份不一致');
     if(task.paragraph&&(task.channelId!=='paragraph'||identity?.channelId!=='paragraph'||identity.username!==task.paragraph.publicationId||!task.submittedAt||task.paragraph.stage!=='inserting'&&!task.paragraph.postId))throw Error('备份的 Paragraph 回执与任务身份不一致');
   }
@@ -202,6 +310,8 @@ export function validateBackup(input:unknown):{state:State;secrets:Record<string
     if(task.channelId!=='bluesky'||!identity||identity.channelId!=='bluesky'||identity.username!==task.bluesky.did||!task.submittedAt)throw Error('备份的 Bluesky 回执与任务身份不一致');
   }
   for(const account of out.state.accounts)if(account.hasPassword!==Object.hasOwn(out.secrets,'account:'+account.id))throw Error('备份账号凭据状态不一致');
+  for(const account of out.state.accounts)if(account.channelId==='deno'&&!validStoredDenoToken(out.secrets['account:'+account.id],account))throw Error('备份的 Deno 组织令牌与只读连接不一致');
+  for(const account of out.state.accounts)if(account.channelId==='markest'&&!validStoredMarkestKey(out.secrets['account:'+account.id],account))throw Error('备份的 Markest key 与只读连接不一致');
   for(const account of out.state.accounts)if(account.channelId==='rentry'&&!validRentryKey(out.secrets['account:'+account.id]))throw Error('备份的 Rentry 本机密钥无效');
   for(const account of out.state.accounts)if(account.channelId==='wordpress-com'&&!validWordPressCredential(out.secrets['account:'+account.id],account.username,(out.state.tasks as unknown as State['tasks']).filter(task=>task.accountId===account.id&&!!task.wordpress).map(task=>task.wordpress!.authorId)))throw Error('备份的 WordPress.com OAuth 凭据无效');
   for(const account of out.state.accounts)if(account.channelId==='leaflet'&&!validLeafletCredential(out.secrets['account:'+account.id],account))throw Error('备份的 Leaflet 应用专用凭据无效');
@@ -220,6 +330,21 @@ export function validateBackup(input:unknown):{state:State;secrets:Record<string
       else if(publicationTask?.channelId==='supanote'){
         const secret=parseSupanotePublicationSecret(out.secrets[key]),receipt=publicationTask.supanote;
         validPublicationSecret=!!secret&&!!receipt&&['api_receipt','published'].includes(receipt.stage)&&secret.taskId===publicationTask.id&&secret.publicId===receipt.publicId&&secret.publicUrl===publicationTask.publicUrl;
+      }else if(publicationTask?.channelId==='docs-md'){
+        const secret=parseDocsMdPublicationSecret(out.secrets[key]),receipt=publicationTask.docsMd;
+        validPublicationSecret=!!secret&&!!receipt&&['api_receipt','published'].includes(receipt.stage)
+          &&secret.taskId===publicationTask.id&&secret.operationId===receipt.operationId
+          &&secret.id===receipt.id&&secret.publicUrl===publicationTask.publicUrl
+          &&secret.sourceHash===receipt.sourceHash&&secret.requestHash===receipt.requestHash;
+      }else if(publicationTask?.channelId==='shareyourhtml'){
+        const secret=parseShareYourHtmlPublicationSecret(out.secrets[key]),receipt=publicationTask.shareYourHtml;
+        validPublicationSecret=!!secret&&!!receipt&&receipt.stage==='api_receipt'
+          &&secret.taskId===publicationTask.id&&secret.operationId===receipt.operationId
+          &&secret.slug===receipt.slug&&secret.publicUrl===publicationTask.publicUrl
+          &&secret.sourceHash===receipt.sourceHash&&secret.requestHash===receipt.requestHash
+          &&secret.reviewedDraftHash===receipt.reviewedDraftHash
+          &&secret.reviewedDraftRevision===receipt.reviewedDraftRevision
+          &&secret.siteId===receipt.siteId&&secret.siteIdentityHash===receipt.siteIdentityHash;
       }else validPublicationSecret=false;
     }
     if(key.startsWith('account:')&&!accountIds.has(key.slice(8))||key.startsWith('mailbox:')&&!mailboxIds.has(key.slice(8))||!validPublicationSecret)throw Error('备份包含孤立凭据');
@@ -230,7 +355,7 @@ export function validateBackup(input:unknown):{state:State;secrets:Record<string
   const state=out.state as unknown as State;state.customChannels=custom;
   // Imported site objects cannot carry a grant to publish under unknown channel policy.
   for(const site of state.sites)delete site.channelPolicyDecisions;
-  for(const task of state.tasks)if((!task.submittedAt||['wordpress-com','leaflet','blogger','paragraph','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote'].includes(task.channelId)&&!task.publicUrl)&&!task.firstLiveAt){task.articleApprovedAt=undefined;if(task.articleReview)task.articleReview={...task.articleReview,status:'failed',reason:('恢复的审核记录仅作历史参考，发布前必须重新核对。'+task.articleReview.reason).slice(0,1000)}}
+  for(const task of state.tasks)if((!task.submittedAt||['wordpress-com','leaflet','blogger','paragraph','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','shareyourhtml'].includes(task.channelId)&&!task.publicUrl)&&!task.firstLiveAt){task.articleApprovedAt=undefined;if(task.articleReview)task.articleReview={...task.articleReview,status:'failed',reason:('恢复的审核记录仅作历史参考，发布前必须重新核对。'+task.articleReview.reason).slice(0,1000)}}
   const metricRows=Object.entries(out.state.channelMetrics).map(([channelId,value])=>({channelId,...value}));
   state.channelMetrics=metricRows.length?importChannelMetrics({},metricRows,composeChannels(CHANNELS,custom)):{};
   const migrated=migrateState(state);

@@ -12,7 +12,7 @@ export interface TaskPresentation {kind:TaskWorkKind;label:string;tone:TaskTone}
 
 const transientReviewCodes=new Set(['evidence_fetch_failed','evidence_invalid','ai_unavailable','format_invalid']);
 const channelWaitReviewCodes=new Set(['policy_unknown','policy_not_found','input_too_long','content_rejected','invalid_topic']);
-const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','blogger_insert_submitting','blogger_draft_created','blogger_publish_submitting','blogger_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','bluesky_create_submitting','bluesky_create_accepted','bluesky_published','paragraph_insert_submitting','paragraph_draft_created','paragraph_publish_submitting','paragraph_published','nostr_publish_submitting','nostr_published','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_publish_submitting','mataroa_published','verbose_publish_submitting','verbose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published']);
+const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','blogger_insert_submitting','blogger_draft_created','blogger_publish_submitting','blogger_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','bluesky_create_submitting','bluesky_create_accepted','bluesky_published','paragraph_insert_submitting','paragraph_draft_created','paragraph_publish_submitting','paragraph_published','nostr_publish_submitting','nostr_published','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_publish_submitting','mataroa_published','verbose_publish_submitting','verbose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published','docs_md_share_submitting','docs_md_api_receipt','docs_md_published']);
 const telegraphUncertainCheckpoints=new Set(['telegraph_publish_submitting','telegraph_publish_uncertain']);
 const bloggerUncertainCheckpoints=new Set(['blogger_insert_submitting','blogger_publish_submitting','blogger_draft_created']);
 const taskAiBudget=6,telegraphReconcileLimit=3;
@@ -20,8 +20,8 @@ const normalize=(value:string)=>value.trim().toLowerCase();
 
 export function taskHasArticleReview(task:Task){return (!task.submittedAt||hasRecoverablePublisherDraftReceipt(task))&&task.status!=='live'&&(task.checkpoint==='article_review'||!!task.articleReview)}
 
-export function taskHasSubmissionEvidence(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.betterthanhtml||task.supanote)||publicationCheckpoints.has(task.checkpoint??'')}
-export function taskHasUnconfirmedSubmission(task:Task){const unresolvedUrl=!task.publicUrl||task.channelId==='leaflet'&&task.leaflet?.stage==='creating'&&task.publicUrl===task.leaflet.url||task.channelId==='betterthanhtml'&&task.betterthanhtml?.stage==='submitting'&&!!task.betterthanhtml.id&&task.publicUrl===`https://betterthanhtml.com/workshop/${task.betterthanhtml.id}`||task.channelId==='supanote'&&task.supanote?.stage==='api_receipt'&&!!task.supanote.publicId&&task.publicUrl===`https://supanote.app/n/${task.supanote.publicId}`;return unresolvedUrl&&!task.firstLiveAt&&(!!task.submittedAt||!!task.leaflet||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||publicationCheckpoints.has(task.checkpoint??''))}
+export function taskHasSubmissionEvidence(task:Task){return !!(task.submittedAt||task.publicUrl||task.firstLiveAt||task.leaflet||task.wordpress||task.paper||task.hive||task.mataroa||task.verbose||task.rentry||task.lucid||task.betterthanhtml||task.supanote||task.docsMd)||publicationCheckpoints.has(task.checkpoint??'')}
+export function taskHasUnconfirmedSubmission(task:Task){const unresolvedUrl=!task.publicUrl||task.channelId==='leaflet'&&task.leaflet?.stage==='creating'&&task.publicUrl===task.leaflet.url||task.channelId==='betterthanhtml'&&task.betterthanhtml?.stage==='submitting'&&!!task.betterthanhtml.id&&task.publicUrl===`https://betterthanhtml.com/workshop/${task.betterthanhtml.id}`||task.channelId==='supanote'&&task.supanote?.stage==='api_receipt'&&!!task.supanote.publicId&&task.publicUrl===`https://supanote.app/n/${task.supanote.publicId}`||task.channelId==='docs-md'&&task.docsMd?.stage==='api_receipt'&&!!task.docsMd.id&&task.publicUrl===`https://docs-md.com/${task.docsMd.id}`;return unresolvedUrl&&!task.firstLiveAt&&(!!task.submittedAt||!!task.leaflet||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||publicationCheckpoints.has(task.checkpoint??''))}
 
 export function taskCanAutoRecover(task:Task,channelEnabled=true){
   const recoverableReason=task.recoveryEligible===true||transientReviewCodes.has(task.articleReview?.reasonCode??'');
@@ -42,9 +42,10 @@ export function taskNeedsTelegraphReconciliation(task:Task,channelEnabled=true){
     ||task.channelId==='lucid-page'&&!!task.lucid?.slug&&task.checkpoint==='lucid_publish_submitting'
     ||task.channelId==='betterthanhtml'&&!!task.betterthanhtml?.id&&task.checkpoint==='betterthanhtml_publish_submitting'
     ||task.channelId==='supanote'&&!!task.supanote?.publicId&&task.supanote.stage==='api_receipt'&&task.checkpoint==='supanote_api_receipt'
+    ||task.channelId==='docs-md'&&!!task.docsMd?.id&&task.docsMd.stage==='api_receipt'&&task.checkpoint==='docs_md_api_receipt'
     ||task.channelId==='hive'&&!!task.hive&&task.checkpoint==='hive_publish_submitting'
     ||task.channelId==='bluesky'&&!!task.bluesky&&['bluesky_create_submitting','bluesky_create_accepted'].includes(task.checkpoint??'');
-  const unresolvedUrl=!task.publicUrl||task.channelId==='wordpress-com'&&task.wordpress?.stage==='submitting'&&task.publicUrl===task.wordpress.url||task.channelId==='leaflet'&&task.leaflet?.stage==='creating'&&task.publicUrl===task.leaflet.url||task.channelId==='betterthanhtml'&&task.betterthanhtml?.stage==='submitting'&&!!task.betterthanhtml.id&&task.publicUrl===`https://betterthanhtml.com/workshop/${task.betterthanhtml.id}`||task.channelId==='supanote'&&task.supanote?.stage==='api_receipt'&&!!task.supanote.publicId&&task.publicUrl===`https://supanote.app/n/${task.supanote.publicId}`;
+  const unresolvedUrl=!task.publicUrl||task.channelId==='wordpress-com'&&task.wordpress?.stage==='submitting'&&task.publicUrl===task.wordpress.url||task.channelId==='leaflet'&&task.leaflet?.stage==='creating'&&task.publicUrl===task.leaflet.url||task.channelId==='betterthanhtml'&&task.betterthanhtml?.stage==='submitting'&&!!task.betterthanhtml.id&&task.publicUrl===`https://betterthanhtml.com/workshop/${task.betterthanhtml.id}`||task.channelId==='supanote'&&task.supanote?.stage==='api_receipt'&&!!task.supanote.publicId&&task.publicUrl===`https://supanote.app/n/${task.supanote.publicId}`||task.channelId==='docs-md'&&task.docsMd?.stage==='api_receipt'&&!!task.docsMd.id&&task.publicUrl===`https://docs-md.com/${task.docsMd.id}`;
   return channelEnabled&&unresolvedUrl&&!!task.submittedAt&&pending&&(task.reconcileAttempts??0)<telegraphReconcileLimit;
 }
 
@@ -58,17 +59,26 @@ export function taskAutomaticFollowupAt(task:Task,channelEnabled=true):string|un
 
 export function canResumeDeferredTask(task:Task){return !!task.deferredAt&&!taskHasSubmissionEvidence(task)}
 
+// No identity was returned for this already-submitted document, so there is
+// neither a safe result query nor a safe second submission to schedule.
+export function taskHasStoppedUnknownDocsMdSubmission(task:Task,channelEnabled=true){
+  return task.channelId==='docs-md'&&['review','needs_input','failed'].includes(task.status)
+    &&task.checkpoint==='docs_md_share_submitting'&&task.docsMd?.stage==='submitting'
+    &&!task.docsMd.id&&!task.publicUrl&&!task.firstLiveAt&&!taskHasAutomaticFollowup(task,channelEnabled);
+}
+
 export function taskWorkKind(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true):TaskWorkKind{
   const failedReview=task.articleReview?.status==='failed',reasonCode=task.articleReview?.reasonCode;
   if(task.status==='live')return 'result';
   if(task.deferredAt&&!taskHasSubmissionEvidence(task))return 'deferred';
   if(taskNeedsTelegraphReconciliation(task,channelEnabled)||taskCanAutoRecover(task,channelEnabled))return 'system_retry';
+  if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled))return 'channel_wait';
   if(taskHasUnconfirmedSubmission(task)&&['needs_input','failed','skipped'].includes(task.status))return 'user_action';
   if(task.status==='skipped')return 'closed';
   // The current task state is authoritative. A previous review failure must not
   // hide a later account, verification, or uncertain-submission handoff.
   if(task.status==='needs_input')return 'user_action';
-  if(task.status==='failed'&&(!!task.submittedAt||!!task.leaflet||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||publicationCheckpoints.has(task.checkpoint??'')))return 'user_action';
+  if(task.status==='failed'&&(!!task.submittedAt||!!task.leaflet||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||publicationCheckpoints.has(task.checkpoint??'')))return 'user_action';
   if(['channel_wait','invalid_topic','article_rejected','topic_recovery_budget'].includes(task.checkpoint??'')||task.status==='expired'||failedReview&&!!reasonCode&&channelWaitReviewCodes.has(reasonCode))return 'channel_wait';
   if(task.checkpoint==='system_wait'||failedReview&&!!reasonCode&&transientReviewCodes.has(reasonCode))return 'system_retry';
   if(task.status==='failed')return 'user_action';
@@ -79,6 +89,7 @@ export function taskPresentation(task:Task,reviewMode:ArticleReviewMode='manual'
   const kind=taskWorkKind(task,reviewMode,channelEnabled),review=task.articleReview,reasonCode=review?.reasonCode;
   if(kind==='deferred')return {kind,label:'已搁置',tone:'muted'};
   if(kind==='channel_wait'){
+    if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled))return {kind,label:'提交结果未知',tone:'amber'};
     if(task.checkpoint==='topic_recovery_budget')return {kind,label:'自动处理额度不足',tone:'muted'};
     if(task.checkpoint==='invalid_topic'||reasonCode==='invalid_topic')return {kind,label:'需要新的文章选题',tone:'muted'};
     if(task.checkpoint==='article_rejected')return {kind,label:'稿件核对未通过',tone:'amber'};
@@ -121,6 +132,7 @@ export function draftStatusLabel(task:Task,reviewMode:ArticleReviewMode='manual'
   if(task.status==='live'&&(task.publicUrl||task.firstLiveAt))return `已发布 · ${taskPresentation(task,reviewMode,channelEnabled).label}`;
   if(task.firstLiveAt)return '曾发布 · 当前待复核';
   if(task.publicUrl)return '已有公开地址 · 等待核验';
+  if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled))return '已提交 · 结果未知';
   const presentation=taskPresentation(task,reviewMode,channelEnabled);
   if(task.articleApprovedAt)return '已确认';
   if(presentation.kind==='channel_wait')return '等待新证据或渠道';

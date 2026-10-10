@@ -94,6 +94,15 @@ test('Supanote guidance review is bound to its exact official terms and API evid
  for(const variant of [{...supanote,provenance:'custom' as const},{...supanote,domain:'other.example'},{...supanote,evidenceSources:supanote.evidenceSources?.slice(0,1)},{...supanote,evidenceSources:supanote.evidenceSources?.map(source=>({...source,appliesTo:'other'}))}])assert.equal(supportsOfficialGuidanceReview(variant),false);
 });
 
+test('Docs MD uses only its pinned official source for independent review and keeps policy unknown',async()=>{
+ const docsMd=CHANNELS.find(item=>item.id==='docs-md')!,state=fixture(),task={...state.tasks[0],channelId:docsMd.id,sourceDomain:docsMd.domain};
+ const source=docsMd.evidenceSources![0].url,quote='The share API accepts Markdown content and creates a public document.';
+ const docsFetch=async(url:string)=>({url,html:`<p>${url.startsWith(state.sites[0].url)?siteQuote:quote}</p>`});
+ const result=await reviewArticleDraft(task,state.sites[0],docsMd,state.settings,model({citations:[{url:state.sites[0].url,quote:siteQuote},{url:source,quote}]}),undefined,{fetchHtml:docsFetch});
+ assert.equal(supportsOfficialGuidanceReview(docsMd),true);assert.equal(result.status,'passed');assert.equal(result.checks?.channelRules,'unknown');assert.equal(result.policyDecision,undefined);
+ for(const variant of [{...docsMd,provenance:'custom' as const},{...docsMd,domain:'other.example'},{...docsMd,rulesUrl:'https://docs-md.com/terms'},{...docsMd,evidenceSources:[]},{...docsMd,evidenceSources:[{...docsMd.evidenceSources![0],url:'https://github.com/invisible-hand/docs-md.com'}]},{...docsMd,evidenceSources:[{...docsMd.evidenceSources![0],appliesTo:'other'}]},{...docsMd,evidenceSources:[{...docsMd.evidenceSources![0],applicability:'unconfirmed' as const}]}])assert.equal(supportsOfficialGuidanceReview(variant),false);
+});
+
 test('Verbose official agent publishing guidance is narrowly bound and keeps full policy unknown',async()=>{
  const candidate=CHANNELS.find(item=>item.id==='verbose')!,state=fixture(),task={...state.tasks[0],channelId:'verbose',sourceDomain:'verbose.blog'};
  const quote='An API for agents to publish and manage their writing.';

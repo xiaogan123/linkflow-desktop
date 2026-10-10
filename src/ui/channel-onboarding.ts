@@ -91,6 +91,8 @@ const onboardingById:Record<string,OnboardingDefinition>={
   rentry:{kind:'no_signup',setup:'无需账号；发布时生成编辑凭据并加密保存在本机'},
   betterthanhtml:{kind:'no_signup',setup:'无需账号即可发布公开全文；不承诺编辑或删除'},
   supanote:{kind:'no_signup',setup:'无需账号；匿名发布公开 Markdown。仅在平台返回管理令牌时加密保存，不承诺可编辑或删除',verification:{checkedAt:'2026-10-09',sourceUrl:'https://supanote.app/docs'}},
+  'docs-md':{kind:'no_signup',setup:'无需账号；匿名分享经核对的 Markdown。当前保持停用，等待真实托管公开页验收',verification:{checkedAt:'2026-10-09',sourceUrl:'https://github.com/invisible-hand/docs-md.com/tree/199f9a2656f83ed2918ee1d1f0ee8bf6734b2a2e'}},
+  markest:{kind:'existing_account',setup:'本人用邮箱注册并完成邮件验证；在本人账户中手动创建一次仅含 create_paste、list_own、read_own 的专用个人 key，再到账号页只读验证。连接不证明远端身份或发布权限',verification:{checkedAt:'2026-10-09',sourceUrl:'https://marke.st/api'}},
   telegraph:{kind:'ai_account',setup:'软件调用 API 自动创建作者身份并加密保存令牌'},
   nostr:{kind:'ai_account',setup:'软件在本机创建作者密钥；这不是钱包连接'},
   mataroa:{kind:'ai_account',setup:'首次任务自动建立作者账号；平台要求验证时等待本人处理'},

@@ -35,7 +35,7 @@ if(!process.versions.electron){
           };
           const initial={
             sites:[
-              {id:'site-1',domain:'one.example',url:'https://one.example',email:'owner@one.example',name:'One',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now},
+              {id:'site-1',domain:'one.example',url:'https://one.example',email:'owner@one.example',name:'One',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now,paragraph:{publicationId:'publication-existing-id'}},
               {id:'site-2',domain:'two.example',url:'https://two.example',email:'owner@two.example',name:'Two',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'ready',createdAt:now},
               {id:'site-3',domain:'three.example',url:'https://three.example',email:'owner@three.example',name:'Three',description:'fixture',category:'general',language:'zh',monthlyTarget:2,status:'paused',createdAt:now},
             ],
@@ -210,6 +210,17 @@ if(!process.versions.electron){
   const actionCount=command=>evaluate(
     'window.__paragraphFixture.actions.filter(action=>action.command==='+JSON.stringify(command)+').length',
   );
+  const openNewParagraph=async()=>{
+    await clickText('添加 / 连接账号');
+    await waitFor('document.querySelector(".account-guide-drawer")!==null');
+    const picked=await evaluate('(()=>{const option=[...document.querySelectorAll(".account-guide-drawer [role=option]")].find(item=>item.querySelector("strong")?.textContent==="Paragraph");if(!option)return false;option.click();return true})()');
+    assert(picked,'Paragraph platform option');
+    await waitFor('document.querySelector(".account-guide-drawer .platform-selection")?.innerText.includes("Paragraph")');
+    const opened=await evaluate('(()=>{const button=[...document.querySelectorAll(".account-guide-drawer .platform-selection button")].find(item=>item.innerText.trim()==="管理或新增连接"&&!item.disabled);if(!button)return false;button.click();return true})()');
+    assert(opened,'guided Paragraph connection action');
+    await waitFor('document.querySelector(".side-drawer.narrow")?.getAttribute("aria-label")==="连接 Paragraph"');
+    await waitFor('document.querySelector(".account-guide-drawer")===null');
+  };
 
   app.whenReady().then(async()=>{
     try{
@@ -230,25 +241,23 @@ if(!process.versions.electron){
 
       check(
         'Paragraph connection entry is discoverable on the accounts page',
-        await evaluate('[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="\u8fde\u63a5 Paragraph"&&!button.disabled)'),
+        await evaluate('[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="添加 / 连接账号"&&!button.disabled)'),
       );
       const paragraphReveal=await buttonInfo('\u67e5\u770b @existing-publication \u7684\u5bc6\u7801');
       const ordinaryReveal=await buttonInfo('\u67e5\u770b password-owner \u7684\u5bc6\u7801');
       check('Paragraph API identity has no generic password reveal',!paragraphReveal.exists);
       check('ordinary password identity keeps its password reveal',ordinaryReveal.exists);
 
-      await clickText('\u8fde\u63a5 Paragraph');
-      await waitFor('document.querySelector("[role=dialog]")!==null');
+      await openNewParagraph();
       check(
         'Paragraph drawer opens with its accessible dialog label',
-        await evaluate('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="\u8fde\u63a5 Paragraph"'),
+        await evaluate('document.querySelector(".side-drawer.narrow")?.getAttribute("aria-label")==="连接 Paragraph"'),
       );
       await clickLabel('\u5173\u95ed');
-      await waitFor('document.querySelector("[role=dialog]")===null');
+      await waitFor('document.querySelector(".side-drawer.narrow")===null');
       check('Paragraph drawer closes from its close control',true);
 
-      await clickText('\u8fde\u63a5 Paragraph');
-      await waitFor('document.querySelector("[role=dialog]")!==null');
+      await openNewParagraph();
       const blankSubmit=await evaluate('(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()==="\u9a8c\u8bc1\u5e76\u8fde\u63a5");return !!button&&button.disabled})()');
       check('new connection submit is disabled while the API key is empty',blankSubmit);
       const keyField=await inputInfo('Paragraph API key');

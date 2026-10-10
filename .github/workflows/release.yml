@@ -120,7 +120,7 @@ jobs:
             }
           }
 
-      - name: Validate published Windows v1.2.17 to candidate v1.2.18 native upgrade
+      - name: Validate published Windows v1.2.18 to candidate v1.2.19 native upgrade
         id: native_upgrade
         run: npm run test:update-native
 

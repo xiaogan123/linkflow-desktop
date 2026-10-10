@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
-import { analyzeWebsiteHtml, createPinnedLookup, fetchPublicHtml, findDirectLink, isProxyFakeDnsAddress, isPublicIpAddress, nextHtmlByteCount, normalizePublicUrl, parsePublicDnsResponse, verifyLink } from '../src/integrations/web.js';
+import { analyzeWebsiteHtml, createPinnedLookup, fetchPublicHtml, fetchPublicResourceBytes, findDirectLink, isProxyFakeDnsAddress, isPublicIpAddress, nextHtmlByteCount, normalizePublicUrl, parsePublicDnsResponse, verifyLink } from '../src/integrations/web.js';
 
 test('public URL parser rejects SSRF primitives and credentials', () => {
   for (const address of [
@@ -233,4 +233,52 @@ test('verifier distinguishes an unreachable page from an absent link', async () 
   });
   assert.equal(absent.found, false);
   assert.equal(absent.outcome, 'absent');
+});
+
+test('guarded raw bytes preserve exact status, normalized headers, body and pinned identity', async () => {
+  const calls:string[]=[];
+  const result=await fetchPublicResourceBytes('https://bytes.example/article',undefined,{
+    resolve:async host=>{calls.push('resolve:'+host);return [{address:'8.8.8.8',family:4}]},
+    request:async(url,pinned)=>{calls.push(`request:${url.href}:${pinned.address}`);return {status:200,headers:{'Content-Type':'text/html; charset=utf-8','X-Robots-Tag':['noindex','nofollow'],'Content-Length':'5'},body:Buffer.from('exact')}},
+  },{maxBytes:32,accept:'text/html',mediaTypes:['text/html'],redirect:'error'});
+  assert.equal(result.url,'https://bytes.example/article');assert.equal(result.status,200);assert.equal(result.mediaType,'text/html');assert.equal(result.body.toString(),'exact');
+  assert.deepEqual(result.headers,{'content-type':'text/html; charset=utf-8','x-robots-tag':'noindex,nofollow','content-length':'5'});
+  assert.deepEqual(calls,['resolve:bytes.example','request:https://bytes.example/article:8.8.8.8']);
+});
+
+test('raw redirect error stops before a second lookup even for the same URL', async () => {
+  let resolves=0,requests=0;
+  await assert.rejects(fetchPublicResourceBytes('https://bytes.example/',undefined,{
+    resolve:async()=>{resolves++;return [{address:'8.8.8.8',family:4}]},
+    request:async()=>{requests++;return {status:302,headers:{location:'https://bytes.example/'},body:Buffer.alloc(0)}},
+  },{maxBytes:32,accept:'text/html',mediaTypes:['text/html'],redirect:'error'}),/Redirect target is not allowed/);
+  assert.equal(resolves,1);assert.equal(requests,1);
+});
+
+test('raw reader enforces declarations, actual bytes, media and compression while retaining non-200 status', async () => {
+  const base={resolve:async()=>[{address:'8.8.8.8',family:4}]};
+  const run=(status:number,headers:http.IncomingHttpHeaders,body:Buffer)=>fetchPublicResourceBytes('https://bytes.example/',undefined,{...base,request:async()=>({status,headers,body})},{maxBytes:5,accept:'text/html',mediaTypes:['text/html'],redirect:'error'});
+  await assert.rejects(run(200,{'content-type':'text/html','content-length':'6'},Buffer.from('12345')),/size limit/);
+  assert.equal((await run(200,{'content-type':'text/html','content-length':'4'},Buffer.from('12345'))).body.length,5);
+  assert.equal((await run(200,{'content-type':'text/html','content-length':'0002'},Buffer.from('ok'))).body.toString(),'ok');
+  for(const declared of ['', ' 2', '+2', '2,2'])await assert.rejects(run(200,{'content-type':'text/html','content-length':declared},Buffer.from('ok')),/invalid declared size/);
+  await assert.rejects(run(200,{'content-type':'text/plain'},Buffer.from('12345')),/media type/);
+  await assert.rejects(run(200,{'content-type':'text/html','content-encoding':'gzip'},Buffer.from('12345')),/Compressed/);
+  const unavailable=await run(503,{'content-type':'text/plain'},Buffer.from('later'));assert.equal(unavailable.status,503);assert.equal(unavailable.mediaType,'text/plain');
+});
+
+test('legacy public HTML reader accepts digit-only Content-Length with leading zeros', async () => {
+  const result=await fetchPublicHtml('https://bytes.example/',undefined,{
+    resolve:async()=>[{address:'8.8.8.8',family:4}],
+    request:async()=>({status:200,headers:{'content-type':'text/html','content-length':'0002'},body:Buffer.from('ok')}),
+  });
+  assert.equal(result.html,'ok');
+});
+
+test('raw reader applies public DNS guards and aborts ignored DNS or body operations', async () => {
+  const options={maxBytes:32,accept:'text/html',mediaTypes:['text/html'] as const,redirect:'error' as const};
+  await assert.rejects(fetchPublicResourceBytes('https://bytes.example/',undefined,{resolve:async()=>[{address:'8.8.8.8',family:4},{address:'10.0.0.1',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from('ok')})},options),/private or reserved/);
+  const never=()=>new Promise<never>(()=>undefined);
+  await assert.rejects(fetchPublicResourceBytes('https://bytes.example/',undefined,{resolve:never,request:never,timeoutMs:5},options),/DNS lookup timed out/);
+  await assert.rejects(fetchPublicResourceBytes('https://bytes.example/',undefined,{resolve:async()=>[{address:'8.8.8.8',family:4}],request:never,timeoutMs:5},options),/Request timed out/);
 });

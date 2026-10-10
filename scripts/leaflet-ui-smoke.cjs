@@ -28,12 +28,19 @@ if(!process.versions.electron){
   const waitFor=async source=>{const end=Date.now()+5000;while(Date.now()<end){if(await evaluate(source))return;await pause(20)}throw Error('UI timeout: '+source)};
   const click=async label=>{assert(await evaluate('(()=>{const b=[...document.querySelectorAll("button")].find(b=>b.innerText.trim()==='+JSON.stringify(label)+'&&!b.disabled);if(!b)return false;b.click();return true})()'));await pause(20)};
   const input=async(label,value)=>evaluate('(()=>{const el=document.querySelector('+JSON.stringify('[aria-label="'+label+'"]')+');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(el,'+JSON.stringify(value)+');el.dispatchEvent(new Event("input",{bubbles:true}));})()');
+  const openLeaflet=async()=>{
+    await click('添加 / 连接账号');await waitFor('document.querySelector(".account-guide-drawer")!==null');
+    const picked=await evaluate('(()=>{const option=[...document.querySelectorAll(".account-guide-drawer [role=option]")].find(item=>item.querySelector("strong")?.textContent==="Leaflet");if(!option)return false;option.click();return true})()');assert(picked,'Leaflet platform option');
+    await waitFor('document.querySelector(".account-guide-drawer .platform-selection")?.innerText.includes("Leaflet")');
+    const opened=await evaluate('(()=>{const button=[...document.querySelectorAll(".account-guide-drawer .platform-selection button")].find(item=>item.innerText.trim()==="连接 Leaflet"&&!item.disabled);if(!button)return false;button.click();return true})()');assert(opened,'guided Leaflet connection action');
+    await waitFor('document.querySelector(".side-drawer.narrow")?.getAttribute("aria-label")==="连接 Leaflet"');await waitFor('document.querySelector(".account-guide-drawer")===null');
+  };
   app.whenReady().then(async()=>{try{
     win=new BrowserWindow({width:1320,height:920,show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
     win.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_details,callback)=>callback({cancel:true}));
-    await win.loadFile(join(dir,'index.html'));await waitFor('document.body.innerText.includes("Leaflet")');
-    check('Leaflet remains a pending acceptance connection',await evaluate('document.body.innerText.includes("真实授权和公开全文发布尚待验收")'));
-    await click('连接 Leaflet');await waitFor('!!document.querySelector("[aria-label=\\"连接 Leaflet\\"][role=dialog]")');
+    await win.loadFile(join(dir,'index.html'));await waitFor('document.body.innerText.includes("添加 / 连接账号")');
+    check('Leaflet remains a pending acceptance connection',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="Leaflet");return !!row&&row.textContent.includes("当前未启用")&&row.textContent.includes("真实授权和公开全文发布尚待验收")&&row.querySelector("button")?.textContent.includes("连接 Leaflet")})()'));
+    await openLeaflet();
     check('full article and existing account requirements are explicit',await evaluate('document.querySelector("[role=dialog]").innerText.includes("完整文章")&&document.querySelector("[role=dialog]").innerText.includes("不会自动注册账号")'));
     check('disabled candidate does not promise immediate publication',await evaluate('document.querySelector("[role=dialog]").innerText.includes("不参与自动任务")'));
     check('credential field is masked',await evaluate('document.querySelector("input[aria-label=\\"Leaflet 应用专用密码\\"]").type==="password"'));

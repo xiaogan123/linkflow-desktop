@@ -14,11 +14,14 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,17);
+  assert.equal(rows.length,20);
   assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['mataroa','verbose','lucid-page','betterthanhtml','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
+  assert.equal(row(data,'docs-md').state,'unavailable');
+  assert.equal(row(data,'docs-md').connectedCount,0);
+  assert.match(row(data,'docs-md').detail,/无需注册账号.*真实托管公开页验收/);
   assert.equal(row(data,'wordpress-com').state,'unavailable');
   assert.match(row(data,'wordpress-com').detail,/浏览器授权.*尚待验收/);
   assert.equal(row(data,'prose').state,'unavailable');
@@ -35,6 +38,24 @@ test('Verbose only becomes self-provisioned when its experimental channel is act
   const verbose=connectionOverview(data).find(item=>item.id==='verbose');
   assert.equal(verbose?.state,'attention');
   assert.match(verbose?.detail??'',/不能重新注册换号/);
+});
+
+test('Docs MD needs no account only when enabled and preserves historical checks when disabled',()=>{
+  const data=snapshot();
+  assert.equal(row(data,'docs-md').state,'unavailable');
+  data.channels=data.channels.map(channel=>channel.id==='docs-md'?{...channel,enabled:true}:channel);
+  assert.equal(row(data,'docs-md').state,'no_setup');
+  assert.match(row(data,'docs-md').detail,/无需注册账号/);
+  data.accounts=[account('docs-md',{status:'needs_verification'})];
+  data.accountBindings=[{id:'legacy-binding',channelId:'docs-md',accountId:'docs-md-identity',siteId:'site-1',createdAt:at,updatedAt:at}];
+  data.tasks=[task('docs-md',{firstLiveAt:at,linkCheck:'absent'})];
+  assert.equal(row(data,'docs-md').state,'no_setup');
+  assert.equal(row(data,'docs-md').connectedCount,0);
+  assert.equal(row(data,'docs-md').boundSiteCount,0);
+  assert.equal(row(data,'docs-md').checkedCount,1);
+  data.channels=data.channels.map(channel=>channel.id==='docs-md'?{...channel,enabled:false}:channel);
+  assert.equal(row(data,'docs-md').state,'unavailable');
+  assert.equal(row(data,'docs-md').checkedCount,1);
 });
 
 test('a Paper verification challenge is attention, not a connected or published identity',()=>{
@@ -114,9 +135,9 @@ test('Leaflet waits for acceptance while preserving explicit identity and bindin
 });
 
 
-test('connection overview covers every built-in article or short-post API including anonymous BTH',()=>{
+test('connection overview covers APIs plus the read-only Markest connection',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.deepEqual(rows.map(item=>item.id).sort(),CHANNELS.filter(channel=>channel.automation==='api').map(channel=>channel.id).sort());
+  assert.deepEqual(rows.map(item=>item.id).sort(),CHANNELS.filter(channel=>channel.automation==='api'||channel.id==='markest'||channel.id==='deno').map(channel=>channel.id).sort());
   assert.equal(row(data,'betterthanhtml').state,'no_setup');
   assert.match(row(data,'betterthanhtml').detail,/无需注册账号/);
   data.tasks=[task('betterthanhtml',{firstLiveAt:at,linkCheck:'found'})];
@@ -131,7 +152,8 @@ test('every disabled API stays unavailable without erasing connection or histori
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
-    if(!['wordpress-com','blogger'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    if(!['wordpress-com','blogger','docs-md'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    else if(channel.id==='docs-md')assert.equal(found.connectedCount,0,channel.id);
   }
 });
 

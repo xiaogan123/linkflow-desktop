@@ -1,5 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import React from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {load} from 'cheerio';
+import {emptyState} from '../src/main/store';
+import {TaskCenter} from '../src/ui/pages/TaskCenter';
 import type {ArticleReviewReasonCode,Channel,Site,Snapshot,Task} from '../src/shared/types';
 import {articleReviewDetail,canRestartArticleReview,canRetryTaskManually,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskHasAutomaticFollowup,taskPresentation,taskReservesPlanningSlot,taskSortRank,taskWorkKind} from '../src/ui/presentation';
 
@@ -18,6 +23,32 @@ test('draft caption reports saved publication result even after the AI channel i
   assert.equal(draftStatusLabel({...published,status:'review',firstLiveAt:undefined},'ai',false),'已有公开地址 · 等待核验');
   const awaiting={...task('queued'),draft:published.draft,articleReview:published.articleReview};
   assert.equal(draftStatusLabel(awaiting,'ai',false),'待独立 AI 审核');
+});
+
+test('Docs MD unknown submission without a receipt is stopped without becoming a human task',()=>{
+  const unknown:Task={...task('review'),channelId:'docs-md',sourceDomain:'docs-md.com',checkpoint:'docs_md_share_submitting',submittedAt:stamp,docsMd:{operationId:'fixture-operation',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'submitting'}};
+  for(const enabled of [true,false]){
+    assert.equal(taskWorkKind(unknown,'ai',enabled),'channel_wait');
+    assert.equal(taskPresentation(unknown,'ai',enabled).label,'提交结果未知');
+    assert.equal(draftStatusLabel(unknown,'ai',enabled),'已提交 · 结果未知');
+    assert.equal(draftStatusLabel({...unknown,articleApprovedAt:stamp},'manual',enabled),'已提交 · 结果未知');
+    assert.equal(isUserActionTask(unknown,'ai',enabled),false);
+    assert.equal(taskHasAutomaticFollowup(unknown,enabled),false);
+    assert.equal(canRetryTaskManually(unknown,'ai',enabled),false);
+    assert.equal(canRestartArticleReview(unknown,'ai',enabled),false);
+  }
+  assert.equal(taskPresentation({...unknown,status:'running'},'ai').label,'执行中');
+  const receipt:Task={...unknown,status:'needs_input',checkpoint:'docs_md_api_receipt',publicUrl:'https://docs-md.com/fixture-article',docsMd:{...unknown.docsMd!,stage:'api_receipt',id:'fixture-article'},reconcileAfter:stamp};
+  assert.equal(taskPresentation(receipt,'ai').label,'自动查询发布结果');
+  assert.equal(taskHasAutomaticFollowup(receipt),true);
+  assert.equal(draftStatusLabel(receipt,'ai'),'已有公开地址 · 等待核验');
+  const data:Snapshot={...emptyState(),sites:[site],tasks:[unknown],channels:[{...channel('docs-md','api',false),enabled:false}],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
+  const $=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
+  const metrics=Object.fromEntries($('.task-kpi').map((_,el)=>[$(el).find('small').text()+'='+$(el).find('strong').text()]).get().map(value=>value.split('=')));
+  assert.equal(metrics['系统推进'],'0');
+  assert.equal(metrics['需要你处理'],'0');
+  assert.equal(metrics['等待渠道'],'1');
+  assert.equal(metrics['当前有效'],'0');
 });
 
 test('terminal invalid topic has a precise label without offering a generic paid retry',()=>{

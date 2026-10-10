@@ -1,6 +1,6 @@
 import type {ArticleReviewMode,CapacityBlockReason,Site, SiteCapacity, Task} from '../shared/types';
 import {publicationCounts,reservesMonthlySlot} from '../shared/publication';
-import {isUserActionTask,taskAutomaticFollowupAt,taskHasAutomaticFollowup,taskPresentation,taskWorkKind} from './presentation';
+import {isUserActionTask,taskAutomaticFollowupAt,taskHasAutomaticFollowup,taskHasStoppedUnknownDocsMdSubmission,taskPresentation,taskWorkKind} from './presentation';
 
 export type PlanningTone='green'|'blue'|'amber'|'red'|'muted';
 export type PlanningState='global_paused'|'site_paused'|'analyzing'|'running'|'needs_input'|'system_retry'|'channel_wait'|'blocked'|'review'|'due'|'scheduled'|'target_met'|'source_shortage'|'unplanned';
@@ -70,10 +70,12 @@ export function planningStatus(site:Site,tasks:Task[],context:PlanningContext):P
   if(userActions.length){const first=taskPresentation(userActions[0],reviewMode,channelEnabled(userActions[0]));return status('needs_input',first.label,first.tone,manualArticleReview?'稿件等待人工确认':'等待你的操作',manualArticleReview?'核对稿件后才能继续；系统不会自行越过人工审核。':userActions[0].message||'完成账号、验证或人工提交后可继续。')}
   const systemWaiting=siteTasks.filter(task=>taskWorkKind(task,reviewMode,channelEnabled(task))==='system_retry');
   const channelWaiting=siteTasks.filter(task=>taskWorkKind(task,reviewMode,channelEnabled(task))==='channel_wait');
-  const reviewing=siteTasks.filter(task=>task.status==='review');
+  const stoppedUnknown=siteTasks.filter(task=>taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled(task)));
+  const reviewing=siteTasks.filter(task=>task.status==='review'&&!taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled(task)));
   if(next){
     const nextPresentation=taskPresentation(next,reviewMode,channelEnabled(next)),passive=systemWaiting.filter(task=>task.id!==next.id).length+channelWaiting.length+reviewing.length;
-    return queuedNext(nextPresentation.kind==='system_retry'?'system_retry':'scheduled',nextPresentation.kind==='system_retry'?nextPresentation.label:'已排计划','blue',passive?`另有 ${passive} 项由系统等待恢复或渠道结果；当前计划仍会按此时间推进。`:'已有任务已排入计划。')!;
+    const detail=stoppedUnknown.length?`另有 ${passive} 项尚未完成，其中 ${stoppedUnknown.length} 项提交结果未知且未安排自动检查；当前计划仍会按此时间推进。`:passive?`另有 ${passive} 项由系统等待恢复或渠道结果；当前计划仍会按此时间推进。`:'已有任务已排入计划。';
+    return queuedNext(nextPresentation.kind==='system_retry'?'system_retry':'scheduled',nextPresentation.kind==='system_retry'?nextPresentation.label:'已排计划','blue',detail)!;
   }
   const automaticSystem=systemWaiting.filter(task=>taskHasAutomaticFollowup(task,channelEnabled(task))).sort((a,b)=>(validDate(taskAutomaticFollowupAt(a,channelEnabled(a))??'')?.getTime()??0)-(validDate(taskAutomaticFollowupAt(b,channelEnabled(b))??'')?.getTime()??0));
   if(automaticSystem.length){const first=automaticSystem[0],presentation=taskPresentation(first,reviewMode,channelEnabled(first)),at=taskAutomaticFollowupAt(first,channelEnabled(first));return status('system_retry',presentation.label,'blue',at?formatScheduledAt(at,now,context.timeZone):'即将自动查询',first.message||'已安排自动恢复或结果查询，期间不会重复发布。')}

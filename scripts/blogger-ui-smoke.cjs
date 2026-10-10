@@ -50,9 +50,9 @@ if(!process.versions.electron){
                   const serial=++connectionSerial;
                   await pause(220);
                   if(connectionCancelled)return undefined;
-                  const account={id:'oauth-connected-'+serial,channelId:'blogger',email:'connected'+serial+'@gmail.com',username:'connected-google-'+serial,createdAt:now,status:'registered',hasPassword:false,credentialKind:'oauth',source:'imported'};
+                  const account={id:'oauth-connected-'+serial,channelId:'blogger',email:'connected'+serial+'@gmail.com',username:'connected-google-'+serial,createdAt:now,status:'registered',hasPassword:true,credentialKind:'oauth',source:'imported'};
                   setData(current=>({...current,accounts:[account,...current.accounts]}));
-                  return account;
+                  return {account,blogs:[{id:'blog-'+account.id,name:'Fixture Blog',url:'https://fixture.blogspot.com/'}]};
                 }
                 if(command==='account:cancel-blogger'){
                   connectionCancelled=true;
@@ -62,7 +62,8 @@ if(!process.versions.electron){
                   connectionCancelled=false;
                   await pause(180);
                   if(connectionCancelled)return undefined;
-                  return data.accounts.find(account=>account.id===payload.accountId);
+                  const account=data.accounts.find(account=>account.id===payload.accountId);
+                  return account?{account,blogs:[{id:'blog-'+account.id,name:'Fixture Blog',url:'https://fixture.blogspot.com/'}]}:undefined;
                 }
                 if(command==='account:blogger-blogs'){
                   await pause(90);
@@ -114,11 +115,23 @@ if(!process.versions.electron){
   let win;
   const evaluate=source=>win.webContents.executeJavaScript(source,true);
   const waitFor=async source=>{const deadline=Date.now()+8000;while(Date.now()<deadline){if(await evaluate(source))return;await delay(35)}throw new Error('UI readiness deadline: '+source)};
-  const clickText=async text=>{const clicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.trim()===${JSON.stringify(text)}&&!item.disabled);if(!button)return false;button.click();return true})()`);assert(clicked,'button: '+text);await delay(35)};
-  const clickLabel=async label=>{const clicked=await evaluate(`(()=>{const button=document.querySelector('button[aria-label=${JSON.stringify(label)}]');if(!button||button.disabled)return false;button.click();return true})()`);assert(clicked,'button label: '+label);await delay(35)};
-  const forceSelect=async(label,value)=>{const changed=await evaluate(`(()=>{const element=document.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!element)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);assert(changed,'force select: '+label);await delay(35)};
-  const setCheckbox=async(label,checked)=>{const changed=await evaluate(`(()=>{const element=document.querySelector('input[aria-label=${JSON.stringify(label)}]');if(!element||element.disabled)return false;if(element.checked!==${checked})element.click();return element.checked===${checked}})()`);assert(changed,'checkbox: '+label);await delay(35)};
+  const clickText=async text=>{const clicked=await evaluate(`(()=>{const root=document.querySelector('[role=dialog]')??document;const button=[...root.querySelectorAll('button')].find(item=>item.innerText.trim()===${JSON.stringify(text)}&&!item.disabled);if(!button)return false;button.click();return true})()`);assert(clicked,'button: '+text);await delay(35)};
+  const clickLabel=async label=>{const clicked=await evaluate(`(()=>{const root=document.querySelector('[role=dialog]')??document;const button=root.querySelector('button[aria-label=${JSON.stringify(label)}]');if(!button||button.disabled)return false;button.click();return true})()`);assert(clicked,'button label: '+label);await delay(35)};
+  const forceSelect=async(label,value)=>{const changed=await evaluate(`(()=>{const root=document.querySelector('[role=dialog]')??document;const element=root.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!element)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);assert(changed,'force select: '+label);await delay(35)};
+  const setCheckbox=async(label,checked)=>{const changed=await evaluate(`(()=>{const root=document.querySelector('[role=dialog]')??document;const element=root.querySelector('input[aria-label=${JSON.stringify(label)}]');if(!element||element.disabled)return false;if(element.checked!==${checked})element.click();return element.checked===${checked}})()`);assert(changed,'checkbox: '+label);await delay(35)};
   const actionCount=command=>evaluate(`window.__bloggerFixture.actions.filter(action=>action.command===${JSON.stringify(command)}).length`);
+  const openBloggerFromGuide=async()=>{
+    await clickText('添加 / 连接账号');
+    await waitFor('document.querySelector(\'[role=dialog][aria-label="添加或连接账号"]\')');
+    const selected=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog][aria-label="添加或连接账号"]');const option=[...dialog.querySelectorAll('button[role=option]')].find(item=>item.querySelector('strong')?.innerText.trim()==='Blogger');if(!option||option.disabled)return false;option.click();return true})()`);
+    assert(selected,'select Blogger in account connection guide');
+    await delay(35);
+    const action=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog][aria-label="添加或连接账号"]');const button=dialog?.querySelector('.platform-selection button');if(!button||button.disabled)return '';const label=button.innerText.trim();if(!['授权 Blogger','管理或新增连接','处理原连接'].includes(label))return '';button.click();return label})()`);
+    assert(action,'activate Blogger from account connection guide');
+    await waitFor('document.querySelector(\'[role=dialog][aria-label="连接 Blogger 并绑定博客"]\')');
+    await waitFor('(()=>{const button=document.querySelector(\'[role=dialog][aria-label="连接 Blogger 并绑定博客"] .blogger-primary\');return !!button&&!button.disabled})()');
+    return action;
+  };
 
   app.whenReady().then(async()=>{try{
     win=new BrowserWindow({width:1260,height:800,useContentSize:true,show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
@@ -129,7 +142,7 @@ if(!process.versions.electron){
     check('OAuth identity has no password reveal or generic account controls',await evaluate('!document.querySelector("button[aria-label=\\"查看 existing-owner 的密码\\"]")&&!document.querySelector("button[aria-label=\\"绑定 existing-owner\\"]")&&!document.querySelector("button[aria-label=\\"更新 existing-owner\\"]")&&!document.querySelector("button[aria-label=\\"移除 existing-owner\\"]")'));
     check('ordinary password identity keeps its existing controls',await evaluate('!!document.querySelector("button[aria-label=\\"查看 password-owner 的密码\\"]")&&!!document.querySelector("button[aria-label=\\"更新 password-owner\\"]")'));
 
-    await clickText('连接 Blogger');
+    await openBloggerFromGuide();
     await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("首次连接只需一次配置")');
     check('advanced client import stays collapsed when reusable identities exist',await evaluate('document.querySelector("[role=dialog] details").open===false'));
     const firstGuide=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return {text:dialog.innerText,passwords:dialog.querySelectorAll('input[type=password]').length}})()`);
@@ -143,6 +156,7 @@ if(!process.versions.electron){
     check('Testing notice is concise and tied to External Testing refresh tokens',await evaluate('document.querySelector("[role=dialog]").innerText.includes("External")&&document.querySelector("[role=dialog]").innerText.includes("Testing")&&document.querySelector("[role=dialog]").innerText.includes("7 天后失效")'));
     writeFileSync(join(evidence,'blogger-connect-drawer.png'),(await win.capturePage()).toPNG());
     const connectedBefore=await actionCount('account:connect-blogger');
+    const readsBeforeConnect=await actionCount('account:blogger-blogs');
     const doubleClicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.includes('选择桌面客户端 JSON 并连接'));if(!button)return false;button.click();button.click();return true})()`);
     assert(doubleClicked,'double connect click');
     await waitFor('document.body.innerText.includes("等待浏览器授权…")');
@@ -151,6 +165,7 @@ if(!process.versions.electron){
     check('rapid connect clicks dispatch only once',await actionCount('account:connect-blogger')===connectedBefore+1);
     const connectAction=await evaluate('window.__bloggerFixture.actions.find(action=>action.command==="account:connect-blogger")');
     check('connect command carries no payload',connectAction.payload==='__undefined__');
+    check('connect reuses the verified blog list without a second API read',await actionCount('account:blogger-blogs')===readsBeforeConnect);
     check('new identities do not preselect every site',await evaluate('[...document.querySelectorAll("fieldset input[type=checkbox]")].every(input=>!input.checked)'));
     await setCheckbox('绑定网站 two.example',true);
     await clickText('绑定所选网站');
@@ -175,7 +190,7 @@ if(!process.versions.electron){
     await clickLabel('管理 no-blog-owner 的 Blogger 绑定');
     await waitFor('document.body.innerText.includes("还没有 Blogger 博客")');
     await clickText('取消');
-    await clickText('连接 Blogger');
+    await openBloggerFromGuide();
     check('closing and reopening clears transient blog results',await evaluate('!document.querySelector("[role=dialog]").innerText.includes("还没有 Blogger 博客")'));
     await clickText('取消');
 
@@ -189,14 +204,16 @@ if(!process.versions.electron){
     await clickLabel('管理 existing-owner 的 Blogger 绑定');
     await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")');
     const reconnectBefore=await actionCount('account:reconnect-blogger');
+    const readsBeforeReconnect=await actionCount('account:blogger-blogs');
     await clickText('重新授权此身份');
     await waitFor('document.body.innerText.includes("等待浏览器授权…")');
     await waitFor('!!document.querySelector("select[aria-label=\\"Blogger 博客\\"]")&&!document.body.innerText.includes("等待浏览器授权…")');
     const reconnectAction=await evaluate('window.__bloggerFixture.actions.findLast(action=>action.command==="account:reconnect-blogger")');
     check('reconnect reuses the selected identity without asking for JSON again',await actionCount('account:reconnect-blogger')===reconnectBefore+1&&reconnectAction.payload.accountId==='oauth-existing');
+    check('reconnect reuses the verified blog list without a second API read',await actionCount('account:blogger-blogs')===readsBeforeReconnect);
     await clickText('取消');
 
-    await clickText('连接 Blogger');
+    await openBloggerFromGuide();
     await evaluate(`document.querySelector('[role=dialog] details summary').click()`);
     await clickText('选择桌面客户端 JSON 并连接');
     await waitFor('document.body.innerText.includes("取消连接")');

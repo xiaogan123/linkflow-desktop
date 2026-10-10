@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {z} from 'zod';
 import type {Account,Channel,SecretStore} from '../shared/types';
 import type {Store} from './store';
 import {bindAccount,unbindAccount} from './account-bindings';
@@ -10,8 +11,18 @@ import {serializeProseCredentials,validSerializedProseCredentials} from '../inte
 import {createProseTransport,ProseTransportError,type ExpectedProseIdentity,type ProseIdentity,type ProseTransport} from '../integrations/prose-transport';
 
 type ChannelId='paper-wf'|'hive'|'mataroa';
-type Connector=(vault:SecretStore,id:string,username:string,credential:string)=>Promise<{username:string;url:string}>;
-export interface ArticleConnectionInput {channelId:ChannelId;username:string;credential:string;siteIds:string[];accountId?:string}
+type ConnectorOptions={allowDisableNewsletter:boolean};
+type Connector=(vault:SecretStore,id:string,username:string,credential:string,options?:ConnectorOptions)=>Promise<{username:string;url:string}>;
+export interface ArticleConnectionInput {channelId:ChannelId;username:string;credential:string;siteIds:string[];accountId?:string;allowDisableNewsletter?:boolean}
+
+const ArticleConnectionPayload=z.object({username:z.string().trim().min(1).max(100),credential:z.string().min(1).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional(),acknowledgePermanent:z.boolean().optional(),allowDisableNewsletter:z.boolean().optional()}).strict();
+export function parseArticleConnectionInput(channelId:ChannelId,value:unknown):ArticleConnectionInput{
+  const input=ArticleConnectionPayload.parse(value);
+  if(channelId==='hive'&&input.acknowledgePermanent!==true)throw Error('请先确认 Hive 文章会保留在公开链上历史中');
+  if(channelId!=='mataroa'&&input.allowDisableNewsletter!==undefined)throw Error('关闭 Newsletter 的一次性授权仅适用于 Mataroa');
+  return {channelId,username:input.username,credential:input.credential,siteIds:input.siteIds,accountId:input.accountId,
+    ...(channelId==='mataroa'?{allowDisableNewsletter:input.allowDisableNewsletter===true}:{})};
+}
 
 export interface ProseConnectionInput {privateKey:string;passphrase?:string;siteIds:string[];accountId?:string}
 export interface ProseConnectionVault {
@@ -133,8 +144,8 @@ export async function connectArticleAccount(store:Pick<Store,'read'|'update'>,va
   const previous=requested??before.accounts.find(account=>account.channelId===input.channelId&&account.username===username);
   const id=previous?.id??randomUUID(),oldSecret=await vault.get('account:'+id);
   try{
-    const connect=connector??(input.channelId==='hive'?connectHiveAccount:input.channelId==='mataroa'?connectMataroaAccount:connectPaperAccount);
-    const identity=await connect(vault,id,username,input.credential);
+    const connect=connector??(input.channelId==='hive'?(v,i,u,c)=>connectHiveAccount(v,i,u,c):input.channelId==='mataroa'?(v,i,u,c,options)=>connectMataroaAccount(v,i,u,c,{allowDisableNewsletter:options?.allowDisableNewsletter===true}):(v,i,u,c)=>connectPaperAccount(v,i,u,c));
+    const identity=await connect(vault,id,username,input.credential,{allowDisableNewsletter:input.channelId==='mataroa'&&input.allowDisableNewsletter===true});
     if(identity.username!==username)throw Error('验证返回的账号与所选身份不一致');
     const now=new Date().toISOString();
     const account:Account={...previous,id,channelId:input.channelId,username,email:'',displayName:username,publicationUrl:identity.url,credentialKind:'api_token',status:'registered',hasPassword:true,source:previous?.source??'imported',createdAt:previous?.createdAt??now,updatedAt:now,verifiedAt:now,diagnostic:undefined};

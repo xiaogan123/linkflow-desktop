@@ -1,9 +1,7 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowSquareOut,GoogleLogo,WarningCircle,X} from '@phosphor-icons/react';
-import type {Account,Snapshot} from '../../shared/types';
+import type {Account,BloggerBlogSummary,BloggerConnectionResult,Snapshot} from '../../shared/types';
 import {Button,Field} from '../components';
-
-export interface BloggerBlog {id:string;name:string;url:string}
 
 type BusyAction='connect'|'reconnect'|'blogs'|'bind'|'disconnect'|null;
 type Props={
@@ -24,7 +22,7 @@ export function BloggerConnection({data,disabled,initialAccountId='',disconnectA
   const [accountId,setAccountId]=useState(initialAccountId);
   const [siteIds,setSiteIds]=useState<string[]>(initialSiteIds);
   const [blogId,setBlogId]=useState('');
-  const [blogs,setBlogs]=useState<BloggerBlog[]>([]);
+  const [blogs,setBlogs]=useState<BloggerBlogSummary[]>([]);
   const [blogsLoaded,setBlogsLoaded]=useState(false);
   const [busy,setBusy]=useState<BusyAction>(null);
   const [error,setError]=useState('');
@@ -81,7 +79,7 @@ export function BloggerConnection({data,disabled,initialAccountId='',disconnectA
     return (snapshot?.accountBindings??[]).filter(binding=>binding.channelId==='blogger'&&binding.accountId===nextAccountId&&existingSites.has(binding.siteId)).map(binding=>binding.siteId);
   }
 
-  function preferredBlogId(nextBlogs:BloggerBlog[],nextAccountId:string,nextSiteIds:string[]){
+  function preferredBlogId(nextBlogs:BloggerBlogSummary[],nextAccountId:string,nextSiteIds:string[]){
     const snapshot=dataRef.current;
     const accountSites=new Set((snapshot?.accountBindings??[]).filter(binding=>binding.channelId==='blogger'&&binding.accountId===nextAccountId).map(binding=>binding.siteId));
     const boundBlogs=[...new Set((snapshot?.sites??[]).filter(site=>nextSiteIds.includes(site.id)&&accountSites.has(site.id)).map(site=>site.blogger?.blogId).filter((value):value is string=>!!value))];
@@ -93,7 +91,7 @@ export function BloggerConnection({data,disabled,initialAccountId='',disconnectA
   async function loadBlogs(nextAccountId=accountIdRef.current){
     if(!nextAccountId)return;
     const requestId=++blogsRequestRef.current;
-    const result=await runExclusive('blogs',()=>onAction<BloggerBlog[]>('account:blogger-blogs',{accountId:nextAccountId}));
+    const result=await runExclusive('blogs',()=>onAction<BloggerBlogSummary[]>('account:blogger-blogs',{accountId:nextAccountId}));
     if(!aliveRef.current||requestId!==blogsRequestRef.current||accountIdRef.current!==nextAccountId)return;
     if(!result){setBlogs([]);setBlogsLoaded(false);setBlogId('');setError('暂未读取到博客列表。请检查连接后重试，已有选择不会被提交。');return}
     setBlogs(result);
@@ -109,30 +107,32 @@ export function BloggerConnection({data,disabled,initialAccountId='',disconnectA
 
   async function connect(){
     connectPendingRef.current=true;
-    let result:Account|undefined;
-    try{result=await runExclusive('connect',()=>onAction<Account>('account:connect-blogger',undefined,'Blogger 身份已连接。'))}
+    let result:BloggerConnectionResult|undefined;
+    try{result=await runExclusive('connect',()=>onAction<BloggerConnectionResult>('account:connect-blogger',undefined,'Blogger 身份已连接。'))}
     finally{connectPendingRef.current=false}
     if(!aliveRef.current)return;
     if(!result){setError('连接尚未完成。若已取消文件选择或浏览器授权，可直接重试；本页不会保存半成品。');return}
-    setConnectedAccount(result);
-    chooseAccount(result.id);
-    await loadBlogs(result.id);
+    setConnectedAccount(result.account);
+    chooseAccount(result.account.id);
+    setBlogs(result.blogs);
+    setBlogsLoaded(true);
+    setBlogId(preferredBlogId(result.blogs,result.account.id,siteIdsRef.current));
   }
 
   async function reconnect(){
     const reconnectAccountId=accountIdRef.current;
     if(!reconnectAccountId)return;
     connectPendingRef.current=true;
-    let result:Account|undefined;
-    try{result=await runExclusive('reconnect',()=>onAction<Account>('account:reconnect-blogger',{accountId:reconnectAccountId},'Blogger 身份已重新授权。'))}
+    let result:BloggerConnectionResult|undefined;
+    try{result=await runExclusive('reconnect',()=>onAction<BloggerConnectionResult>('account:reconnect-blogger',{accountId:reconnectAccountId},'Blogger 身份已重新授权。'))}
     finally{connectPendingRef.current=false}
     if(!aliveRef.current||accountIdRef.current!==reconnectAccountId)return;
     if(!result){setError('重新授权尚未完成。若本机已没有原桌面客户端配置，请展开首次连接配置并重新导入 JSON。');return}
-    setConnectedAccount(result);
-    setBlogs([]);
-    setBlogsLoaded(false);
-    setBlogId('');
-    await loadBlogs(reconnectAccountId);
+    if(result.account.id!==reconnectAccountId){setError('重新授权返回的身份与当前选择不一致，未更新博客列表。');return}
+    setConnectedAccount(result.account);
+    setBlogs(result.blogs);
+    setBlogsLoaded(true);
+    setBlogId(preferredBlogId(result.blogs,reconnectAccountId,siteIdsRef.current));
   }
 
   async function bind(){

@@ -5,7 +5,7 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote']);
+const automaticIdentity=new Set(['telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md']);
 const connectedIdentity=new Set(['github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
@@ -33,6 +33,7 @@ const setupById:Record<string,string>={
   'lucid-page':'免账号发布公开全文；匿名发布后修改或删除需先认领',
   betterthanhtml:'免账号发布静态全文；尚未确认文章修改或删除接口',
   supanote:'免账号匿名发布 Markdown；管理令牌仅在平台返回时加密保存，不承诺可编辑或删除',
+  'docs-md':'免账号匿名分享经核对的 Markdown；编辑令牌只加密保存在本机，真实托管验收前保持停用',
   'github-gist':'首次连接本人 GitHub 账号的 Gists 令牌',
   blogger:'首次由本人完成 Google 授权并绑定博客',
   'wordpress-com':'首次由本人完成 WordPress.com 浏览器授权，再选择已公开博客',
@@ -44,7 +45,7 @@ const setupById:Record<string,string>={
 };
 
 export function channelSourceLabels(id:string){
-  if(['betterthanhtml','supanote','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
+  if(['betterthanhtml','supanote','docs-md','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
   const guidance=['telegraph','paper-wf','verbose'].includes(id);
   return {checked:guidance?'接口与公开资料核查':'规则核查',open:id==='telegraph'?'官方 API 文档':guidance?'官方公开说明':'官方规则'};
 }

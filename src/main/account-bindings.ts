@@ -1,6 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import type {Account,Channel,SiteAccountBinding,Task} from '../shared/types';
 import type {State} from './store';
+import {validMarkestReadAccount} from '../integrations/markest-connection';
+import {validDenoReadAccount} from '../integrations/deno-connection';
 import {validProseAccount} from '../integrations/prose';
 
 export type ChannelExecutionReadiness='ready'|'autocreate'|'handoff_required'|'manual';
@@ -80,6 +82,8 @@ export function validLeafletAccount(account:Account):boolean{
 
 /** Classify whether an automatic channel can run before spending generation or review calls. */
 export function channelExecutionReadiness(state:State,siteId:string,channel:Channel,accountId?:string):{kind:ChannelExecutionReadiness;account?:Account}{
+  if(channel.id==='deno')return {kind:'handoff_required',account:accountForSiteChannel(state,siteId,channel.id,accountId)};
+  if(channel.id==='markest')return {kind:'handoff_required',account:accountForSiteChannel(state,siteId,channel.id,accountId)};
   if(channel.automation==='manual')return {kind:'manual'};
   if(channel.id==='blogger'){
     const site=state.sites.find(item=>item.id===siteId),binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='blogger');
@@ -171,6 +175,9 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='paragraph'){if(account.credentialKind!=='api_token'||account.status!=='registered'||!account.hasPassword||!account.publicationUrl)throw Error('请先验证本人 Paragraph 出版物连接');const url=new URL(account.publicationUrl);if(url.origin!=='https://paragraph.com'||!/^\/@[^/]+\/?$/.test(url.pathname)||url.search||url.hash)throw Error('出版物地址无效');site.paragraph={publicationId:account.username,url:url.toString()};}
   if(channel.id==='wordpress-com'&&!validWordPressAccount(account))throw Error('请先验证本人 WordPress.com 免费托管博客授权');
   if(channel.id==='leaflet'&&!validLeafletAccount(account))throw Error('请先为 Leaflet 单独验证本人 bsky.social 账号与应用专用密码');
+  if(channel.id==='deno'&&!validDenoReadAccount(account))throw Error('请先通过 Deno 专用入口验证只读连接');
+  if(channel.id==='markest'&&!validMarkestReadAccount(account))throw Error('请先通过 Markest 专用入口验证读取连接');
+  if(channel.id==='markest'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='markest'&&task.accountId!==accountId&&reservesSingleProfile(task)))throw Error('该网站已有 Markest 结果记录，不能改变原连接');
   if(channel.id==='prose'&&!validProseAccount(account))throw Error('请先验证本人 Prose 出版身份与专用 SSH 密钥');
   if(['paper-wf','hive','mataroa','verbose','rentry'].includes(channel.id)&&!validPublisherIdentity(account,channel.id as 'paper-wf'|'hive'|'mataroa'|'verbose'|'rentry'))throw Error(channel.id==='rentry'?'Rentry 本机发布密钥不可用':'请先验证本人出版账号及其公开地址');
   if(channel.id==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))account.mataroaExcludedSiteIds=account.mataroaExcludedSiteIds.filter(id=>id!==siteId);

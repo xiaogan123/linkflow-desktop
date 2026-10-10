@@ -50,6 +50,23 @@ export interface PublicTextFetchResult {
   robotsHeader?: string;
 }
 
+export interface PublicResourceFetchOptions {
+  maxBytes: number;
+  accept: string;
+  mediaTypes: readonly string[];
+  redirect: 'error' | 'follow';
+  /** Runs before a followed redirect target is resolved or requested. */
+  allowRedirect?: (from: URL, to: URL) => boolean;
+}
+
+export interface PublicResourceFetchResult {
+  url: string;
+  status: number;
+  headers: Readonly<Record<string,string>>;
+  mediaType: string;
+  body: Buffer;
+}
+
 export function nextHtmlByteCount(current: number, chunkBytes: number): number {
   const next = current + chunkBytes;
   if (!Number.isSafeInteger(next) || next > MAX_HTML_BYTES) throw new Error('HTML response exceeds size limit');
@@ -283,107 +300,119 @@ export function normalizePublicUrl(input: string): URL {
   return parsed;
 }
 
-// The injected transport is for deterministic tests. Production callers always use
-// the pinned native request below; host and DNS checks run in both paths.
-export async function fetchPublicText(
-  input: string,
-  signal?: AbortSignal,
-  dependencies?: PublicFetchDependencies,
-  options: PublicTextFetchOptions = {},
-): Promise<PublicTextFetchResult> {
-  let current = normalizePublicUrl(input);
-  const timeoutMs = dependencies?.timeoutMs ?? REQUEST_TIMEOUT_MS;
-  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
-    if (signal?.aborted) throw new Error('Request aborted');
-    const host = current.hostname.replace(/^\[|\]$/g, '');
-    let addresses: ResolvedAddress[];
-    if (isIP(host)) {
-      addresses = [{ address: host, family: isIP(host) }];
-    } else {
-      addresses = await runWithDeadline(
-        () => dependencies ? dependencies.resolve(host) : lookup(host, { all: true, verbatim: true }),
-        signal,
-        timeoutMs,
-        'DNS lookup timed out',
-      );
-      // Some proxy modes synthesize the benchmarking range for every public host.
-      // Re-resolve those names over pinned TLS; never connect to or whitelist a fake IP.
-      if (addresses.length > 0 && addresses.every(({ address }) => isProxyFakeDnsAddress(address))) {
-        addresses = await runWithDeadline(
-          (boundedSignal) => dependencies?.resolvePublic
-            ? dependencies.resolvePublic(host, boundedSignal)
-            : resolveWithEncryptedPublicDns(host, boundedSignal),
-          signal,
-          timeoutMs,
-          'Encrypted public DNS timed out',
-        );
-      }
-    }
-    if (signal?.aborted) throw new Error('Request aborted');
-    if (!addresses.length || addresses.some(({ address }) => !isPublicIpAddress(address))) {
-      throw new Error('Host resolves to a private or reserved address');
-    }
-    // Pin the validated address in the socket lookup, so a later DNS change cannot
-    // switch the connection to a private host between validation and the request.
-    const pinned = addresses[0];
-    const transport = current.protocol === 'https:' ? https : http;
-    const response = await runWithDeadline((boundedSignal) => dependencies ? dependencies.request(current, pinned, boundedSignal) : new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
-      const request = transport.request(current, {
-        method: 'GET',
-        lookup: createPinnedLookup(pinned),
-        headers: { 'accept': 'text/html,application/xhtml+xml', 'accept-encoding': 'identity', 'user-agent': 'Linkflow/1.0 (+public-link-verification)' },
-      }, (reply) => {
-        const status = reply.statusCode ?? 0;
-        if ([301, 302, 303, 307, 308].includes(status)) {
-          resolve({ status, headers: reply.headers, body: Buffer.alloc(0) });
-          reply.destroy();
-          return;
-        }
-        const chunks: Buffer[] = [];
-        let bytes = 0;
-        reply.on('data', (chunk: Buffer) => {
-          try { bytes = nextHtmlByteCount(bytes, chunk.length); }
-          catch (error) { request.destroy(error as Error); return; }
-          chunks.push(chunk);
-        });
-        reply.on('end', () => resolve({ status, headers: reply.headers, body: Buffer.concat(chunks) }));
-        reply.on('error', reject);
-      });
-      const deadline = setTimeout(() => request.destroy(new Error('Request timed out')), REQUEST_TIMEOUT_MS);
-      request.on('close', () => clearTimeout(deadline));
-      request.setTimeout(REQUEST_TIMEOUT_MS, () => request.destroy(new Error('Request timed out')));
-      request.on('error', reject);
-      const abort = () => request.destroy(new Error('Request aborted'));
-      boundedSignal.addEventListener('abort', abort, { once: true });
-      request.on('close', () => boundedSignal.removeEventListener('abort', abort));
-      request.end();
-    }), signal, timeoutMs, 'Request timed out');
-    nextHtmlByteCount(0, response.body.length);
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      if (redirect === MAX_REDIRECTS) throw new Error('Too many redirects');
-      const location = response.headers.location;
-      if (!location) throw new Error('Redirect has no location');
-      const next = normalizePublicUrl(new URL(location, current).href);
-      if (options.allowRedirect && !options.allowRedirect(current, next)) {
-        throw new Error('Redirect target is not allowed');
-      }
-      current = next;
-      continue;
-    }
-    if (response.status !== 200) throw new Error(`Public page returned HTTP ${response.status}`);
-    const contentType = String(response.headers['content-type'] ?? '').toLowerCase();
-    const accepted = /^(text\/html|application\/xhtml\+xml)(;|\s|$)/.test(contentType) ||
-      (options.allowXml === true && /^(application|text)\/xml(;|\s|$)/.test(contentType));
-    if (!accepted) {
-      throw new Error(options.allowXml ? 'Public resource is not HTML or XML' : 'Public page is not HTML');
-    }
-    if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') {
-      throw new Error('Compressed response is unsupported');
-    }
-    return { url: current.href, text: response.body.toString('utf8'), contentType, bytes: response.body.length,
-      robotsHeader: String(response.headers['x-robots-tag']??'') };
+function normalizedResponseHeaders(headers:http.IncomingHttpHeaders):Record<string,string>{
+  const result:Record<string,string>={};
+  for(const [name,value] of Object.entries(headers)){
+    if(value===undefined)continue;
+    result[name.toLowerCase()]=Array.isArray(value)?value.join(','):String(value);
   }
-  throw new Error('Too many redirects');
+  return result;
+}
+
+function declaredResourceLength(headers:Readonly<Record<string,string>>,maximum:number):number|undefined{
+  const raw=headers['content-length'];if(raw===undefined)return;
+  if(!/^[0-9]+$/.test(raw))throw Error('Public resource has invalid declared size');
+  const value=Number(raw);
+  if(!Number.isSafeInteger(value)||value>maximum)throw Error('Public resource exceeds size limit');
+  return value;
+}
+
+function boundedResourceMaximum(value:number):number{
+  if(!Number.isSafeInteger(value)||value<1||value>MAX_HTML_BYTES)throw Error('Public resource size limit is invalid');
+  return value;
+}
+
+function nativePublicRequest(url:URL,pinned:ResolvedAddress,signal:AbortSignal,maximum:number,accept:string):Promise<{status:number;headers:http.IncomingHttpHeaders;body:Buffer}>{
+  const transport=url.protocol==='https:'?https:http;
+  return new Promise((resolve,reject)=>{
+    const request=transport.request(url,{method:'GET',lookup:createPinnedLookup(pinned),headers:{accept,'accept-encoding':'identity','user-agent':'Linkflow/1.0 (+public-link-verification)'}},reply=>{
+      const status=reply.statusCode??0;
+      if([301,302,303,307,308].includes(status)){resolve({status,headers:reply.headers,body:Buffer.alloc(0)});reply.destroy();return}
+      const normalized=normalizedResponseHeaders(reply.headers);
+      try{declaredResourceLength(normalized,maximum)}catch(error){request.destroy(error as Error);return}
+      const chunks:Buffer[]=[];let bytes=0;
+      reply.on('data',(chunk:Buffer)=>{
+        bytes+=chunk.length;
+        if(!Number.isSafeInteger(bytes)||bytes>maximum){request.destroy(new Error('Public resource exceeds size limit'));return}
+        chunks.push(chunk);
+      });
+      reply.on('end',()=>resolve({status,headers:reply.headers,body:Buffer.concat(chunks)}));
+      reply.on('error',reject);
+    });
+    const deadline=setTimeout(()=>request.destroy(new Error('Request timed out')),REQUEST_TIMEOUT_MS);
+    request.on('close',()=>clearTimeout(deadline));
+    request.setTimeout(REQUEST_TIMEOUT_MS,()=>request.destroy(new Error('Request timed out')));
+    request.on('error',reject);
+    const abort=()=>request.destroy(new Error('Request aborted'));
+    signal.addEventListener('abort',abort,{once:true});
+    request.on('close',()=>signal.removeEventListener('abort',abort));
+    request.end();
+  });
+}
+
+/**
+ * Guarded public resource reader. DNS validation and socket pinning are shared
+ * with fetchPublicText; callers receive bounded raw bytes and cannot add request
+ * credentials or arbitrary headers.
+ */
+export async function fetchPublicResourceBytes(input:string,signal:AbortSignal|undefined,dependencies:PublicFetchDependencies|undefined,options:PublicResourceFetchOptions):Promise<PublicResourceFetchResult>{
+  let current=normalizePublicUrl(input);
+  const maximum=boundedResourceMaximum(options.maxBytes),timeoutMs=dependencies?.timeoutMs??REQUEST_TIMEOUT_MS;
+  if(!/^[\x20-\x7e]{1,512}$/.test(options.accept)||/[\r\n]/.test(options.accept)
+    ||!options.mediaTypes.length||options.mediaTypes.some(value=>value!==value.toLowerCase()||!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(value)))throw Error('Public resource media policy is invalid');
+  for(let redirect=0;redirect<=MAX_REDIRECTS;redirect++){
+    if(signal?.aborted)throw Error('Request aborted');
+    const host=current.hostname.replace(/^\[|\]$/g,'');let addresses:ResolvedAddress[];
+    if(isIP(host))addresses=[{address:host,family:isIP(host)}];
+    else{
+      addresses=await runWithDeadline(()=>dependencies?dependencies.resolve(host):lookup(host,{all:true,verbatim:true}),signal,timeoutMs,'DNS lookup timed out');
+      if(addresses.length>0&&addresses.every(({address})=>isProxyFakeDnsAddress(address))){
+        addresses=await runWithDeadline(boundedSignal=>dependencies?.resolvePublic?dependencies.resolvePublic(host,boundedSignal):resolveWithEncryptedPublicDns(host,boundedSignal),signal,timeoutMs,'Encrypted public DNS timed out');
+      }
+    }
+    if(signal?.aborted)throw Error('Request aborted');
+    if(!addresses.length||addresses.some(({address})=>!isPublicIpAddress(address)))throw Error('Host resolves to a private or reserved address');
+    const pinned=addresses[0];
+    const response=await runWithDeadline(boundedSignal=>dependencies?dependencies.request(current,pinned,boundedSignal):nativePublicRequest(current,pinned,boundedSignal,maximum,options.accept),signal,timeoutMs,'Request timed out');
+    if(!Number.isInteger(response.status)||response.status<100||response.status>599||!Buffer.isBuffer(response.body))throw Error('Public resource response is malformed');
+    const headers=normalizedResponseHeaders(response.headers),isRedirect=[301,302,303,307,308].includes(response.status);
+    if(isRedirect){
+      if(options.redirect==='error')throw Error('Redirect target is not allowed');
+      if(redirect===MAX_REDIRECTS)throw Error('Too many redirects');
+      const location=headers.location;if(!location)throw Error('Redirect has no location');
+      const next=normalizePublicUrl(new URL(location,current).href);
+      if(options.allowRedirect&&!options.allowRedirect(current,next))throw Error('Redirect target is not allowed');
+      current=next;continue;
+    }
+    declaredResourceLength(headers,maximum);
+    if(response.body.length>maximum)throw Error('Public resource exceeds size limit');
+    if(headers['content-encoding']&&headers['content-encoding'].toLowerCase()!=='identity')throw Error('Compressed response is unsupported');
+    const mediaType=(headers['content-type']??'').split(';',1)[0].trim().toLowerCase();
+    if(response.status===200&&!options.mediaTypes.includes(mediaType))throw Error('Public resource media type is not accepted');
+    return {url:current.href,status:response.status,headers,mediaType,body:Buffer.from(response.body)};
+  }
+  throw Error('Too many redirects');
+}
+
+export async function fetchPublicText(
+  input:string,
+  signal?:AbortSignal,
+  dependencies?:PublicFetchDependencies,
+  options:PublicTextFetchOptions={},
+):Promise<PublicTextFetchResult>{
+  let resource:PublicResourceFetchResult;
+  try{
+    resource=await fetchPublicResourceBytes(input,signal,dependencies,{
+      maxBytes:MAX_HTML_BYTES,accept:options.allowXml?'text/html,application/xhtml+xml,application/xml,text/xml':'text/html,application/xhtml+xml',
+      mediaTypes:options.allowXml?['text/html','application/xhtml+xml','application/xml','text/xml']:['text/html','application/xhtml+xml'],
+      redirect:'follow',allowRedirect:options.allowRedirect,
+    });
+  }catch(error){
+    if(error instanceof Error&&error.message==='Public resource media type is not accepted')throw Error(options.allowXml?'Public resource is not HTML or XML':'Public page is not HTML');
+    throw error;
+  }
+  if(resource.status!==200)throw Error(`Public page returned HTTP ${resource.status}`);
+  return {url:resource.url,text:resource.body.toString('utf8'),contentType:(resource.headers['content-type']??'').toLowerCase(),bytes:resource.body.length,robotsHeader:resource.headers['x-robots-tag']??''};
 }
 
 export async function fetchPublicHtml(input: string, signal?: AbortSignal, dependencies?: PublicFetchDependencies): Promise<{ url: string; html: string }> {

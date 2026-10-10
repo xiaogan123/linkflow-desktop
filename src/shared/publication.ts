@@ -1,7 +1,7 @@
 import type {CapacityBlockReason,Channel,Site,SiteTopic,Task} from './types';
 import {isArticleTopicUrl} from './topic-policy';
 
-const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote']);
+const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md']);
 function deterministicPostSlug(taskId:string,contentHash:string):string{
   return `lf-${taskId.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,32)}-${contentHash.slice(0,12)}`;
 }
@@ -170,7 +170,7 @@ function taskReservesTopic(task:Task):boolean{
 export function isPendingPublisherRegistration(task:Task):boolean{
   const checkpoint=task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':undefined;
   return !!checkpoint&&task.checkpoint===checkpoint&&!!task.accountId&&
-    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote;
+    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd;
 }
 
 function topicCandidates(site:Site,tasks:Task[]):{known:boolean;available:string[];invalid:boolean}{
@@ -194,7 +194,7 @@ function originalTaskCanRecover(task:Task):boolean{
 }
 
 function hasUnresolvedExternalAttempt(task:Task):boolean{
-  return !!task.blogger||!!task.bluesky||!!task.leaflet||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration)/i.test(task.checkpoint??'');
+  return !!task.blogger||!!task.bluesky||!!task.leaflet||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration)/i.test(task.checkpoint??'');
 }
 
 function terminalBlock(task:Task):PublicationOpportunity|undefined{
@@ -287,7 +287,7 @@ export function publicationOpportunity(site:Site,channel:Channel,tasks:Task[],no
   return {allowed:true,repeat,topicUrl,scheduledAt:scheduledAt.toISOString(),reason:repeat?'\u5df2\u4e3a\u4e0d\u540c\u771f\u5b9e\u4e3b\u9898\u9875\u9884\u7559\u5e73\u53f0\u53d1\u5e03\u95f4\u9694\u3002':'\u5e73\u53f0\u9996\u4e2a\u4efb\u52a1\u53ef\u7acb\u5373\u5f00\u59cb\u3002'};
 }
 
-const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','wordpress_publish_submitting','wordpress_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','paper_account_create_pending','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_account_create_pending','mataroa_publish_submitting','mataroa_published','verbose_account_create_pending','verbose_publish_submitting','verbose_published','prose_publish_submitting','prose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published']);
+const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','wordpress_publish_submitting','wordpress_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','paper_account_create_pending','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_account_create_pending','mataroa_publish_submitting','mataroa_published','verbose_account_create_pending','verbose_publish_submitting','verbose_published','prose_publish_submitting','prose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published','docs_md_share_submitting','docs_md_api_receipt','docs_md_published']);
 export function reservesSlot(t:Task,now:Date){
   if(t.firstLiveAt)return false;
   if(t.status==='review')return !(t.reviewUntil&&new Date(t.reviewUntil)<=now);

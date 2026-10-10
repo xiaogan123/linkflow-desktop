@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   connectWordPressAccount, listWordPressSites, reconcileWordPressTask, runWordPressTask,
-  verifyWordPressPublication, wordpressTesting, type WordPressReceipt, type WordPressTransport,
+  verifyWordPressPublication, wordpressTesting, type WordPressDependencies, type WordPressReceipt, type WordPressTransport,
 } from '../src/integrations/wordpress';
 import { defaultSettings } from '../src/main/store';
 import { articleContentHash, articleContextHash } from '../src/main/article-review';
@@ -23,6 +23,11 @@ const BODY = [
 ].join('\n\n');
 
 type WordPressTask = Task & { wordpress?: WordPressReceipt };
+
+// Fixture credentials and approvals share one clock; individual expiry tests can override it.
+function runFixtureTask(context: ExecutionContext, dependencies: WordPressDependencies = {}) {
+  return runWordPressTask(context, { now: () => new Date(NOW), ...dependencies });
+}
 
 function channel(): Channel {
   return {
@@ -212,7 +217,7 @@ test('connection lists only public writable WordPress.com-hosted blogs and store
 test('approved article persists stable intent, sends one safe wp/v2 create, and verifies anonymous API plus public HTML', async () => {
   const f = fixture();
   const server = successfulServer(f);
-  const result = await runWordPressTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
+  const result = await runFixtureTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
   assert.equal(result.status, 'review');
   assert.equal(result.publicUrl, postUrl(f));
   assert.equal(result.wordpress?.stage, 'published');
@@ -247,7 +252,7 @@ test('failed or stale independent article review blocks all identity checks and 
   ]) await t.test(JSON.stringify(task), async () => {
     const f = fixture({ task });
     let calls = 0;
-    const result = await runWordPressTask(f.context, { fetch: async () => { calls++; return json({}); } });
+    const result = await runFixtureTask(f.context, { fetch: async () => { calls++; return json({}); } });
     assert.equal(result.status, 'needs_input');
     assert.equal(calls, 0);
     assert.equal(f.checkpoints.length, 0);
@@ -263,7 +268,7 @@ test('unsafe HTML, scripts, images, missing target, and non-HTTPS links never re
   ]) await t.test(body.slice(-35), async () => {
     const f = fixture({ task: { draft: { title: TITLE, description: '', body } } });
     let calls = 0;
-    const result = await runWordPressTask(f.context, { fetch: async () => { calls++; return json({}); } });
+    const result = await runFixtureTask(f.context, { fetch: async () => { calls++; return json({}); } });
     assert.equal(result.status, 'needs_input');
     assert.equal(calls, 0);
   });
@@ -282,7 +287,7 @@ test('modified draft, conflicting public URL, or changed account identity cannot
     f.task.submittedAt = NOW;
     mutate(f);
     let calls = 0;
-    const result = await runWordPressTask(f.context, { fetch: async () => { calls++; return json({}); } });
+    const result = await runFixtureTask(f.context, { fetch: async () => { calls++; return json({}); } });
     assert.equal(result.status, 'needs_input');
     assert.equal(calls, 0);
   });
@@ -292,7 +297,7 @@ test('wrong site binding and permission changes stop before intent or POST', asy
   await t.test('account root is another hosted blog', async () => {
     const f = fixture({ account: { publicationUrl: 'https://other.wordpress.com/' } });
     let calls = 0;
-    const result = await runWordPressTask(f.context, { fetch: async url => {
+    const result = await runFixtureTask(f.context, { fetch: async url => {
       calls++;
       if (url.endsWith('/me')) return json(identity());
       if (url.endsWith('/me/sites')) return json({ sites: [writableSite()] });
@@ -306,15 +311,18 @@ test('wrong site binding and permission changes stop before intent or POST', asy
   await t.test('publish permission was revoked', async () => {
     const f = fixture();
     let posts = 0;
+    const reads: string[] = [];
     const fetch: WordPressTransport = async (url, init) => {
+      reads.push(url);
       if (url.endsWith('/me')) return json(identity());
       if (url.endsWith('/me/sites')) return json({ sites: [writableSite({ capabilities: { publish_posts: false, edit_posts: true } })] });
       if (init.method === 'POST') posts++;
       return json({});
     };
-    const result = await runWordPressTask(f.context, { fetch });
+    const result = await runFixtureTask(f.context, { fetch });
     assert.equal(result.status, 'needs_input');
     assert.equal(posts, 0);
+    assert.deepEqual(reads.map(url => new URL(url).pathname), ['/rest/v1.1/me', '/rest/v1.1/me/sites']);
     assert.equal(f.checkpoints.length, 0);
   });
 });
@@ -323,17 +331,20 @@ test('401 and 429 during preflight remain distinguishable and never create an in
   for (const [status, expected] of [[401, 'needs_input'], [429, 'queued']] as const) await t.test(String(status), async () => {
     const f = fixture();
     let posts = 0;
-    const result = await runWordPressTask(f.context, { fetch: async (_url, init) => {
+    let calls = 0;
+    const result = await runFixtureTask(f.context, { fetch: async (_url, init) => {
+      calls++;
       if (init.method === 'POST') posts++;
       return json({ error: 'blocked' }, status);
     } });
     assert.equal(result.status, expected);
+    assert.equal(calls, 1, 'the response must be reached, not masked by expired fixture credentials');
     assert.equal(posts, 0);
     assert.equal(f.checkpoints.length, 0);
   });
   await t.test('timeout', async () => {
     const f = fixture();
-    const result = await runWordPressTask(f.context, {
+    const result = await runFixtureTask(f.context, {
       fetch: async () => new Promise<Response>(() => undefined), timeoutMs: 100, now: () => new Date(NOW),
     });
     assert.equal(result.status, 'queued');
@@ -345,8 +356,8 @@ test('401 and 429 returned to the one-shot POST preserve intent and never author
   for (const status of [401, 429]) await t.test(String(status), async () => {
     const f = fixture();
     const server = successfulServer(f, { postResponse: json({ error: 'rejected' }, status) });
-    const first = await runWordPressTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
-    const second = await runWordPressTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
+    const first = await runFixtureTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
+    const second = await runFixtureTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
     assert.equal(first.status, 'review');
     assert.equal(first.wordpress?.stage, 'submitting');
     assert.equal(second.status, 'review');
@@ -365,21 +376,40 @@ test('expired, malformed, or cross-blog Vault credentials require reconnection b
     const f = fixture();
     f.secrets.set(`account:${f.account().id}`, typeof credential === 'string' ? credential : JSON.stringify(credential));
     let calls = 0;
-    const result = await runWordPressTask(f.context, { fetch: async () => { calls++; return json({}); }, now: () => new Date(NOW) });
+    const result = await runFixtureTask(f.context, { fetch: async () => { calls++; return json({}); }, now: () => new Date(NOW) });
     assert.equal(result.status, 'needs_input');
     assert.equal(calls, 0);
     assert.equal(f.checkpoints.length, 0);
   });
 });
 
+test('credentials expire at the exact boundary even when the fixture clock is overridden', async t => {
+  for (const offsetMs of [-1, 0, 1]) await t.test(String(offsetMs), async () => {
+    const f = fixture();
+    const server = successfulServer(f);
+    const result = await runFixtureTask(f.context, {
+      fetch: server.fetch,
+      now: () => new Date(Date.parse(EXPIRES_AT) + offsetMs),
+    });
+    if (offsetMs < 0) {
+      assert.equal(result.wordpress?.stage, 'published');
+      assert.equal(server.calls.filter(call => call.init.method === 'POST').length, 1);
+    } else {
+      assert.equal(result.status, 'needs_input');
+      assert.equal(server.calls.length, 0);
+      assert.equal(f.checkpoints.length, 0);
+    }
+  });
+});
+
 test('a disconnected POST is never repeated and can only recover through its stable public slug', async () => {
   const f = fixture();
   const server = successfulServer(f, { disconnectPost: true, remoteCreatedOnDisconnect: true });
-  const first = await runWordPressTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
+  const first = await runFixtureTask(f.context, { fetch: server.fetch, now: () => new Date(NOW) });
   assert.equal(first.status, 'review');
   assert.equal(first.wordpress?.stage, 'submitting');
   assert.equal(first.publicUrl, undefined);
-  const second = await runWordPressTask(f.context, { fetch: server.fetch });
+  const second = await runFixtureTask(f.context, { fetch: server.fetch });
   assert.equal(second.wordpress?.stage, 'published');
   assert.equal(second.publicUrl, postUrl(f));
   assert.equal(server.calls.filter(call => call.init.method === 'POST').length, 1);
@@ -389,16 +419,20 @@ test('a disconnected POST is never repeated and can only recover through its sta
 test('an occupied deterministic slug blocks the first POST instead of adopting or overwriting remote content', async () => {
   const f = fixture();
   let posts = 0;
+  const reads: string[] = [];
   const fetch: WordPressTransport = async (url, init) => {
+    reads.push(url);
     if (url.endsWith('/me')) return json(identity());
     if (url.endsWith('/me/sites')) return json({ sites: [writableSite()] });
     if (url.endsWith(`/sites/${BLOG_ID}`)) return json(writableSite());
     if (init.method === 'POST') posts++;
     return json(legacyPost(f, { title: 'Someone else\'s post' }));
   };
-  const result = await runWordPressTask(f.context, { fetch });
+  const result = await runFixtureTask(f.context, { fetch });
   assert.equal(result.status, 'needs_input');
   assert.equal(posts, 0);
+  assert.equal(reads.length, 4);
+  assert.equal(new URL(reads[3]).pathname, `/rest/v1.1/sites/${BLOG_ID}/posts/slug:${article(f).slug}`);
   assert.equal(f.checkpoints.length, 0);
 });
 
@@ -489,24 +523,32 @@ test('verification reports absence separately and accepts an exact nofollow/ugc 
 test('authenticated redirects, oversized responses, and malformed create identities never leak or trigger a second POST', async t => {
   await t.test('redirect', async () => {
     const f = fixture();
-    const result = await runWordPressTask(f.context, { fetch: async (_url, init) => {
+    let calls = 0;
+    const result = await runFixtureTask(f.context, { fetch: async (_url, init) => {
+      calls++;
       assert.equal(init.redirect, 'manual');
       return new Response('', { status: 302, headers: { location: 'https://evil.example/' } });
     } });
     assert.equal(result.status, 'needs_input');
     assert.equal(f.checkpoints.length, 0);
+    assert.equal(calls, 1);
   });
   await t.test('oversized identity', async () => {
     const f = fixture();
-    const result = await runWordPressTask(f.context, { fetch: async () => json({}, 200, { 'content-length': '3000000' }) });
+    let calls = 0;
+    const result = await runFixtureTask(f.context, { fetch: async () => {
+      calls++;
+      return json({}, 200, { 'content-length': '3000000' });
+    } });
     assert.equal(result.status, 'needs_input');
     assert.equal(f.checkpoints.length, 0);
+    assert.equal(calls, 1);
   });
   await t.test('changed slug in 201', async () => {
     const f = fixture();
     const server = successfulServer(f, { created: { slug: 'server-changed-slug', link: `${BLOG}server-changed-slug/` } });
-    const first = await runWordPressTask(f.context, { fetch: server.fetch });
-    const second = await runWordPressTask(f.context, { fetch: server.fetch });
+    const first = await runFixtureTask(f.context, { fetch: server.fetch });
+    const second = await runFixtureTask(f.context, { fetch: server.fetch });
     assert.equal(first.wordpress?.stage, 'submitting');
     assert.equal(first.publicUrl, undefined);
     assert.equal(second.wordpress?.stage, 'published');

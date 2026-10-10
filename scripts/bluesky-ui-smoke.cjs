@@ -220,8 +220,17 @@ if(!process.versions.electron){
       check('Bluesky API identity has no generic password reveal',!blueskyReveal.exists);
       check('ordinary password identity keeps its password reveal',ordinaryReveal.exists);
 
-      await clickText('连接 Bluesky');
-      await waitFor('document.querySelector("[role=dialog]")!==null');
+      await clickText('添加 / 连接账号');
+      await waitFor('document.querySelector(".account-guide-drawer")!==null');
+      const pickedBluesky=await evaluate('(()=>{const option=[...document.querySelectorAll("[role=option]")].find(item=>item.querySelector("strong")?.textContent==="Bluesky");if(!option)return false;option.click();return true})()');
+      assert(pickedBluesky,'Bluesky platform option');
+      await waitFor('document.querySelector(".platform-selection")?.innerText.includes("Bluesky")');
+      check('guided entry identifies the existing Bluesky connection before opening its dedicated form',await evaluate('document.querySelector(".platform-selection")?.innerText.includes("已连接")&&[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="管理或新增连接")'));
+      const openedBluesky=await evaluate('(()=>{const button=[...document.querySelectorAll(".account-guide-drawer .platform-selection button")].find(item=>item.innerText.trim()==="管理或新增连接"&&!item.disabled);if(!button)return false;button.click();return true})()');
+      assert(openedBluesky,'guided Bluesky connection action');
+      await waitFor('document.querySelector(".side-drawer.narrow")?.innerText.includes("BLUESKY")');
+      await waitFor('document.querySelector(".account-guide-drawer")===null');
+      check('platform guide closes after handing off to the dedicated Bluesky form',await evaluate('document.querySelector(".account-guide-drawer")===null'));
       const blankSubmit=await evaluate('(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()==="验证并连接");return !!button&&button.disabled})()');
       check('new connection submit is disabled while required fields are empty',blankSubmit);
       const passwordField=await inputInfo('Bluesky 应用专用密码');
@@ -283,7 +292,7 @@ if(!process.versions.electron){
           sites.find(site=>site.domain==='three.example')?.checked===true,
       );
       await clickText('验证并连接');
-      await waitFor('document.querySelector("[role=dialog]")===null');
+      await waitFor('document.querySelector(".side-drawer.narrow")===null');
       check(
         'new identity connect payload contains only the expected fields',
         await evaluate('(()=>{const action=window.__blueskyFixture.actions.find(item=>item.command==="account:connect-bluesky"&&item.payload.handle==="fresh.bsky.social");return !!action&&Object.keys(action.payload).sort().join(",")==="accountId,appPassword,handle,mailboxId,siteIds"&&action.payload.accountId===undefined&&action.payload.appPassword==="fixture-password-new-success"})()'),
@@ -303,7 +312,7 @@ if(!process.versions.electron){
       );
 
       await clickLabel('更新 @author.bsky.social');
-      await waitFor('document.querySelector("[role=dialog]")!==null');
+      await waitFor('document.querySelector(".side-drawer.narrow")?.innerText.includes("BLUESKY")');
       const existingHandle=await inputInfo('Bluesky 账号名称');
       const existingPassword=await inputInfo('Bluesky 应用专用密码');
       check(
@@ -321,7 +330,7 @@ if(!process.versions.electron){
       await setSite('two.example',true);
       await setInput('Bluesky 应用专用密码',reconnectPassword);
       await clickText('验证并连接');
-      await waitFor('document.querySelector("[role=dialog]")===null');
+      await waitFor('document.querySelector(".side-drawer.narrow")===null');
       check(
         'reconnect targets the existing account identity',
         await evaluate('(()=>{const action=window.__blueskyFixture.actions.findLast(item=>item.command==="account:connect-bluesky");return action.payload.accountId==="10101010-1010-4010-8010-101010101010"&&action.payload.handle==="author.bsky.social"&&action.payload.appPassword==="fixture-password-same-identity"})()'),
