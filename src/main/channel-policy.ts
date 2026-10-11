@@ -26,7 +26,8 @@ export function supportsOfficialGuidanceReview(channel:Channel){
   const markdropSchema='https://github.com/himanshkukreja/markdrop/blob/592689c45344c9451642e1905ced52a8f0e0d5e6/backend/app/schemas/document.py';
   const markdropSources=channel.evidenceSources??[];
   const markdrop=channel.provenance==='built-in'&&channel.id==='markdrop'&&channel.domain==='markdrop.in'&&channel.rulesUrl===markdropHomepage&&markdropSources.length===3&&markdropSources.every(source=>source.appliesTo==='markdrop'&&source.applicability==='verified')&&markdropSources.filter(source=>source.kind==='product_guidance'&&source.url===markdropHomepage).length===1&&markdropSources.filter(source=>source.kind==='api'&&(source.url===markdropRoutes||source.url===markdropSchema)).length===2&&new Set(markdropSources.map(source=>source.url)).size===3;
-  return (canConfirmMissingPolicy(channel)||paper||verbose||betterThanHtml||supanote||docsMd||markdrop)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
+  const draftmarkSources=channel.evidenceSources??[],draftmark=channel.provenance==='built-in'&&channel.id==='draftmark'&&channel.domain==='draftmark.app'&&channel.rulesUrl==='https://draftmark.app/terms'&&draftmarkSources.length===2&&draftmarkSources.every(source=>source.appliesTo==='draftmark'&&source.applicability==='verified')&&draftmarkSources.filter(source=>source.kind==='product_guidance'&&source.url==='https://draftmark.app/').length===1&&draftmarkSources.filter(source=>source.kind==='content_policy'&&source.url==='https://draftmark.app/terms').length===1;
+  return (canConfirmMissingPolicy(channel)||paper||verbose||betterThanHtml||supanote||docsMd||markdrop||draftmark)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
 }
 
 export function channelPolicyScopeHash(site:Site,channel:Channel){

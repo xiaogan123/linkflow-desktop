@@ -1,7 +1,7 @@
 import type {CapacityBlockReason,Channel,Site,SiteTopic,Task} from './types';
 import {isArticleTopicUrl} from './topic-policy';
 
-const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','raindrop','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop']);
+const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','raindrop','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
 function deterministicPostSlug(taskId:string,contentHash:string):string{
   return `lf-${taskId.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,32)}-${contentHash.slice(0,12)}`;
 }

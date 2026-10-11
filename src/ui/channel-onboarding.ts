@@ -96,6 +96,7 @@ const onboardingById:Record<string,OnboardingDefinition>={
   betterthanhtml:{kind:'no_signup',setup:'无需账号即可发布公开全文；不承诺编辑或删除'},
   'deed-page':{kind:'no_signup',setup:'无需账号或邮箱；首次发布生成的一次性所有者令牌只加密保存在本机，后续文章复用同一令牌与免费配额。公开内容可能被抓取或复制，服务不保证可用性或永不丢失',verification:{checkedAt:'2026-10-11',sourceUrl:'https://deed.page/terms'}},
   markdrop:{kind:'no_signup',setup:'无需账号或邮箱；每篇文章返回的一次性编辑密钥只加密保存在本机，结果不明时核对原页面，不重复提交。公开内容可能被抓取或复制，服务不保证长期可用或保留',verification:{checkedAt:'2026-10-11',sourceUrl:'https://api.markdrop.in/openapi.json'}},
+  draftmark:{kind:'no_signup',setup:'无需账号或邮箱；每篇文档的 magic token 和 API key 仅加密保存在本机，结果不明时不重复提交或猜测文档 ID。公开内容可能被索引，服务没有免费层 SLA 或永久保留保证',verification:{checkedAt:'2026-10-11',sourceUrl:'https://draftmark.app/terms'}},
   'html-app':{kind:'no_signup',setup:'无需账号；发布内容完全公开，可能被抓取或复制。免费 best-effort 服务不保证保留、可用性或永久存续；发布前须核对条款',verification:{checkedAt:'2026-10-11',sourceUrl:'https://ht-ml.app/terms'}},
   supanote:{kind:'no_signup',setup:'无需账号；匿名发布公开 Markdown。仅在平台返回管理令牌时加密保存，不承诺可编辑或删除',verification:{checkedAt:'2026-10-09',sourceUrl:'https://supanote.app/docs'}},
   'docs-md':{kind:'no_signup',setup:'无需账号；匿名分享经核对的 Markdown。当前保持停用，等待真实托管公开页验收',verification:{checkedAt:'2026-10-09',sourceUrl:'https://github.com/invisible-hand/docs-md.com/tree/199f9a2656f83ed2918ee1d1f0ee8bf6734b2a2e'}},

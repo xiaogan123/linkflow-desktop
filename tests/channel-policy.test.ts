@@ -119,6 +119,11 @@ test('Markdrop uses three complete bounded official pages and reaches independen
  const rejected=await reviewArticleDraft(task,state.sites[0],markdrop,state.settings,model({citations:[{url:state.sites[0].url,quote:siteQuote},{url:homepage,quote:homepageQuote}],knownChannelRestrictions:'fail'}),undefined,{fetchHtml:fetch});assert.equal(rejected.status,'failed');assert.equal(rejected.checks?.channelRules,'fail');
 });
 
+test('Draftmark guidance review is bound to its exact official homepage and terms tuple',()=>{
+ const value=CHANNELS.find(item=>item.id==='draftmark')!;assert.equal(supportsOfficialGuidanceReview(value),true);
+ for(const variant of [{...value,provenance:'custom' as const},{...value,id:'draftmark-copy'},{...value,domain:'elsewhere.invalid'},{...value,rulesUrl:'https://draftmark.app/'},{...value,evidenceSources:value.evidenceSources?.slice(0,1)},{...value,evidenceSources:value.evidenceSources?.map(source=>({...source,appliesTo:'other'}))},{...value,evidenceSources:value.evidenceSources?.map(source=>({...source,applicability:'unconfirmed' as const}))}])assert.equal(supportsOfficialGuidanceReview(variant),false);
+});
+
 test('Verbose official agent publishing guidance is narrowly bound and keeps full policy unknown',async()=>{
  const candidate=CHANNELS.find(item=>item.id==='verbose')!,state=fixture(),task={...state.tasks[0],channelId:'verbose',sourceDomain:'verbose.blog'};
  const quote='An API for agents to publish and manage their writing.';

@@ -37,6 +37,15 @@ test('Markdrop is enabled after live acceptance while missing hosted-content pol
   assert.match(markdrop.notes,/已完成单篇免注册发布与匿名公开页验收.*允许抓取与实际收录分开记录/);
 });
 
+test('Draftmark is enabled after one-shot creation and public full-text acceptance',()=>{
+  const value=CHANNELS.find(channel=>channel.id==='draftmark');assert.ok(value);
+  assert.equal(value.enabled,true);assert.equal(value.accountRequired,false);assert.equal(value.automation,'api');
+  assert.equal(value.rulesUrl,'https://draftmark.app/terms');
+  assert.deepEqual(value.evidenceSources?.map(source=>source.url),['https://draftmark.app/','https://draftmark.app/terms']);
+  assert.match(value.notes,/16 KiB.*操作系统加密.*不重发.*不猜测 ID/);
+  assert.match(value.notes,/单次免注册创建.*逐文档凭据加密保存.*浏览器公开全文验收.*完整只读对账/);
+});
+
 test('new candidates remain manual and unknown prices cannot imply browser support', () => {
   const added = ['capterra','codeberg','nuget','crates-io','docker-hub','firefox-addons','vscode-marketplace','jetbrains-marketplace','flathub','fdroid','snap-store','itch-io','gravatar','google-business','bing-places','apple-business','yelp-business'];
   for (const id of added) assert.equal(CHANNELS.find(channel => channel.id === id)?.automation, 'manual', id);

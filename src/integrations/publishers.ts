@@ -21,11 +21,12 @@ import {runDocsMdTask,reconcileDocsMdTask} from './docs-md-publisher';
 import {runHtmlAppTask,reconcileHtmlAppTask} from './html-app-publisher';
 import {runDeedPageTask,reconcileDeedPageTask} from './deed-page-publisher';
 import {runMarkdropTask,reconcileMarkdropTask} from './markdrop-publisher';
+import {runDraftmarkTask,reconcileDraftmarkTask} from './draftmark-publisher';
 
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
   publish(context:ExecutionContext):Promise<ExecutionResult>;
-  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>;markdrop?:NonNullable<ExecutionContext['task']['markdrop']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
+  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>;markdrop?:NonNullable<ExecutionContext['task']['markdrop']>;draftmark?:NonNullable<ExecutionContext['task']['draftmark']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
 }
 const publishers:Readonly<Record<string,ApiPublisher>>={
   paragraph:{publish:runParagraphTask,reconcile:reconcileParagraphTask},
@@ -50,6 +51,7 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   'html-app':{publish:runHtmlAppTask,reconcile:reconcileHtmlAppTask},
   'deed-page':{publish:runDeedPageTask,reconcile:reconcileDeedPageTask},
   markdrop:{publish:runMarkdropTask,reconcile:reconcileMarkdropTask},
+  draftmark:{publish:runDraftmarkTask,reconcile:reconcileDraftmarkTask},
 };
 /** Only registered built-in API adapters may execute; a catalog label grants nothing. */
 export function publisherFor(channel:Channel):ApiPublisher|undefined{

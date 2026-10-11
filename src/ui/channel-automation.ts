@@ -5,7 +5,7 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop']);
+const automaticIdentity=new Set(['telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
 const connectedIdentity=new Set(['github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
@@ -36,6 +36,7 @@ const setupById:Record<string,string>={
   'html-app':'免账号公开静态全文；免费 best-effort 服务不保证保留，真实验收前保持停用',
   'deed-page':'免注册发布静态全文；首次发布加密保存一次性所有者令牌，后续文章复用同一令牌；默认不设到期时间，但服务不保证长期可用或保留',
   markdrop:'免注册发布 Markdown 全文；一次性编辑密钥自动加密保存在本机，结果不明时只核对原页面；默认不设到期时间，但服务不保证长期可用或保留',
+  draftmark:'免注册发布公开 Markdown 全文；服务端生成大小写敏感的文档 ID，逐文档凭据只在本机加密保存；结果不明不重发，没有免费层 SLA 或永久保留保证',
   'docs-md':'免账号匿名分享经核对的 Markdown；编辑令牌只加密保存在本机，真实托管验收前保持停用',
   'github-gist':'首次连接本人 GitHub 账号的 Gists 令牌',
   blogger:'首次由本人完成 Google 授权并绑定博客',
@@ -49,7 +50,7 @@ const setupById:Record<string,string>={
 };
 
 export function channelSourceLabels(id:string){
-  if(['betterthanhtml','supanote','docs-md','html-app','markdrop','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
+  if(['betterthanhtml','supanote','docs-md','html-app','markdrop','draftmark','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
   const guidance=['telegraph','paper-wf','verbose'].includes(id);
   return {checked:guidance?'接口与公开资料核查':'规则核查',open:id==='telegraph'?'官方 API 文档':guidance?'官方公开说明':'官方规则'};
 }
