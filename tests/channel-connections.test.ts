@@ -14,8 +14,8 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,23);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['mataroa','verbose','lucid-page','betterthanhtml','deed-page','supanote','nostr','telegraph']);
+  assert.equal(rows.length,24);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['mataroa','verbose','lucid-page','betterthanhtml','deed-page','markdrop','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
@@ -26,6 +26,8 @@ test('overview distinguishes self-provisioned APIs, first connections and Bluesk
   assert.doesNotMatch(row(data,'html-app').detail,/已展示/);
   assert.equal(row(data,'deed-page').state,'no_setup');
   assert.match(row(data,'deed-page').detail,/免注册发布静态全文.*一次性所有者令牌.*不保证长期可用或保留/);
+  assert.equal(row(data,'markdrop').state,'no_setup');
+  assert.match(row(data,'markdrop').detail,/免注册发布 Markdown 全文.*一次性编辑密钥.*不保证长期可用或保留/);
   assert.equal(row(data,'wordpress-com').state,'unavailable');
   assert.match(row(data,'wordpress-com').detail,/浏览器授权.*尚待验收/);
   assert.equal(row(data,'prose').state,'unavailable');

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {CHANNELS} from '../src/integrations/catalog';
 import {applyChannelPolicyDecision,channelPolicyScopeHash,currentChannelPolicyDecision,supportsOfficialGuidanceReview} from '../src/main/channel-policy';
 import {articleReviewStillValid,reviewArticleDraft} from '../src/main/article-review';
+import {aiInputCharacters,MAX_AI_INPUT_CHARS} from '../src/integrations/ai';
 import {emptyState} from '../src/main/store';
 import {validateBackup} from '../src/main/backup-validation';
 import {saveTaskDraft} from '../src/main/task-draft';
@@ -101,6 +102,21 @@ test('Docs MD uses only its pinned official source for independent review and ke
  const result=await reviewArticleDraft(task,state.sites[0],docsMd,state.settings,model({citations:[{url:state.sites[0].url,quote:siteQuote},{url:source,quote}]}),undefined,{fetchHtml:docsFetch});
  assert.equal(supportsOfficialGuidanceReview(docsMd),true);assert.equal(result.status,'passed');assert.equal(result.checks?.channelRules,'unknown');assert.equal(result.policyDecision,undefined);
  for(const variant of [{...docsMd,provenance:'custom' as const},{...docsMd,domain:'other.example'},{...docsMd,rulesUrl:'https://docs-md.com/terms'},{...docsMd,evidenceSources:[]},{...docsMd,evidenceSources:[{...docsMd.evidenceSources![0],url:'https://github.com/invisible-hand/docs-md.com'}]},{...docsMd,evidenceSources:[{...docsMd.evidenceSources![0],appliesTo:'other'}]},{...docsMd,evidenceSources:[{...docsMd.evidenceSources![0],applicability:'unconfirmed' as const}]}])assert.equal(supportsOfficialGuidanceReview(variant),false);
+});
+
+test('Markdrop uses three complete bounded official pages and reaches independent guidance review under the normal input limit',async()=>{
+ const markdrop=CHANNELS.find(item=>item.id==='markdrop')!,state=fixture(),task={...state.tasks[0],channelId:markdrop.id,sourceDomain:markdrop.domain};
+ const homepage='https://www.markdrop.in/',routes='https://github.com/himanshkukreja/markdrop/blob/592689c45344c9451642e1905ced52a8f0e0d5e6/backend/app/routers/documents.py',schema='https://github.com/himanshkukreja/markdrop/blob/592689c45344c9451642e1905ced52a8f0e0d5e6/backend/app/schemas/document.py',homepageQuote='No login. No friction. Just links.';
+ const sized=(prefix:string,length:number)=>prefix+' '+'.'.repeat(length-prefix.length-1),pages=new Map([[homepage,sized(homepageQuote,10740)],[routes,sized('create_document',14268)],[schema,sized('class DocumentCreate',11029)]]);
+ const fetch=async(url:string)=>({url,html:`<main>${url.startsWith(state.sites[0].url)?siteQuote:pages.get(url)??''}</main>`});let calls=0,instruction='',input:unknown;
+ const semantic=model({citations:[{url:state.sites[0].url,quote:siteQuote},{url:homepage,quote:homepageQuote}]});
+ const result=await reviewArticleDraft(task,state.sites[0],markdrop,state.settings,{json:async(...args)=>{calls++;instruction=args[0];input=args[1];return semantic.json(...args)}},undefined,{fetchHtml:fetch});
+ assert.equal(supportsOfficialGuidanceReview(markdrop),true);assert.equal(calls,1);assert.equal(result.status,'passed');assert.equal(result.reasonCode,'passed');assert.equal(result.checks?.channelRules,'unknown');assert.equal(result.policyDecision,undefined);assert.equal(state.sites[0].channelPolicyDecisions,undefined);assert.ok(aiInputCharacters(instruction,input)<=MAX_AI_INPUT_CHARS);
+ const evidence=(input as {evidence:{url:string;sourceCharacters:number;coverage:string;truncated:boolean}[]}).evidence;
+ for(const [url,length] of [[homepage,10740],[routes,14268],[schema,11029]] as const){const row=evidence.find(item=>item.url===url);assert.ok(row,url);assert.equal(row.sourceCharacters,length,url);assert.equal(row.coverage,'complete',url);assert.equal(row.truncated,false,url)}
+ const variants=[{...markdrop,provenance:'custom' as const},{...markdrop,id:'markdrop-copy'},{...markdrop,domain:'other.example'},{...markdrop,rulesUrl:'https://markdrop.in/terms'},{...markdrop,evidenceSources:markdrop.evidenceSources?.slice(0,2)},{...markdrop,evidenceSources:markdrop.evidenceSources?.map((source,index)=>index===2?{...source,url:routes}:source)},{...markdrop,evidenceSources:markdrop.evidenceSources?.map(source=>({...source,appliesTo:'other'}))},{...markdrop,evidenceSources:markdrop.evidenceSources?.map(source=>({...source,applicability:'unconfirmed' as const}))}];
+ for(const variant of variants)assert.equal(supportsOfficialGuidanceReview(variant),false);
+ const rejected=await reviewArticleDraft(task,state.sites[0],markdrop,state.settings,model({citations:[{url:state.sites[0].url,quote:siteQuote},{url:homepage,quote:homepageQuote}],knownChannelRestrictions:'fail'}),undefined,{fetchHtml:fetch});assert.equal(rejected.status,'failed');assert.equal(rejected.checks?.channelRules,'fail');
 });
 
 test('Verbose official agent publishing guidance is narrowly bound and keeps full policy unknown',async()=>{

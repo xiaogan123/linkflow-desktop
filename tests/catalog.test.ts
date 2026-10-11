@@ -17,7 +17,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, ['betterthanhtml','supanote','docs-md','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, ['betterthanhtml','supanote','docs-md','markdrop','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority) assert.ok(channel.authority.source && channel.authority.asOf);
     if(channel.traffic) assert.ok(channel.traffic.source && channel.traffic.asOf);
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
@@ -26,6 +26,15 @@ test('catalog contains distinct curated channels with source evidence', () => {
     if (channel.kind === 'community' && !['bluesky','hive','raindrop'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
+});
+
+test('Markdrop is enabled after live acceptance while missing hosted-content policy remains explicit',()=>{
+  const markdrop=CHANNELS.find(channel=>channel.id==='markdrop');assert.ok(markdrop);
+  assert.equal(markdrop.enabled,true);
+  assert.equal(markdrop.evidenceStatus,'source_checked');
+  assert.equal(markdrop.rulesUrl,'https://www.markdrop.in/');
+  assert.match(markdrop.notes,/未提供单独托管内容条款/);
+  assert.match(markdrop.notes,/已完成单篇免注册发布与匿名公开页验收.*允许抓取与实际收录分开记录/);
 });
 
 test('new candidates remain manual and unknown prices cannot imply browser support', () => {

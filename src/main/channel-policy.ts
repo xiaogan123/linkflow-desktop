@@ -21,7 +21,12 @@ export function supportsOfficialGuidanceReview(channel:Channel){
   const supanote=channel.provenance==='built-in'&&channel.id==='supanote'&&channel.domain==='supanote.app'&&channel.rulesUrl==='https://supanote.app/terms'&&channel.evidenceSources?.length===2&&channel.evidenceSources.every(source=>source.appliesTo==='supanote'&&source.applicability==='verified'&&(source.kind==='api'&&source.url==='https://supanote.app/docs'||source.kind==='content_policy'&&source.url==='https://supanote.app/terms'))&&new Set(channel.evidenceSources.map(source=>source.kind)).size===2;
   const docsMdSource='https://github.com/invisible-hand/docs-md.com/tree/199f9a2656f83ed2918ee1d1f0ee8bf6734b2a2e';
   const docsMd=channel.provenance==='built-in'&&channel.id==='docs-md'&&channel.domain==='docs-md.com'&&channel.rulesUrl==='https://docs-md.com/'&&channel.evidenceSources?.length===1&&channel.evidenceSources[0]?.url===docsMdSource&&channel.evidenceSources[0]?.kind==='api'&&channel.evidenceSources[0]?.appliesTo==='docs-md'&&channel.evidenceSources[0]?.applicability==='verified';
-  return (canConfirmMissingPolicy(channel)||paper||verbose||betterThanHtml||supanote||docsMd)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
+  const markdropHomepage='https://www.markdrop.in/';
+  const markdropRoutes='https://github.com/himanshkukreja/markdrop/blob/592689c45344c9451642e1905ced52a8f0e0d5e6/backend/app/routers/documents.py';
+  const markdropSchema='https://github.com/himanshkukreja/markdrop/blob/592689c45344c9451642e1905ced52a8f0e0d5e6/backend/app/schemas/document.py';
+  const markdropSources=channel.evidenceSources??[];
+  const markdrop=channel.provenance==='built-in'&&channel.id==='markdrop'&&channel.domain==='markdrop.in'&&channel.rulesUrl===markdropHomepage&&markdropSources.length===3&&markdropSources.every(source=>source.appliesTo==='markdrop'&&source.applicability==='verified')&&markdropSources.filter(source=>source.kind==='product_guidance'&&source.url===markdropHomepage).length===1&&markdropSources.filter(source=>source.kind==='api'&&(source.url===markdropRoutes||source.url===markdropSchema)).length===2&&new Set(markdropSources.map(source=>source.url)).size===3;
+  return (canConfirmMissingPolicy(channel)||paper||verbose||betterThanHtml||supanote||docsMd||markdrop)&&channel.automation==='api'&&channel.kind==='article'&&channel.articleRequired;
 }
 
 export function channelPolicyScopeHash(site:Site,channel:Channel){
