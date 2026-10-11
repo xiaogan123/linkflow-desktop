@@ -7,6 +7,7 @@ import {CHANNELS} from '../integrations/catalog';
 import {connectPaperAccount} from '../integrations/paper';
 import {connectHiveAccount} from '../integrations/hive';
 import {connectMataroaAccount} from '../integrations/mataroa';
+import {connectPlopinoAccount} from '../integrations/plopino-publisher';
 import {serializeProseCredentials,validSerializedProseCredentials} from '../integrations/prose';
 import {createProseTransport,ProseTransportError,type ExpectedProseIdentity,type ProseIdentity,type ProseTransport} from '../integrations/prose-transport';
 
@@ -14,6 +15,7 @@ type ChannelId='paper-wf'|'hive'|'mataroa';
 type ConnectorOptions={allowDisableNewsletter:boolean};
 type Connector=(vault:SecretStore,id:string,username:string,credential:string,options?:ConnectorOptions)=>Promise<{username:string;url:string}>;
 export interface ArticleConnectionInput {channelId:ChannelId;username:string;credential:string;siteIds:string[];accountId?:string;allowDisableNewsletter?:boolean}
+export interface PlopinoConnectionInput {email:string;password:string;siteIds:string[];accountId?:string}
 
 const ArticleConnectionPayload=z.object({username:z.string().trim().min(1).max(100),credential:z.string().min(1).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional(),acknowledgePermanent:z.boolean().optional(),allowDisableNewsletter:z.boolean().optional()}).strict();
 export function parseArticleConnectionInput(channelId:ChannelId,value:unknown):ArticleConnectionInput{
@@ -164,4 +166,9 @@ export async function connectArticleAccount(store:Pick<Store,'read'|'update'>,va
     if(oldSecret===undefined)await vault.delete('account:'+id);else await vault.set('account:'+id,oldSecret);
     throw error;
   }
+}
+
+export async function connectPlopinoManagement(store:Pick<Store,'read'|'update'>,vault:SecretStore,input:PlopinoConnectionInput):Promise<Account>{
+  const email=input.email.trim().toLowerCase(),siteIds=[...new Set(input.siteIds)];if(!/^[^\s@]{1,64}@[^\s@]{1,185}$/.test(email)||input.password.length<6||input.password.length>128)throw Error('Plopino 邮箱或密码无效');const before=store.read();if(siteIds.some(id=>!before.sites.some(site=>site.id===id)))throw Error('所选网站已不存在');const previous=input.accountId?before.accounts.find(account=>account.id===input.accountId&&account.channelId==='plopino'):before.accounts.find(account=>account.channelId==='plopino'&&account.email.toLowerCase()===email);if(input.accountId&&!previous)throw Error('要更新的 Plopino 连接不存在');if(previous&&before.tasks.some(task=>task.channelId==='plopino'&&task.accountId===previous.id&&!!task.plopino)&&previous.email.toLowerCase()!==email)throw Error('原 Plopino 账号已有发布回执，不能更换身份');const id=previous?.id??randomUUID(),old=await vault.get(`account:${id}`);
+  try{const identity=await connectPlopinoAccount(vault,id,email,input.password),now=new Date().toISOString(),account:Account={...previous,id,channelId:'plopino',email:identity.email,username:identity.username,displayName:identity.username,publicationUrl:'https://plopino.com/b',credentialKind:'api_token',status:'registered',hasPassword:true,source:previous?.source??'imported',createdAt:previous?.createdAt??now,updatedAt:now,registeredAt:previous?.registeredAt??now,verifiedAt:identity.verifiedAt,diagnostic:undefined};store.update(state=>{if(siteIds.some(siteId=>!state.sites.some(site=>site.id===siteId)))throw Error('连接期间所选网站已改变');const current=state.accounts.find(item=>item.id===id);if(current&&(current.channelId!=='plopino'||current.email.toLowerCase()!==previous?.email.toLowerCase()))throw Error('连接期间账号身份已改变');state.accounts=state.accounts.filter(item=>item.id!==id);state.accounts.push(account);const channel=CHANNELS.find(item=>item.id==='plopino')!;for(const siteId of siteIds)bindAccount(state,id,siteId,channel);state.accountBindings=state.accountBindings.filter(binding=>binding.accountId!==id||binding.channelId!=='plopino'||siteIds.includes(binding.siteId))});return account}catch(error){if(old===undefined)await vault.delete(`account:${id}`);else await vault.set(`account:${id}`,old);throw error}
 }

@@ -5,8 +5,8 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
-const connectedIdentity=new Set(['github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
+const automaticIdentity=new Set(['plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
+const connectedIdentity=new Set(['here-now','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
   if(!channel.enabled)return 'disabled';
@@ -25,6 +25,8 @@ export function channelMatchesAutomation(channel:Channel,filter:ChannelAutomatio
 }
 
 const setupById:Record<string,string>={
+  plopino:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可直接连接，结果不明不会重复注册；无需手工创建 API 令牌',
+  'here-now':'首次连接已完成邮箱验证的个人账号 API key，并关联网站；之后按审核与排期自动发布全文',
   telegraph:'自动创建作者身份，无需首次连接',
   nostr:'在本机建立作者身份，无需首次连接',
   mataroa:'自动建立作者账号；若平台要求验证则等待处理',

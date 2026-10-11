@@ -14,17 +14,18 @@ import {connectMarkest,MarkestConnectionInput} from './markest-management';
 import {connectDeno,DenoConnectionInput} from './deno-management';
 import {readDenoApps,validDenoToken} from '../integrations/deno-connection';
 import {connectParagraph} from './paragraph-management';
-import {accountLoginPassword,connectArticleAccount,connectProseAccount,parseArticleConnectionInput} from './article-connections';
+import {accountLoginPassword,connectArticleAccount,connectPlopinoManagement,connectProseAccount,parseArticleConnectionInput} from './article-connections';
 import {connectBluesky} from './bluesky-management';
 import {connectLeaflet} from './leaflet-management';
 import {connectRaindrop,discoverRaindropCollections} from './raindrop-management';
+import {connectHereNow} from './here-now-management';
 import { Controller,isConfirmedBetterThanHtmlResultUrl,isConfirmedSupanoteResultUrl,isConfirmedDocsMdResultUrl,isConfirmedHtmlAppResultUrl } from './controller';
 import { AddSite, EditSite, SettingsPatch, AccountInput, AccountRetry, getId, normalizeDomain, publicUrl, safeMessage } from './validation';
 import { validateBackup } from './backup-validation';
 import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
 import {publicationOpportunity,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
 import {resumeDeferredTask} from './task-recovery';
-import { IPC_COMMANDS, type Site, type Account, type BloggerConnectionResult } from '../shared/types';
+import { HERE_NOW_IPC_COMMANDS, IPC_COMMANDS, PLOPINO_IPC_COMMANDS, type Site, type Account, type BloggerConnectionResult } from '../shared/types';
 import {CHANNELS} from '../integrations/catalog';
 import {belongsToSource} from '../integrations/web';
 import {eligibilityFor} from '../integrations/eligibility';
@@ -68,6 +69,7 @@ let proseConnect:AbortController|undefined;
 let markestConnect:AbortController|undefined;
 let denoConnect:AbortController|undefined;
 let raindropConnect:AbortController|undefined;
+let hereNowConnect:AbortController|undefined;
 let wordpressConnections:WordPressConnections;
 const root=join(__dirname,'..');
 const file=join(root,'dist/index.html');
@@ -167,6 +169,10 @@ async function command(name:string,p:unknown):Promise<unknown>{
       const input=parseArticleConnectionInput(channelId,p);
       return controller.manageIdentity(()=>connectArticleAccount(store,vault,input));
     }
+    case 'account:connect-plopino':{
+      const input=z.object({email:z.string().email().max(254),password:z.string().min(6).max(128),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);
+      return controller.manageIdentity(()=>connectPlopinoManagement(store,vault,input));
+    }
     case 'account:connect-markest':{
       const d=MarkestConnectionInput.safeParse(p);if(!d.success)throw Error('Markest 连接资料格式无效');
       if(markestConnect)throw Error('Markest 读取验证正在进行');
@@ -217,6 +223,12 @@ async function command(name:string,p:unknown):Promise<unknown>{
       finally{if(raindropConnect===abort)raindropConnect=undefined}
     }
     case 'account:cancel-raindrop-connect':z.object({}).strict().parse(p??{});raindropConnect?.abort();return {cancelled:!!raindropConnect};
+    case 'account:connect-here-now':{
+      const d=z.object({apiKey:z.string().min(20).max(8192).optional(),existingSiteUrl:z.string().trim().url().max(2048).optional(),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);if(!d.apiKey&&!d.accountId)throw Error('新建 here.now 连接需要命名 API key');if(hereNowConnect)throw Error('here.now 身份验证正在进行');const abort=new AbortController();hereNowConnect=abort;
+      try{return await controller.manageIdentity(()=>connectHereNow(store,vault,d,{signal:abort.signal}))}
+      finally{if(hereNowConnect===abort)hereNowConnect=undefined}
+    }
+    case 'account:cancel-here-now':z.object({}).strict().parse(p??{});hereNowConnect?.abort();return {cancelled:!!hereNowConnect};
     case 'account:connect-bluesky':{const d=z.object({handle:z.string().trim().min(3).max(253),appPassword:z.string().min(1).max(128),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).max(1000),mailboxId:z.string().uuid().nullable().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectBluesky(store,vault,d.handle.replace(/^@/,''),d.appPassword,{},d.accountId,{siteIds:d.siteIds,mailboxId:d.mailboxId}));}
     case 'account:connect-gist':{forbidBusy();const d=z.object({token:z.string().trim().min(8).max(512),accountId:z.string().uuid().optional()}).parse(p);return await controller.connectGist(d.token,d.accountId);}
     case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
@@ -331,14 +343,14 @@ async function command(name:string,p:unknown):Promise<unknown>{
       forbidBusy();const {items}=z.object({items:z.array(MailboxPayload).min(1).max(100)}).parse(p);importMailboxesAtomic(store,items,secrets=>vault.encryptSecrets(secrets));return controller.snapshot();
     }
     case 'account:save':{
-      forbidBusy();const input=AccountInput.parse(p);if(['verbose','rentry','lucid-page'].includes(input.channelId))throw Error('此渠道由任务自动准备，不接受手工账号导入');if(['paper-wf','hive','mataroa','wordpress-com','leaflet','raindrop','prose','markest','deno'].includes(input.channelId))throw Error('请使用对应渠道的连接入口验证账号');if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
+      forbidBusy();const input=AccountInput.parse(p);if(['verbose','rentry','lucid-page'].includes(input.channelId))throw Error('此渠道由任务自动准备，不接受手工账号导入');if(['paper-wf','hive','mataroa','wordpress-com','leaflet','raindrop','prose','markest','deno','here-now'].includes(input.channelId))throw Error('请使用对应渠道的连接入口验证账号');if(input.channelId==='blogger')throw Error('请使用连接Blogger完成Google授权和博客绑定');if(input.channelId==='github-gist')throw Error('请使用连接 GitHub Gist 验证并保存令牌');if(!controller.channels().some(c=>c.id===input.channelId))throw Error('渠道不存在');
       const channel=controller.channels().find(item=>item.id===input.channelId)!;saveAccountAtomic(store,input,channel,secrets=>vault.encryptSecrets(secrets));break;
     }
     case 'account:bind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p),channel=controller.channels().find(item=>item.id===d.channelId);if(!channel)throw Error('渠道不存在');if(channel.id==='blogger')throw Error('请使用Blogger专用入口绑定博客');store.update(state=>bindAccount(state,d.accountId,d.siteId,channel));break;}
     case 'account:unbind':{forbidBusy();const d=z.object({accountId:z.string().uuid(),siteId:z.string().uuid(),channelId:z.string().max(100)}).parse(p);store.update(state=>unbindAccount(state,d.accountId,d.siteId,d.channelId));break;}
     case 'account:set-bindings':{
       forbidBusy();const d=z.object({accountId:z.string().uuid(),mailboxId:z.string().uuid().nullable(),siteIds:z.array(z.string().uuid()).max(1000)}).parse(p),state=store.read(),account=state.accounts.find(item=>item.id===d.accountId);if(!account)throw Error('账号不存在');if(d.mailboxId&&!state.mailboxes.some(item=>item.id===d.mailboxId))throw Error('收件箱不存在');const channel=controller.channels().find(item=>item.id===account.channelId);if(!channel)throw Error('渠道不存在');if(account.credentialKind==='oauth')throw Error('请使用Blogger专用入口管理授权和博客绑定');const selected=new Set(d.siteIds);if([...selected].some(id=>!state.sites.some(site=>site.id===id)))throw Error('绑定的网站不存在');
-      store.update(draft=>{const current=draft.accounts.find(item=>item.id===d.accountId);if(!current)throw Error('账号不存在');current.mailboxId=d.mailboxId??undefined;current.updatedAt=new Date().toISOString();for(const siteId of selected)bindAccount(draft,current.id,siteId,channel);if(['wordpress-com','leaflet','raindrop','prose'].includes(current.channelId))for(const binding of [...draft.accountBindings])if(binding.accountId===current.id&&binding.channelId===current.channelId&&!selected.has(binding.siteId))unbindAccount(draft,current.id,binding.siteId,current.channelId);draft.accountBindings=draft.accountBindings.filter(binding=>binding.accountId!==current.id||binding.channelId!==current.channelId||selected.has(binding.siteId));if(current.channelId==='mataroa')current.mataroaExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);if(current.channelId==='verbose')current.verboseExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);if(current.channelId==='rentry')current.rentryExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);});break;
+      store.update(draft=>{const current=draft.accounts.find(item=>item.id===d.accountId);if(!current)throw Error('账号不存在');current.mailboxId=d.mailboxId??undefined;current.updatedAt=new Date().toISOString();for(const siteId of selected)bindAccount(draft,current.id,siteId,channel);if(['wordpress-com','leaflet','raindrop','prose','here-now'].includes(current.channelId))for(const binding of [...draft.accountBindings])if(binding.accountId===current.id&&binding.channelId===current.channelId&&!selected.has(binding.siteId))unbindAccount(draft,current.id,binding.siteId,current.channelId);draft.accountBindings=draft.accountBindings.filter(binding=>binding.accountId!==current.id||binding.channelId!==current.channelId||selected.has(binding.siteId));if(current.channelId==='mataroa')current.mataroaExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);if(current.channelId==='verbose')current.verboseExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);if(current.channelId==='rentry')current.rentryExcludedSiteIds=draft.sites.filter(site=>!selected.has(site.id)).map(site=>site.id);});break;
     }
     case 'account:retry':{
       forbidBusy();const {id}=AccountRetry.parse(p),account=store.read().accounts.find(a=>a.id===id);if(!account)throw Error('账号不存在');
@@ -422,7 +434,7 @@ app.whenReady().then(async()=>{
   const iconPath=join(root,'assets/tray.png');if(existsSync(iconPath)){const icon=nativeImage.createFromPath(iconPath).resize({width:18,height:18});tray=new Tray(icon);tray.setToolTip('外链助手');tray.setContextMenu(Menu.buildFromTemplate([{label:'显示外链助手',click:()=>{if(!win)createWindow();win?.show()}},{label:'暂停自动执行',click:()=>controller.pause()},{type:'separator'},{label:'退出',click:()=>{quitting=true;app.quit()}}]));tray.on('click',()=>win?.show());}
   ipcMain.handle('linkflow:command',async(event,name,payload)=>{
     const operation=Symbol();let tracked=false;
-    try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!IPC_COMMANDS.includes(name)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
+    try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||![...IPC_COMMANDS,...HERE_NOW_IPC_COMMANDS,...PLOPINO_IPC_COMMANDS].includes(name as never)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
       if(JSON.stringify(payload??{}).length>100000)throw Error('输入内容过大');
       if(!['snapshot','app:update-status','app:install-update','app:recover-update'].includes(name)){activeCommands.add(operation);tracked=true}
       return {ok:true,value:await command(name,payload)};

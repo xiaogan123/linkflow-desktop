@@ -22,6 +22,8 @@ import {runHtmlAppTask,reconcileHtmlAppTask} from './html-app-publisher';
 import {runDeedPageTask,reconcileDeedPageTask} from './deed-page-publisher';
 import {runMarkdropTask,reconcileMarkdropTask} from './markdrop-publisher';
 import {runDraftmarkTask,reconcileDraftmarkTask} from './draftmark-publisher';
+import {preparePlopinoIdentity,runPlopinoTask,reconcilePlopinoTask} from './plopino-publisher';
+function withPlopinoPersistence(context:ExecutionContext){context.plopinoPersistence??=(context.secrets as typeof context.secrets&{plopinoPersistence?:ExecutionContext['plopinoPersistence']}).plopinoPersistence;return context}
 
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
@@ -52,6 +54,7 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   'deed-page':{publish:runDeedPageTask,reconcile:reconcileDeedPageTask},
   markdrop:{publish:runMarkdropTask,reconcile:reconcileMarkdropTask},
   draftmark:{publish:runDraftmarkTask,reconcile:reconcileDraftmarkTask},
+  plopino:{prepare:context=>preparePlopinoIdentity(withPlopinoPersistence(context)),publish:context=>runPlopinoTask(withPlopinoPersistence(context)),reconcile:context=>reconcilePlopinoTask(withPlopinoPersistence(context))},
 };
 /** Only registered built-in API adapters may execute; a catalog label grants nothing. */
 export function publisherFor(channel:Channel):ApiPublisher|undefined{

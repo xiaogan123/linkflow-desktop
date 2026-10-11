@@ -34,7 +34,7 @@ test('Draftmark is an enabled no-signup channel with per-document credentials',(
 
 test('verified no-signup and automatic identity flows stay distinct',()=>{
   for(const id of ['lucid-page','rentry','betterthanhtml','supanote','docs-md'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['mataroa','nostr','paper-wf','telegraph','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['mataroa','nostr','paper-wf','plopino','telegraph','verbose']);
   assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建作者身份/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/本机创建作者密钥/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/不是钱包连接/);
@@ -154,4 +154,14 @@ test('business onboarding keeps company and local-service eligibility separate f
   const bing=channelOnboardingView(channel('bing-places'));
   assert.match(bing.setup,/真实本地商家/);
   assert.match(bing.setup,/纯线上内容站不适用/);
+});
+
+test('new publishers preserve automatic account and existing verified identity distinction',()=>{
+  const plopino=channel('plopino'),here=channel('here-now');
+  assert.equal(channelOnboardingKind(plopino),'ai_account');
+  assert.equal(channelOnboardingKind(here),'existing_account');
+  assert.match(channelOnboardingView(plopino).setup,/已授权邮箱.*自动建立.*不会重复注册/);
+  assert.match(channelOnboardingView(here).setup,/邮箱验证.*API key/);
+  assert.equal(channelMatchesDirectoryFilters(plopino,{automation:'ai_auto',onboarding:'ai_account',freeOnly:true,category:'software',siteVisible:true}),true);
+  assert.equal(channelMatchesDirectoryFilters(here,{automation:'connected_auto',onboarding:'existing_account',freeOnly:true,category:'software',siteVisible:true}),true);
 });

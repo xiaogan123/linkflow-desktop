@@ -33,8 +33,8 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','draftmark','lucid-page','markdrop','mataroa','nostr','supanote','telegraph','verbose']);
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','hive','paragraph']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','draftmark','lucid-page','markdrop','mataroa','nostr','plopino','supanote','telegraph','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
   assert.match(channelAutomationView(channel('paper-wf')).setup,/人机验证/);
@@ -147,4 +147,18 @@ test('invalid Telegraph credentials replace generic locally-ready copy with acco
   assert.equal(readiness,'handoff_required');
   const copy=channelDiscoveryCopy({status:'recommended',reason:'主题相关。',nextStep:'已具备本地执行条件。'},channelAutomationKind(telegraph),readiness);
   assert.equal(copy,'主题相关。 本网站需先连接或恢复可用账号；之后仍按稿件审核与排期条件执行。');
+});
+
+ test('Plopino and here.now filters expose their distinct first-step requirements',()=>{
+  const plopino=channel('plopino'),here=channel('here-now');
+  assert.equal(channelAutomationKind(plopino),'ai_auto');
+  assert.equal(channelAutomationKind(here),'connected_auto');
+  assert.match(channelAutomationView(plopino).setup??'',/已授权邮箱.*自动建立.*不.*重复注册/);
+  assert.match(channelAutomationView(here).setup??'',/邮箱验证.*API key.*关联网站/);
+  for(const value of [plopino,here]){
+    assert.equal(channelMatchesAutomation(value,channelAutomationKind(value) as 'ai_auto'|'connected_auto',true,'software'),true);
+    assert.equal(channelMatchesAutomation(value,'all',true,'finance'),false);
+    assert.equal(channelAutomationKind({...value,enabled:false}),'disabled');
+    assert.equal(channelAutomationKind({...value,provenance:'custom'}),'manual');
+  }
 });

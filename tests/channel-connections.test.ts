@@ -14,8 +14,10 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,25);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['mataroa','verbose','lucid-page','betterthanhtml','deed-page','markdrop','draftmark','supanote','nostr','telegraph']);
+  assert.equal(rows.length,27);
+  assert.equal(row(data,'plopino').state,'no_setup');
+  assert.match(row(data,'plopino').detail,/邮箱和密码.*自动建立一次.*不会重复注册/);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','markdrop','draftmark','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
@@ -156,7 +158,7 @@ test('connection overview covers APIs plus the read-only Markest connection',()=
 test('every disabled API stays unavailable without erasing connection or historical result counts',()=>{
   for(const channel of CHANNELS.filter(item=>item.automation==='api')){
     const data=snapshot();data.channels=CHANNELS.map(item=>({...item,enabled:item.id===channel.id?false:item.enabled}));
-    data.accounts=[account(channel.id,channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
+    data.accounts=[account(channel.id,channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:channel.id==='here-now'?{source:'imported',username:'55555555-5555-4555-8555-555555555555',hereNow:{version:1,checkedAt:at,accountId:'55555555-5555-4555-8555-555555555555',keyFingerprint:'a'.repeat(64),identity:'verified_personal'}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
@@ -200,4 +202,12 @@ test('multiple valid automatic identities require choosing one until a current s
   assert.equal(channelExecutionReadiness(state,'site-1',channel).kind,'ready');assert.equal(display().state,'no_setup');
   unbindAccount(state,'second','site-1','mataroa');
   assert.equal(channelExecutionReadiness(state,'site-1',channel).kind,'ready');assert.equal(display().state,'no_setup');
+});
+
+test('Plopino automatic preparation does not bypass an existing unbound or uncertain identity',()=>{
+ const data=snapshot();data.accounts=[account('plopino')];
+ assert.equal(row(data,'plopino').state,'attention');
+ data.accountBindings=[{id:'plopino-binding',siteId:'site-1',channelId:'plopino',accountId:data.accounts[0].id,createdAt:at,updatedAt:at}];
+ assert.equal(row(data,'plopino').state,'connected');assert.equal(row(data,'plopino').boundSiteCount,1);
+ data.accounts[0].status='unknown';assert.equal(row(data,'plopino').state,'attention');
 });

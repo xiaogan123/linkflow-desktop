@@ -9,6 +9,7 @@ import {connectionOverview} from '../src/ui/channel-connections';
 import {AccountConnectionGuide} from '../src/ui/pages/AccountConnectionGuide';
 import {AccountsPage} from '../src/ui/pages/AccountsPage';
 import {ArticleConnection} from '../src/ui/pages/ArticleConnection';
+import {HereNowConnection} from '../src/ui/pages/HereNowConnection';
 
 const stamp='2026-10-10T00:00:00.000Z';
 function snapshot(accounts:Account[]=[],sites:Snapshot['sites']=[]):Snapshot{
@@ -36,9 +37,11 @@ test('platform selection preserves dedicated routes and never turns automatic ch
   assert.deepEqual(connectionAction(byId('paper-wf')),{kind:'connect',label:'连接 Paper.wf'});
   assert.deepEqual(connectionAction(byId('github-gist')),{kind:'connect',label:'连接 GitHub Gist'});
   assert.deepEqual(connectionAction(byId('deno')),{kind:'connect',label:'只读验证专用应用'});
+  assert.equal(byId('plopino').state,'no_setup');
+  assert.deepEqual(connectionAction(byId('plopino')),{kind:'connect',label:'连接 Plopino'});
   assert.deepEqual(connectionAction(byId('telegraph')),{kind:'none'});
   assert.deepEqual(connectionAction(byId('rentry')),{kind:'none'});
-  for(const id of ['mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky'])assert.equal(needsDedicatedConnection(id),true,id);
+  for(const id of ['mataroa','paper-wf','hive','prose','markest','deno','here-now','plopino','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky'])assert.equal(needsDedicatedConnection(id),true,id);
   assert.equal(needsDedicatedConnection('product-hunt'),false);
 });
 
@@ -88,6 +91,23 @@ test('empty accounts page keeps a no-account path and labels secondary channels 
   assert.match(markup,/这里的连接不代表可发布/);
   assert.match(markup,/先添加网站/);
   assert.doesNotMatch(markup,/逐项连接发布身份/);
+});
+
+test('a saved here.now identity has explicit management actions and summary routing to that account',()=>{
+  const localId='33333333-3333-4333-8333-333333333333',remoteId='55555555-5555-4555-8555-555555555555';
+  const saved=account('here-now',{id:localId,credentialKind:'api_token',username:remoteId,displayName:'here.now owner',hereNow:{version:1,checkedAt:stamp,accountId:remoteId,keyFingerprint:'a'.repeat(64),identity:'verified_personal'}});
+  const data=snapshot([saved]),row=connectionOverview(data).find(item=>item.id==='here-now');assert.ok(row);assert.equal(row.state,'connected');assert.equal(row.attentionAccountId,localId);assert.deepEqual(connectionAction(row),{kind:'connect',label:'管理现有连接'});
+  const markup=renderToStaticMarkup(createElement(AccountsPage,{data,disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
+  assert.match(markup,/管理 here\.now 页面与网站绑定/);assert.match(markup,/使用已保存 key 重新验证 here\.now/);
+  const drawer=renderToStaticMarkup(createElement(HereNowConnection,{data,disabled:false,account:saved,onClose:()=>{},onAction:noop}));assert.match(drawer,/用已保存 key 验证并更新/);assert.doesNotMatch(drawer,/disabled=""[^>]*>用已保存 key 验证并更新/);
+});
+
+test('a saved Plopino identity exposes account-row management and email-password revalidation',()=>{
+  const localId='66666666-6666-4666-8666-666666666666';
+  const saved=account('plopino',{id:localId,credentialKind:'api_token',username:'publisher_1',displayName:'Plopino publisher',publicationUrl:'https://plopino.com/b'});
+  const data=snapshot([saved]),row=connectionOverview(data).find(item=>item.id==='plopino');assert.ok(row);assert.equal(row.state,'connected');assert.equal(row.attentionAccountId,localId);assert.deepEqual(connectionAction(row),{kind:'connect',label:'管理现有连接'});
+  const markup=renderToStaticMarkup(createElement(AccountsPage,{data,disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
+  assert.match(markup,/管理 Plopino 网站绑定/);assert.match(markup,/用邮箱和密码重新验证 Plopino/);assert.doesNotMatch(markup,/更新 Plopino 令牌/);
 });
 
 test('connection guide starts with platform search and contains no credential field',()=>{

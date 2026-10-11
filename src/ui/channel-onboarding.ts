@@ -28,6 +28,8 @@ const labelByKind:Record<ChannelOnboardingKind,string>={
 // an automatic publisher capability, enable a disabled channel, or prove that
 // a candidate can be used for a particular site.
 const onboardingById:Record<string,OnboardingDefinition>={
+  plopino:{kind:'ai_account',setup:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可用邮箱和密码连接，注册结果不明不会重复注册',verification:{checkedAt:'2026-10-11',sourceUrl:'https://plopino.com/publish'}},
+  'here-now':{kind:'existing_account',setup:'首次需要邮箱验证并连接个人账号 API key；关联网站后按审核与排期发布，邮箱验证码仍需本人完成',verification:{checkedAt:'2026-10-11',sourceUrl:'https://here.now/docs'}},
   raindrop:{kind:'existing_account',setup:'本人注册 Raindrop 并确认邮箱，在最外层建立专用公开合集；在显示选项中开启描述/摘要，复制实际 Public Page 地址，再粘贴个人 Test token 完成连接。软件不会自动注册或改变合集公开性',aliases:['Raindrop.io','raindrop.page'],verification:{checkedAt:'2026-10-10',sourceUrl:'https://help.raindrop.io/public-page'}},
   carrd:{kind:'existing_account',setup:'本人用邮箱注册并完成页面要求的验证码，选择 Basic 免费模板并人工发布 .carrd.co 页面；是否强制确认邮箱尚未实测；加载动画页面的静态核验仍待适配',aliases:['Carrd.co','Carrd.com'],verification:{checkedAt:'2026-10-10',sourceUrl:'https://carrd.com/signup'}},
   wakelet:{kind:'existing_account',setup:'本人注册或登录并按提示验证，创建有原创说明的合集，再 Share → Publish；当前人工提交，动态公开页核验待适配',verification:{checkedAt:'2026-10-10',sourceUrl:'https://help.wakelet.com/migration/publishing-a-collection-to-profile'}},
