@@ -13,8 +13,19 @@ const channel=(id:string)=>{
   return found;
 };
 
+test('accepted Markdrop is discoverable as automatic while qualification and disable guards stay in force',()=>{
+  const markdrop=channel('markdrop');
+  assert.equal(channelAutomationKind(markdrop),'ai_auto');
+  assert.equal(channelMatchesAutomation(markdrop,'ai_auto',true,'software'),true);
+  assert.equal(channelMatchesAutomation(markdrop,'ai_auto',true,'finance'),false);
+  assert.match(channelAutomationView(markdrop).setup??'',/免注册.*一次性编辑密钥.*不保证长期/);
+  assert.deepEqual(channelSourceLabels('markdrop'),{checked:'资料核查',open:'官方说明'});
+  assert.equal(channelAutomationKind({...markdrop,enabled:false}),'disabled');
+  assert.equal(channelAutomationKind({...markdrop,provenance:'custom'}),'manual');
+});
+
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','lucid-page','mataroa','nostr','supanote','telegraph','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','lucid-page','markdrop','mataroa','nostr','supanote','telegraph','verbose']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','hive','paragraph']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);

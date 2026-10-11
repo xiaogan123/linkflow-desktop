@@ -12,6 +12,17 @@ const channel=(id:string)=>{
 };
 const builtIn=(id:string):Channel=>CHANNELS.find(item=>item.id===id)??{...channel('telegraph'),id,provenance:'built-in'};
 
+test('Markdrop no-signup filter reaches the accepted publisher without implying a verified hosting policy',()=>{
+  const markdrop=channel('markdrop'),view=channelOnboardingView(markdrop);
+  assert.equal(view.kind,'no_signup');
+  assert.match(view.setup,/无需账号或邮箱.*一次性编辑密钥.*不保证长期/);
+  assert.equal(view.verification?.sourceUrl,'https://api.markdrop.in/openapi.json');
+  assert.equal(channelMatchesDirectoryFilters(markdrop,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'software',siteVisible:true}),true);
+  assert.equal(channelMatchesDirectoryFilters(markdrop,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'finance',siteVisible:true}),false);
+  assert.equal(channelMatchesDirectoryFilters({...markdrop,enabled:false},{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'software',siteVisible:true}),false);
+  assert.equal(channelOnboardingKind({...markdrop,provenance:'custom'}),'unknown');
+});
+
 test('verified no-signup and automatic identity flows stay distinct',()=>{
   for(const id of ['lucid-page','rentry','betterthanhtml','supanote','docs-md'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['mataroa','nostr','paper-wf','telegraph','verbose']);
