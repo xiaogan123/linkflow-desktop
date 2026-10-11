@@ -60,6 +60,10 @@ jobs:
         run: npm run test:planning-ui
       - name: Account import UI
         run: npm run test:account-ui
+      - name: Draft copy UI
+        run: node scripts/draft-copy-ui-smoke.cjs
+      - name: Raindrop connection UI
+        run: node scripts/raindrop-connection-ui-smoke.cjs
       - name: Blogger connection UI
         run: node scripts/blogger-ui-smoke.cjs
       - name: Bluesky connection UI
@@ -120,7 +124,7 @@ jobs:
             }
           }
 
-      - name: Validate published Windows v1.2.18 to candidate v1.2.19 native upgrade
+      - name: Validate published Windows v1.2.19 to candidate v1.2.20 native upgrade
         id: native_upgrade
         run: npm run test:update-native
 

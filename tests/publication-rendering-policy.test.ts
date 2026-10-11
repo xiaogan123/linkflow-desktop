@@ -33,6 +33,24 @@ test('generic backlink verification does not count hidden or empty anchors', () 
   ]) assert.equal(findDirectLink(html, SOURCE, TARGET).found, false);
 });
 
+test('generated pseudo-element styles neither crash verification nor hide visible source elements',()=>{
+  for(const selector of ['article:after','article::before','article:first-letter','article::marker']){
+    const html=`<style>${selector}{display:none}</style><article>${body}</article>`;
+    assert.equal(findDirectLink(html,SOURCE,TARGET).found,true,selector);
+    assert.equal(inspectRenderedArticle(html,markdown,TARGET,'article').found,true,selector);
+  }
+});
+
+test('mixed pseudo-element styles retain hiding for actual DOM selectors including quoted commas',()=>{
+  for(const selector of ['article, article:after','article::before, article','article:is(.story,.essay), article::after','article[data-label=", :after"], article::before']){
+    const html=`<style>${selector}{visibility:hidden}</style><article class="story" data-label=", :after">${body}</article>`;
+    assert.equal(findDirectLink(html,SOURCE,TARGET).found,false,selector);
+    assert.equal(inspectRenderedArticle(html,markdown,TARGET,'article').found,false,selector);
+  }
+  assert.throws(()=>findDirectLink(`<style>article:unknown-visibility{display:none}</style><article>${body}</article>`,SOURCE,TARGET),/pseudo/);
+  assert.throws(()=>findDirectLink(`<style>:is(article, ::before){display:none}</style><article>${body}</article>`,SOURCE,TARGET),/pseudo/i);
+});
+
 test('generic backlink verification retains page-wide nofollow and rejects HTTP noindex', async () => {
   const html = `<meta name="robots" content="nofollow">${body}`;
   assert.match(findDirectLink(html, SOURCE, TARGET).rel, /\bnofollow\b/);

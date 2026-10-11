@@ -20,7 +20,7 @@ export {reservesSlot,reservesMonthlySlot} from '../shared/publication';
 export function recoverInterrupted(state:State,now=new Date()){
   for(const t of state.tasks){
     if(state.sites.find(site=>site.id===t.siteId)?.status==='paused')continue;
-    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||!!t.supanote||!!t.docsMd||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
+    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||!!t.supanote||!!t.docsMd||!!t.deedPage||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
     const paidAiUncertain=t.status==='running'&&!uncertain&&((['article_review','article_repair_review'].includes(t.checkpoint??'')&&t.articleReview?.status==='running')||(!t.draft&&(t.cost?.aiCalls??0)>0));
     if(paidAiUncertain){
       const eligible=(t.cost?.aiCalls??0)<6&&(t.recoveryAttempts??0)<1;
@@ -94,7 +94,7 @@ export function earliestPublicationAt(siteId:string,channelId:string,tasks:Task[
 }
 
 function sharedDestinationKey(state:State,siteId:string,channelId:string,accountId?:string,receipt?:Task):string|undefined{
-  if(channelId==='rentry'||channelId==='lucid-page'||channelId==='betterthanhtml'||channelId==='supanote'||channelId==='docs-md')return `${channelId}:workspace`;
+  if(channelId==='rentry'||channelId==='lucid-page'||channelId==='betterthanhtml'||channelId==='supanote'||channelId==='docs-md'||channelId==='html-app')return `${channelId}:workspace`;
   if(channelId==='blogger'){const blogId=receipt?.blogger?.blogId??state.sites.find(item=>item.id===siteId)?.blogger?.blogId;return blogId?`blogger:${blogId}`:undefined;}
   if(channelId==='wordpress-com'){
     const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;
@@ -106,6 +106,11 @@ function sharedDestinationKey(state:State,siteId:string,channelId:string,account
     const account=state.accounts.find(item=>item.id===id&&item.channelId===channelId),match=account?.publicationUrl?.match(/^https:\/\/leaflet\.pub\/p\/(did:(?:plc|web):[A-Za-z0-9:._%-]{1,240})$/);
     const did=receipt?.leaflet?.did??match?.[1];
     return did?`leaflet:${did}`:undefined;
+  }
+  if(channelId==='raindrop'){
+    const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;
+    const binding=state.accounts.find(item=>item.id===id&&item.channelId===channelId)?.raindrop,ownerId=receipt?.raindrop?.ownerId??binding?.ownerId,collectionId=receipt?.raindrop?.collectionId??binding?.collectionId;
+    return ownerId&&collectionId?`raindrop:${ownerId}:${collectionId}`:undefined;
   }
   if(channelId==='paragraph'){const publicationId=receipt?.paragraph?.publicationId??state.sites.find(item=>item.id===siteId)?.paragraph?.publicationId;return publicationId?`paragraph:${publicationId}`:undefined;}
   if(channelId==='nostr'){const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;const pubkey=receipt?.nostr?.pubkey??state.accounts.find(item=>item.id===id&&item.channelId===channelId)?.username;return pubkey?`nostr:${pubkey}`:undefined;}
@@ -189,7 +194,7 @@ function channelSourceDomain(site:Site,channel:Channel,account?:{publicationUrl?
 function untouchedAutomaticTask(task:Task):boolean{
   const cost=task.cost,spent=!!cost&&[cost.aiCalls,cost.durationMs,cost.inputTokens,cost.outputTokens,cost.amount].some(value=>(value??0)>0);
   return task.status==='queued'&&task.attempts===0&&!task.draft&&!spent&&!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.verifiedAt&&
-    !task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
+    !task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.htmlApp&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
     task.draftRevision===undefined&&!task.draftUpdatedAt&&!task.topicContentHash&&!task.articleAutomationVersion&&!task.articleRepairAttempts&&
     !task.articleAttempts?.length&&!task.topicSwitchAttempts&&!task.recoveryAttempts&&!task.recoveryEligible&&!task.reconcileAttempts&&!task.reconcileAfter&&
     !task.waitingSince&&!task.deferredAt&&!task.reviewUntil&&!task.reviewKind&&!task.lastCheckedAt&&!task.nextCheckAt&&!task.lostAt&&!task.linkRel&&!task.linkCheck&&
@@ -284,7 +289,7 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
     const site=state.sites.find(s=>s.id===t.siteId&&s.status==='ready');
     const planned=new Date(t.scheduledAt);
     const draftContinuation=hasRecoverablePublisherDraftReceipt(t);
-    if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml||t.supanote||t.docsMd)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
+    if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml||t.supanote||t.docsMd||t.htmlApp)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
     const requested=planned.getTime()<=now.getTime()&&monthKey(planned,state.settings.timezone)!==monthKey(now,state.settings.timezone)?now:planned;
     const actual=socialPublicationAt(state,site.id,t.channelId,earliestPublicationAt(site.id,t.channelId,state.tasks,requested,{excludeTaskId:t.id,includeReservations:false}),{excludeTaskId:t.id,includeReservations:false});
     const channel=channels.find(item=>item.id===t.channelId);

@@ -30,6 +30,7 @@ app.whenReady().then(async()=>{
  try{
  const blockedController=Object.create(Controller.prototype) as Controller;
  (blockedController as any).drafting=new Set();
+ (blockedController as any).services={};
  const policyState={settings:{channelOverrides:{flathub:true,dev:true,medium:true}},tasks:[{id:'policy-task',siteId:'fixture-site',channelId:'flathub'}],sites:[{id:'fixture-site'}]};
  Object.defineProperty(blockedController,'store',{value:{read:()=>policyState}});
  let draftAiCalls=0;(blockedController as any).ai=()=>{draftAiCalls++;throw Error('AI must not run for disabled channels');};

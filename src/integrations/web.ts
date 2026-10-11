@@ -463,7 +463,7 @@ export function belongsToSource(actualUrl: string, expectedDomain: string): bool
   if (actual === expected) return true;
   // Only vetted hosted-publishing services accept publication subdomains.
   // Other channel domains retain exact-host matching, including after redirects.
-  const hostedSources = new Set(['substack.com','artstation.com','beehiiv.com','kit.com','wordpress.com','ghost.io','tumblr.com','blogspot.com']);
+  const hostedSources = new Set(['substack.com','artstation.com','beehiiv.com','kit.com','wordpress.com','ghost.io','tumblr.com','blogspot.com','carrd.co','raindrop.page']);
   if (hostedSources.has(expected) && actual.endsWith('.'+expected)) return true;
   if (expected === 'hashnode.com' && actual.endsWith('.hashnode.dev')) return true;
   return false;

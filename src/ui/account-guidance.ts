@@ -1,13 +1,13 @@
 import type {Account} from '../shared/types';
-import {isDenoReadAccessAccount,isMarkestReadAccessAccount,type ConnectionChannelId,type ConnectionOverviewRow} from './channel-connections';
+import {isDenoReadAccessAccount,isMarkestReadAccessAccount,isRaindropConnectionAccount,type ConnectionChannelId,type ConnectionOverviewRow} from './channel-connections';
 
 export type ConnectionGroup='attention'|'connectable'|'connected'|'automatic'|'secondary';
 export type ConnectionAction={kind:'connect'|'locate'|'none';label?:string};
 export type AccountReadiness={needsAttention:boolean;reusable:boolean};
 
 const secondaryIds=new Set<ConnectionChannelId>(['deno','markest']);
-const dedicatedIds=new Set<ConnectionChannelId>(['mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky']);
-const bindingIds=new Set<string>(['hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky']);
+const dedicatedIds=new Set<ConnectionChannelId>(['mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
+const bindingIds=new Set<string>(['hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
 
 const actionLabels:Partial<Record<ConnectionChannelId,string>>={
   mataroa:'连接 Mataroa',
@@ -20,6 +20,7 @@ const actionLabels:Partial<Record<ConnectionChannelId,string>>={
   blogger:'授权 Blogger',
   'wordpress-com':'查看 WordPress.com 授权',
   leaflet:'连接 Leaflet',
+  raindrop:'连接 Raindrop',
   paragraph:'连接 Paragraph',
   bluesky:'连接 Bluesky',
 };
@@ -45,7 +46,7 @@ export function connectionAction(row:ConnectionOverviewRow):ConnectionAction{
   if(row.state==='attention'&&!dedicatedIds.has(row.id))return {kind:'locate',label:'查看保存的身份'};
   if(!dedicatedIds.has(row.id))return {kind:'none'};
   if(row.state==='no_setup'&&row.id!=='mataroa')return {kind:'none'};
-  if(row.state==='unavailable'&&!['prose','leaflet','wordpress-com'].includes(row.id))return {kind:'none'};
+  if(row.state==='unavailable'&&!['prose','leaflet','wordpress-com','raindrop'].includes(row.id))return {kind:'none'};
   if(row.state==='attention'&&row.attentionAccountId)return {kind:'connect',label:'处理原连接'};
   if(row.state==='connected')return {kind:'connect',label:'管理或新增连接'};
   return {kind:'connect',label:actionLabels[row.id]??'打开专用连接'};
@@ -62,7 +63,7 @@ export function activateGuideSelection(row:ConnectionOverviewRow,callbacks:{clos
 function accountFacts(account:Account,boundSiteCount:number,channelEnabled:boolean){
   const readOnlyChannel=account.channelId==='deno'||account.channelId==='markest';
   const validReadOnly=isDenoReadAccessAccount(account)||isMarkestReadAccessAccount(account);
-  const needsRepair=['credentials_invalid','restricted'].includes(account.status)||!!account.diagnostic;
+  const needsRepair=['credentials_invalid','restricted'].includes(account.status)||!!account.diagnostic||(account.channelId==='raindrop'&&!isRaindropConnectionAccount(account));
   const missingSecret=!account.hasPassword;
   const incomplete=account.status!=='registered';
   const missingBinding=channelEnabled&&bindingIds.has(account.channelId)&&boundSiteCount===0;

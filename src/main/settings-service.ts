@@ -33,7 +33,8 @@ export function saveSettingsAtomic(store:Store,vault:Pick<Vault,'encryptSecrets'
   const deleteKeys:string[]=[];
   if(apiChanged&&!apiKey)deleteKeys.push('apiKey');
   if(mailChanged&&!mailPassword)deleteKeys.push('mailPassword');
-  const {apiKey:_apiKey,mailPassword:_mailPassword,...safe}=input;
+  // This acknowledgement is writable only through the dedicated disclosure action.
+  const {apiKey:_apiKey,mailPassword:_mailPassword,htmlAppPublicNotice:_htmlAppPublicNotice,...safe}=input;
   let reviewModeSites:string[]=[];
   const apply=(state:State)=>{
     state.settings={

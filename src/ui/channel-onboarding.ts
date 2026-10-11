@@ -28,6 +28,10 @@ const labelByKind:Record<ChannelOnboardingKind,string>={
 // an automatic publisher capability, enable a disabled channel, or prove that
 // a candidate can be used for a particular site.
 const onboardingById:Record<string,OnboardingDefinition>={
+  raindrop:{kind:'existing_account',setup:'本人注册 Raindrop 并确认邮箱，在最外层建立专用公开合集；在显示选项中开启描述/摘要，复制实际 Public Page 地址，再粘贴个人 Test token 完成连接。软件不会自动注册或改变合集公开性',aliases:['Raindrop.io','raindrop.page'],verification:{checkedAt:'2026-10-10',sourceUrl:'https://help.raindrop.io/public-page'}},
+  carrd:{kind:'existing_account',setup:'本人用邮箱注册并完成页面要求的验证码，选择 Basic 免费模板并人工发布 .carrd.co 页面；是否强制确认邮箱尚未实测；加载动画页面的静态核验仍待适配',aliases:['Carrd.co','Carrd.com'],verification:{checkedAt:'2026-10-10',sourceUrl:'https://carrd.com/signup'}},
+  wakelet:{kind:'existing_account',setup:'本人注册或登录并按提示验证，创建有原创说明的合集，再 Share → Publish；当前人工提交，动态公开页核验待适配',verification:{checkedAt:'2026-10-10',sourceUrl:'https://help.wakelet.com/migration/publishing-a-collection-to-profile'}},
+  padlet:{kind:'existing_account',setup:'本人用邮箱和 6 位邮件验证码或社交账号注册；人工创建看板并设 Public、访客只读，动态公开页核验待适配',verification:{checkedAt:'2026-10-10',sourceUrl:'https://padlet.help/l/en/article/n5wpnyr9vq-how-to-sign-up-for-padlet'}},
   "docker-hub":{"kind":"existing_account","setup":"本人用邮箱、Google 或 GitHub 注册 Docker 并完成邮箱验证；仅维护真实容器镜像仓库，当前仅人工操作","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://docs.docker.com/accounts/individual/create-account/"}},
   "firefox-addons":{"kind":"existing_account","setup":"本人用 Mozilla 账号登录 AMO 开发者中心，按提示完成安全验证；仅提交真实 Firefox 扩展并通过校验及平台审核，当前仅人工操作","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://extensionworkshop.com/documentation/publish/submitting-an-add-on/"}},
   "vscode-marketplace":{"kind":"existing_account","setup":"本人用 Microsoft 账号登录 Marketplace 并创建发布者资料；仅提交已测试的真实 VS Code 扩展，发布授权按当前官方流程办理，当前仅人工操作","verification":{"checkedAt":"2026-10-09","sourceUrl":"https://code.visualstudio.com/api/working-with-extensions/publishing-extension"}},
@@ -90,6 +94,8 @@ const onboardingById:Record<string,OnboardingDefinition>={
   'lucid-page':{kind:'no_signup',setup:'无需账号；直接创建公开页面，后续修改或删除需本人认领'},
   rentry:{kind:'no_signup',setup:'无需账号；发布时生成编辑凭据并加密保存在本机'},
   betterthanhtml:{kind:'no_signup',setup:'无需账号即可发布公开全文；不承诺编辑或删除'},
+  'deed-page':{kind:'no_signup',setup:'无需账号或邮箱；首次发布生成的一次性所有者令牌只加密保存在本机，后续文章复用同一令牌与免费配额。公开内容可能被抓取或复制，服务不保证可用性或永不丢失',verification:{checkedAt:'2026-10-11',sourceUrl:'https://deed.page/terms'}},
+  'html-app':{kind:'no_signup',setup:'无需账号；发布内容完全公开，可能被抓取或复制。免费 best-effort 服务不保证保留、可用性或永久存续；发布前须核对条款',verification:{checkedAt:'2026-10-11',sourceUrl:'https://ht-ml.app/terms'}},
   supanote:{kind:'no_signup',setup:'无需账号；匿名发布公开 Markdown。仅在平台返回管理令牌时加密保存，不承诺可编辑或删除',verification:{checkedAt:'2026-10-09',sourceUrl:'https://supanote.app/docs'}},
   'docs-md':{kind:'no_signup',setup:'无需账号；匿名分享经核对的 Markdown。当前保持停用，等待真实托管公开页验收',verification:{checkedAt:'2026-10-09',sourceUrl:'https://github.com/invisible-hand/docs-md.com/tree/199f9a2656f83ed2918ee1d1f0ee8bf6734b2a2e'}},
   markest:{kind:'existing_account',setup:'本人用邮箱注册并完成邮件验证；在本人账户中手动创建一次仅含 create_paste、list_own、read_own 的专用个人 key，再到账号页只读验证。连接不证明远端身份或发布权限',verification:{checkedAt:'2026-10-09',sourceUrl:'https://marke.st/api'}},

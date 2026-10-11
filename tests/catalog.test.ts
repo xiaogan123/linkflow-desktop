@@ -23,7 +23,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
     assert.match(channel.qualityReason, /[\u3400-\u9fff]/, `${channel.id} qualityReason`);
     assert.match(channel.notes, /[\u3400-\u9fff]/, `${channel.id} notes`);
-    if (channel.kind === 'community' && !['bluesky','hive'].includes(channel.id)) assert.equal(channel.automation, 'manual');
+    if (channel.kind === 'community' && !['bluesky','hive','raindrop'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
 });

@@ -1,6 +1,6 @@
 import type {Account,Snapshot} from '../shared/types';
 
-export type ConnectionChannelId='mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky';
+export type ConnectionChannelId='mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'read_only'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -20,6 +20,8 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'rentry',name:'Rentry',format:'全文',firstStep:'无需注册账号；任务自动保存本机编辑凭据后发布。'},
   {id:'lucid-page',name:'Lucid.page',format:'全文',firstStep:'无需注册账号；匿名发布后修改或删除需先认领。'},
   {id:'betterthanhtml',name:'Better Than HTML',format:'全文',firstStep:'无需注册账号；任务直接发布静态全文，尚未确认文章修改或删除接口。'},
+  {id:'html-app',name:'ht-ml.app',format:'全文',firstStep:'无需账号；公开内容可能被抓取或复制，服务不保证长期保留。'},
+  {id:'deed-page',name:'deed.page',format:'全文',firstStep:'免注册发布静态全文；首次发布会加密保存一次性所有者令牌，后续文章复用同一免费所有者与配额。默认不设到期时间，但不保证长期可用或保留。'},
   {id:'supanote',name:'Supanote',format:'全文',firstStep:'无需注册账号；匿名发布 Markdown。平台未返回管理令牌时不承诺可编辑或删除。'},
   {id:'docs-md',name:'Docs MD',format:'全文',firstStep:'无需注册账号；匿名分享经核对的 Markdown，编辑令牌只加密保存在本机。'},
   {id:'paper-wf',name:'Paper.wf',format:'全文',firstStep:'可连接已有账号；自动建号可能需要首次人机验证。'},
@@ -33,11 +35,12 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'blogger',name:'Blogger',format:'全文',firstStep:'首次完成 Google 授权，再选择博客和网站。'},
   {id:'wordpress-com',name:'WordPress.com',format:'全文',firstStep:'首次在浏览器授权，再选择已公开博客和要关联的网站。'},
   {id:'leaflet',name:'Leaflet',format:'全文',firstStep:'首次连接本人 Bluesky 托管账号的应用密码，之后发布完整文章。'},
+  {id:'raindrop',name:'Raindrop',format:'短帖',firstStep:'本人确认邮箱并在最外层建立专用公开合集；粘贴个人 Test token、选择合集和实际公开地址。'},
   {id:'paragraph',name:'Paragraph',format:'全文',firstStep:'连接已有 publication 的 API key，并选择网站。'},
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
-const needsBinding=new Set<ConnectionChannelId>(['hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky']);
-const selfProvisioned=new Set<ConnectionChannelId>(['mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md']);
+const needsBinding=new Set<ConnectionChannelId>(['hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
+const selfProvisioned=new Set<ConnectionChannelId>(['mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page']);
 
 const fingerprintPattern=/^[0-9a-f]{64}$/;
 
@@ -63,16 +66,33 @@ export function isMarkestReadAccessAccount(account:Account){
     &&!(account.registrationAttempts??0);
 }
 
+export function isRaindropConnectionAccount(account:Account){
+  const binding=account.raindrop;
+  if(account.channelId!=='raindrop'||account.status!=='registered'||account.credentialKind!=='api_token'||!account.hasPassword||account.source!=='imported'||account.email!==''||binding?.version!==1)return false;
+  if(account.username!==binding.ownerId||account.publicationUrl!==binding.publicUrl)return false;
+  if(!positiveRemoteId(binding.ownerId)||!positiveRemoteId(binding.collectionId)||!fingerprintPattern.test(binding.tokenFingerprint)||!Number.isSafeInteger(binding.tokenVersion)||binding.tokenVersion<1||!Number.isFinite(Date.parse(binding.connectedAt)))return false;
+  try{
+    const url=new URL(binding.publicUrl);
+    return url.protocol==='https:'
+      &&!url.port&&!url.username&&!url.password&&!url.search&&!url.hash
+      &&url.pathname!=='/'&&/^[\x21-\x7e]+$/.test(url.pathname)
+      &&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.raindrop\.page$/.test(url.hostname.toLowerCase());
+  }catch{return false}
+}
+
+function positiveRemoteId(value:string){return /^[1-9][0-9]*$/.test(value)}
+
 function usable(account:Account,id:ConnectionChannelId){
   if(id==='markest')return isMarkestReadAccessAccount(account);
   if(id==='deno')return isDenoReadAccessAccount(account);
+  if(id==='raindrop')return isRaindropConnectionAccount(account);
   return account.status==='registered'&&account.hasPassword&&account.credentialKind===(id==='blogger'||id==='wordpress-com'?'oauth':'api_token');
 }
 
 export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBindings'|'sites'|'tasks'|'channels'>|null):ConnectionOverviewRow[]{
   if(!data)return [];
   return channels.map(({id,name,format,firstStep})=>{
-    const accounts=id==='docs-md'?[]:data.accounts.filter(account=>account.channelId===id);
+    const accounts=['docs-md','html-app'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id);
     const connected=accounts.filter(account=>usable(account,id));
     const connectedIds=new Set(connected.map(account=>account.id));
     const accountById=new Map(connected.map(account=>[account.id,account]));
@@ -107,7 +127,7 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
       else if(connected.length){state='read_only';detail=`${connected.length} 个个人 key 已通过列表读取${boundSiteIds.size?`，保留 ${boundSiteIds.size} 个网站关联`:''}；仅验证读取，发布未启用。邮箱和身份由你声明。`;}
       else {state='first_connection';detail=firstStep;}
     }else if(!data.channels.find(channel=>channel.id===id&&channel.enabled)){
-      state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':id==='docs-md'?'无需注册账号；真实托管公开页验收完成前保持停用。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
+      state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='raindrop'?'可连接本人账号、专用公开合集与 Test token；首篇真实发布和匿名读回尚待验收，当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':id==='docs-md'?'无需注册账号；真实托管公开页验收完成前保持停用。':id==='html-app'?'无需账号；正式启用后须在首次提交前阅读公开内容提示与条款并确认，真实发布验收前保持停用。':id==='deed-page'?'免注册静态全文；首次发布会生成一次性所有者令牌并只在本机加密保存。渠道当前停用时不会自动发布。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
     }else if(selfProvisioned.has(id)&&!issue&&!unbound){state='no_setup';detail=firstStep;}
     else if(!accounts.length){state='first_connection';detail=firstStep;}
     else if(issue){

@@ -14,14 +14,18 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,20);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['mataroa','verbose','lucid-page','betterthanhtml','supanote','nostr','telegraph']);
+  assert.equal(rows.length,23);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['mataroa','verbose','lucid-page','betterthanhtml','deed-page','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
   assert.equal(row(data,'docs-md').state,'unavailable');
   assert.equal(row(data,'docs-md').connectedCount,0);
   assert.match(row(data,'docs-md').detail,/无需注册账号.*真实托管公开页验收/);
+  assert.match(row(data,'html-app').detail,/首次提交前.*条款并确认/);
+  assert.doesNotMatch(row(data,'html-app').detail,/已展示/);
+  assert.equal(row(data,'deed-page').state,'no_setup');
+  assert.match(row(data,'deed-page').detail,/免注册发布静态全文.*一次性所有者令牌.*不保证长期可用或保留/);
   assert.equal(row(data,'wordpress-com').state,'unavailable');
   assert.match(row(data,'wordpress-com').detail,/浏览器授权.*尚待验收/);
   assert.equal(row(data,'prose').state,'unavailable');
@@ -148,12 +152,12 @@ test('connection overview covers APIs plus the read-only Markest connection',()=
 test('every disabled API stays unavailable without erasing connection or historical result counts',()=>{
   for(const channel of CHANNELS.filter(item=>item.automation==='api')){
     const data=snapshot();data.channels=CHANNELS.map(item=>({...item,enabled:item.id===channel.id?false:item.enabled}));
-    data.accounts=[account(channel.id)];data.tasks=[task(channel.id,{firstLiveAt:at})];
+    data.accounts=[account(channel.id,channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
-    if(!['wordpress-com','blogger','docs-md'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
-    else if(channel.id==='docs-md')assert.equal(found.connectedCount,0,channel.id);
+    if(!['wordpress-com','blogger','docs-md','html-app'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    else if(['docs-md','html-app'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
   }
 });
 

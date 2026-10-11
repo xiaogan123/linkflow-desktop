@@ -27,6 +27,8 @@ export interface ShareYourHtmlArticleInput {
   targetUrl: string;
   language: string;
   slug: string;
+  /** ht-ml.app safely preserves public documentation section anchors. */
+  allowLinkFragments?: boolean;
 }
 
 export interface RenderedShareYourHtmlArticle {
@@ -56,7 +58,7 @@ function escapeAttribute(value: string): string {
  * ports, fragments and credential-like query parameters. The caller must already
  * hold the canonical spelling so reviewed bytes and rendered bytes cannot drift.
  */
-function exactPublicHttpsUrl(value: unknown): string | undefined {
+function exactPublicHttpsUrl(value: unknown, allowFragment = false): string | undefined {
   if (typeof value !== 'string' || value !== value.trim() || value.length > 2_048
     || CONTROL.test(value)) return;
   try {
@@ -64,7 +66,7 @@ function exactPublicHttpsUrl(value: unknown): string | undefined {
     const host = url.hostname.toLowerCase().replace(/\.$/u, '');
     if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')
       || !PUBLIC_HOST.test(host) || /(?:^|\.)(?:localhost|local|internal|invalid|test)$/i.test(host)
-      || url.hash || [...url.searchParams.keys()].some(key => SECRET_QUERY.test(key))) return;
+      || !allowFragment && !!url.hash || [...url.searchParams.keys()].some(key => SECRET_QUERY.test(key))) return;
     url.hostname = host;
     if (url.port === '443') url.port = '';
     const canonical = url.href;
@@ -74,7 +76,7 @@ function exactPublicHttpsUrl(value: unknown): string | undefined {
   }
 }
 
-function assertSafeMarkdown(body: string, targetUrl: string): string {
+function assertSafeMarkdown(body: string, targetUrl: string, allowLinkFragments = false): string {
   const tokens = marked.lexer(body, { gfm: true });
   marked.walkTokens(tokens, token => {
     if (token.type === 'html' || token.type === 'image') {
@@ -83,7 +85,7 @@ function assertSafeMarkdown(body: string, targetUrl: string): string {
     if (token.type === 'list_item' && token.task) {
       throw Error('ShareYourHTML Markdown 任务控件不允许发布');
     }
-    if (token.type === 'link' && !exactPublicHttpsUrl(token.href)) {
+    if (token.type === 'link' && !exactPublicHttpsUrl(token.href, allowLinkFragments)) {
       throw Error('ShareYourHTML Markdown 链接必须是规范公开 HTTPS 地址');
     }
   });
@@ -107,7 +109,7 @@ function assertSafeMarkdown(body: string, targetUrl: string): string {
       const href = node.attr('href');
       const title = node.attr('title');
       if (attributeNames.some(attribute => !['href', 'title'].includes(attribute))
-        || !href || !exactPublicHttpsUrl(href)
+        || !href || !exactPublicHttpsUrl(href, allowLinkFragments)
         || title !== undefined && (!validUnicodeText(title, true) || title.length > 512)) {
         throw Error('ShareYourHTML Markdown 链接必须是规范公开 HTTPS 地址');
       }
@@ -172,7 +174,7 @@ export function renderShareYourHtmlArticle(
   const targetUrl = exactPublicHttpsUrl(input.targetUrl);
   if (!targetUrl) throw Error('ShareYourHTML 审核目标必须是规范公开 HTTPS 地址');
 
-  const article = assertSafeMarkdown(input.draft.body, targetUrl);
+  const article = assertSafeMarkdown(input.draft.body, targetUrl, input.allowLinkFragments === true);
   const language = input.language.toLowerCase();
   const html = '<!doctype html>\n'
     + `<html lang="${escapeAttribute(language)}"><head><meta charset="utf-8">`

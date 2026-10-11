@@ -14,14 +14,17 @@ import {runLucidTask,reconcileLucidTask} from './lucid';
 import {runBetterThanHtmlTask,reconcileBetterThanHtmlTask} from './betterthanhtml';
 import {runWordPressTask,reconcileWordPressTask} from './wordpress';
 import {runLeafletTask,reconcileLeafletTask} from './leaflet';
+import {runRaindropTask,reconcileRaindropTask} from './raindrop';
 import {runGistTask} from './gist';
 import {runSupanoteTask,reconcileSupanoteTask} from './supanote-publisher';
 import {runDocsMdTask,reconcileDocsMdTask} from './docs-md-publisher';
+import {runHtmlAppTask,reconcileHtmlAppTask} from './html-app-publisher';
+import {runDeedPageTask,reconcileDeedPageTask} from './deed-page-publisher';
 
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
   publish(context:ExecutionContext):Promise<ExecutionResult>;
-  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
+  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
 }
 const publishers:Readonly<Record<string,ApiPublisher>>={
   paragraph:{publish:runParagraphTask,reconcile:reconcileParagraphTask},
@@ -38,10 +41,13 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   blogger:{publish:runBloggerTask,reconcile:reconcileBloggerTask},
   'wordpress-com':{publish:runWordPressTask,reconcile:reconcileWordPressTask},
   leaflet:{publish:runLeafletTask,reconcile:reconcileLeafletTask},
+  raindrop:{publish:runRaindropTask,reconcile:reconcileRaindropTask},
   telegraph:{publish:runTelegraphTask,reconcile:reconcileTelegraphTask},
   'github-gist':{publish:runGistTask},
   supanote:{publish:runSupanoteTask,reconcile:reconcileSupanoteTask},
   'docs-md':{publish:runDocsMdTask,reconcile:reconcileDocsMdTask},
+  'html-app':{publish:runHtmlAppTask,reconcile:reconcileHtmlAppTask},
+  'deed-page':{publish:runDeedPageTask,reconcile:reconcileDeedPageTask},
 };
 /** Only registered built-in API adapters may execute; a catalog label grants nothing. */
 export function publisherFor(channel:Channel):ApiPublisher|undefined{

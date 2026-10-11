@@ -14,13 +14,14 @@ const channel=(id:string)=>{
 };
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','lucid-page','mataroa','nostr','supanote','telegraph','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','lucid-page','mataroa','nostr','supanote','telegraph','verbose']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','hive','paragraph']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
   assert.match(channelAutomationView(channel('paper-wf')).setup,/人机验证/);
   assert.match(channelAutomationView(channel('bluesky')).method??'',/短帖/);
   assert.match(channelAutomationView(channel('blogger')).setup,/本人完成 Google 授权/);
+  assert.match(channelAutomationView(channel('deed-page')).setup,/免注册发布静态全文.*不保证长期可用或保留/);
 });
 
 test('disabled, custom and unknown API rows do not inflate automatic capability counts',()=>{
