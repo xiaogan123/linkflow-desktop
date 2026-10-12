@@ -6,6 +6,10 @@ import type {MarkdropPersistence} from '../integrations/markdrop';
 import type {DraftmarkPersistence} from '../integrations/draftmark';
 import type {HereNowPersistence} from '../integrations/here-now';
 import type {PlopinoPersistence} from '../integrations/plopino';
+import type {VibeDropPublicationPersistence} from '../integrations/vibedrop';
+import type {NotebinIdentityBinding,NotebinPublicationPersistence} from '../integrations/notebin';
+import type {NotebinPublisherDependencies} from '../integrations/notebin-publisher';
+import type {NotebinIdentityJournal,NotebinPublicationJournal} from '../main/notebin-publication';
 import type {HtmlAppPublicNoticeAcceptance} from './html-app-notice';
 
 export type SiteStatus = 'analyzing'|'ready'|'paused'|'attention';
@@ -46,6 +50,8 @@ export interface DraftmarkTaskReceipt {operationId:string;sourceHash:string;requ
 export interface HereNowTaskReceipt {operationId:string;accountId:string;remoteAccountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'create_unknown'|'opaque_response'|'staged'|'uploaded'|'finalize_unknown'|'api_receipt'|'published';slug?:string;versionId?:string}
 export interface Task {hereNow?:HereNowTaskReceipt}
 export interface PlopinoTaskReceipt {operationId:string;accountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';boardId?:string;publicUrl?:string;ownership?:'pending'|'account_list_match';accountDefaultRetention?:'pending'|'no_default_expiry';boardExpiry?:'unknown';deletion?:'unknown'}
+export interface VibeDropTaskReceipt {operationId:string;accountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';siteId?:string;slug?:string;publicUrl?:string;expiresAt?:null;hasPassword?:false;ownership?:'pending'|'owned_list_match';approval?:'pending'|'explore_match'}
+export interface NotebinTaskReceipt {operationId:string;localAccountId:string;rootAccountId:string;noteKeyFingerprint:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'owned';itemId?:string;publicUrl?:string;viewUrl?:string;rawUrl?:string;remoteCreatedAt?:number;retention?:'no_scheduled_expiry'|'expiring'|'unknown';expiresAt?:number|null;ownership?:'pending'|'owned_list_match'}
 export interface ShareYourHtmlTaskReceipt {operationId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'api_receipt';requestedExpiry:'never';publicVerification:'pending';reviewedDraftRevision:number;reviewedDraftHash:string;siteId:string;siteIdentityHash:string}
 export interface ShareYourHtmlReadbackEvidence {checkedAt:string;status:'visible_match'|'unreachable'|'invalid_response'|'content_mismatch'|'content_hidden'|'visibility_unknown';content:'visible'|'mismatch'|'hidden'|'unknown';targetLinks:Array<{href:string;rel:string[]}>;indexing:{page:'not_restricted'|'restricted'|'unknown';directives:string[];robots:'allowed'|'disallowed'|'unknown'}}
 export interface WordPressReceipt {blogId:string;authorId:string;slug:string;contentHash:string;stage:'submitting'|'published';postId?:string;url?:string}
@@ -60,7 +66,9 @@ export type AccountStatus='draft'|'needs_verification'|'registered'|'credentials
 export type AccountIssueCode='legacy_saved'|'password_missing'|'bad_password'|'email_exists'|'username_taken'|'verification_required'|'registration_failed'|'registration_unknown'|'restricted';
 export interface AccountDiagnostic {code:AccountIssueCode;message:string;at:string;retryable:boolean}
 export interface Account {hereNow?:{version:1;checkedAt:string;accountId:string;keyFingerprint:string;identity:'verified_personal';existingSlug?:string;existingSiteUrl?:string}}
+export interface NotebinAccountProof {version:1;rootAccountId:string;rootKeyFingerprint:string;whoamiResponseHash:string;noteKeyFingerprint:string;keyId:string;keyListResponseHash:string;noteReadResponseHash:string;audience:'https://notebin.ca';scopes:readonly ['note:read','note:create'];rootIdentity:'exact_readback';keyBinding:'exact_response'|'exact_readback';verifiedAt:string}
 export interface Account {raindrop?:RaindropAccountBinding;denoReadAccess?:{version:1;checkedAt:string;appId:string;appSlug:string;declaredOrgSlug:string;tokenFingerprint:string;identity:'app_verified_org_declared'};markestReadAccess?:{version:1;checkedAt:string;keyFingerprint:string;identity:'user_declared'};mataroaExcludedSiteIds?:string[];verboseExcludedSiteIds?:string[];rentryExcludedSiteIds?:string[];publicationUrl?:string;displayName?:string;credentialKind?:'password'|'api_token'|'oauth';id:string;channelId:string;email:string;username:string;mailboxId?:string;createdAt:string;status:AccountStatus;hasPassword:boolean;source?:'generated'|'imported';updatedAt?:string;lastUsedAt?:string;registeredAt?:string;verifiedAt?:string;registrationAttempts?:number;diagnostic?:AccountDiagnostic}
+export interface Account {notebin?:NotebinAccountProof;notebinJournal?:NotebinIdentityJournal}
 export interface BloggerBlogSummary {id:string;name:string;url:string}
 export interface BloggerConnectionResult {account:Account;blogs:BloggerBlogSummary[]}
 export interface SiteAccountBinding {id:string;siteId:string;channelId:string;accountId:string;createdAt:string;updatedAt:string}
@@ -90,6 +98,12 @@ export interface ExecutionResult {hereNow?:HereNowTaskReceipt}
 export interface Task {plopino?:PlopinoTaskReceipt}
 export interface ExecutionContext {plopinoPersistence?:PlopinoPersistence}
 export interface ExecutionResult {plopino?:PlopinoTaskReceipt}
+export interface Task {vibedrop?:VibeDropTaskReceipt}
+export interface ExecutionContext {vibedropPersistence?:VibeDropPublicationPersistence}
+export interface ExecutionResult {vibedrop?:VibeDropTaskReceipt}
+export interface Task {notebin?:NotebinTaskReceipt;notebinJournal?:NotebinPublicationJournal}
+export interface ExecutionContext {notebinPersistence?:NotebinPublicationPersistence;notebinDependencies?:NotebinPublisherDependencies;notebinAccess?:{load():Promise<{rootAccountId:string;noteApiKey:string;binding:NotebinIdentityBinding}>}}
+export interface ExecutionResult {notebin?:NotebinTaskReceipt}
 export interface LinkResult {outcome?:'found'|'absent'|'unreachable'|'invalid';found:boolean;url:string;rel:string;reason:string}
 export const PLOPINO_IPC_COMMANDS=['account:connect-plopino'] as const;
 export const IPC_COMMANDS=['snapshot','site:add','site:update','site:delete','site:analyze','site:pause','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:save-key','task:retry','task:skip','task:verify','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit'] as const;

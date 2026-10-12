@@ -14,10 +14,14 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,27);
+  assert.equal(rows.length,29);
+  assert.equal(row(data,'notebin').state,'unavailable');
+  assert.match(row(data,'notebin').detail,/当前停用/);
+  assert.equal(row(data,'vibedrop').state,'no_setup');
+  assert.match(row(data,'vibedrop').detail,/自动建立并复用匿名发布身份.*无需邮箱.*不会重复发布/);
   assert.equal(row(data,'plopino').state,'no_setup');
   assert.match(row(data,'plopino').detail,/邮箱和密码.*自动建立一次.*不会重复注册/);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','markdrop','draftmark','supanote','nostr','telegraph']);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['vibedrop','plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','markdrop','draftmark','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
@@ -48,6 +52,11 @@ test('Verbose only becomes self-provisioned when its experimental channel is act
   const verbose=connectionOverview(data).find(item=>item.id==='verbose');
   assert.equal(verbose?.state,'attention');
   assert.match(verbose?.detail??'',/不能重新注册换号/);
+});
+
+test('Notebin does not present a generic registered row as a verified PoW identity',()=>{
+  const data={...snapshot(),channels:CHANNELS.map(channel=>channel.id==='notebin'?{...channel,enabled:true}:channel),accounts:[account('notebin',{source:'generated',username:'pow-root',registrationAttempts:1})]};
+  const notebin=row(data,'notebin');assert.equal(notebin.state,'attention');assert.equal(notebin.connectedCount,0);assert.match(notebin.detail,/本机身份需检查/);
 });
 
 test('Docs MD needs no account only when enabled and preserves historical checks when disabled',()=>{
@@ -162,8 +171,8 @@ test('every disabled API stays unavailable without erasing connection or histori
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
-    if(!['wordpress-com','blogger','docs-md','html-app'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
-    else if(['docs-md','html-app'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
+    if(!['wordpress-com','blogger','docs-md','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    else if(['docs-md','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
   }
 });
 

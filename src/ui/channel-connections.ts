@@ -1,6 +1,7 @@
 import type {Account,Snapshot} from '../shared/types';
+import {validNotebinAccount} from '../shared/notebin-account';
 
-export type ConnectionChannelId='plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'markdrop'|'draftmark'|'here-now'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
+export type ConnectionChannelId='notebin'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'markdrop'|'draftmark'|'here-now'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'read_only'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -15,6 +16,8 @@ export interface ConnectionOverviewRow {
 }
 
 const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firstStep:string}[]=[
+  {id:'notebin',name:'Notebin',format:'全文',firstStep:'任务按官方代理协议完成一次有界 PoW 身份创建，再铸造最小权限专用密钥并加密保存；结果不明时不重建身份或重发。首次真实验收前渠道保持停用。'},
+  {id:'vibedrop',name:'VibeDrop',format:'全文',firstStep:'任务自动建立并复用匿名发布身份，无需邮箱或手动创建令牌；凭据在本机加密保存，结果不明时只读核对原页面，不会重复发布。'},
   {id:'plopino',name:'Plopino',format:'全文',firstStep:'已有账号可用邮箱和密码连接；没有账号时，任务会用网站已授权邮箱自动建立一次，结果不明不会重复注册。'},
   {id:'mataroa',name:'Mataroa',format:'全文',firstStep:'任务需要时自动建号；遇平台验证则保留原身份。'},
   {id:'verbose',name:'Verbose.blog',format:'全文',firstStep:'实验渠道可在任务需要时自动建号；一次性令牌无法补发。'},
@@ -43,8 +46,8 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'paragraph',name:'Paragraph',format:'全文',firstStep:'连接已有 publication 的 API key，并选择网站。'},
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
-const needsBinding=new Set<ConnectionChannelId>(['plopino','here-now','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
-const selfProvisioned=new Set<ConnectionChannelId>(['plopino','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
+const needsBinding=new Set<ConnectionChannelId>(['notebin','vibedrop','plopino','here-now','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
+const selfProvisioned=new Set<ConnectionChannelId>(['notebin','vibedrop','plopino','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
 
 const fingerprintPattern=/^[0-9a-f]{64}$/;
 
@@ -92,6 +95,7 @@ export function isHereNowConnectionAccount(account:Account){
 function positiveRemoteId(value:string){return /^[1-9][0-9]*$/.test(value)}
 
 function usable(account:Account,id:ConnectionChannelId){
+  if(id==='notebin')return validNotebinAccount(account);
   if(id==='markest')return isMarkestReadAccessAccount(account);
   if(id==='deno')return isDenoReadAccessAccount(account);
   if(id==='raindrop')return isRaindropConnectionAccount(account);
@@ -138,7 +142,7 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
       else {state='first_connection';detail=firstStep;}
     }else if(!data.channels.find(channel=>channel.id===id&&channel.enabled)){
       state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='raindrop'?'可连接本人账号、专用公开合集与 Test token；首篇真实发布和匿名读回尚待验收，当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':id==='docs-md'?'无需注册账号；真实托管公开页验收完成前保持停用。':id==='html-app'?'无需账号；正式启用后须在首次提交前阅读公开内容提示与条款并确认，真实发布验收前保持停用。':id==='deed-page'?'免注册静态全文；首次发布会生成一次性所有者令牌并只在本机加密保存。渠道当前停用时不会自动发布。':id==='markdrop'?'免注册 Markdown 全文；一次性编辑密钥仅在本机加密保存。渠道当前停用时不会自动发布。':id==='draftmark'?'免注册公开 Markdown 全文；逐文档凭据仅在本机加密保存。真实发布验收前保持停用。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
-    }else if(selfProvisioned.has(id)&&!issue&&!unbound&&(id!=='plopino'||!accounts.length)){state='no_setup';detail=firstStep;}
+    }else if(selfProvisioned.has(id)&&!issue&&!unbound&&(!['plopino','vibedrop','notebin'].includes(id)||!accounts.length)){state='no_setup';detail=firstStep;}
     else if(!accounts.length){state='first_connection';detail=firstStep;}
     else if(issue){
       state='attention';

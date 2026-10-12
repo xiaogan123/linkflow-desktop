@@ -5,7 +5,7 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
+const automaticIdentity=new Set(['notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark']);
 const connectedIdentity=new Set(['here-now','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
@@ -25,6 +25,8 @@ export function channelMatchesAutomation(channel:Channel,filter:ChannelAutomatio
 }
 
 const setupById:Record<string,string>={
+  notebin:'任务按官方协议完成一次有界 PoW 身份创建并铸造最小权限专用密钥；结果不明时只读对账，不重建身份或重发',
+  vibedrop:'任务仅创建一次匿名密钥并加密保存；结果不明时只读对账，不重建密钥或站点',
   plopino:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可直接连接，结果不明不会重复注册；无需手工创建 API 令牌',
   'here-now':'首次连接已完成邮箱验证的个人账号 API key，并关联网站；之后按审核与排期自动发布全文',
   telegraph:'自动创建作者身份，无需首次连接',

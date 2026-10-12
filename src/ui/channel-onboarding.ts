@@ -28,6 +28,8 @@ const labelByKind:Record<ChannelOnboardingKind,string>={
 // an automatic publisher capability, enable a disabled channel, or prove that
 // a candidate can be used for a particular site.
 const onboardingById:Record<string,OnboardingDefinition>={
+  notebin:{kind:'ai_account',setup:'任务按官方代理协议完成有界 PoW 注册并铸造 audience 与 note 权限受限的专用密钥；凭据只加密保存在本机，结果不明时不重建身份或重发',verification:{checkedAt:'2026-10-12',sourceUrl:'https://pastebin.ca/auth.md'}},
+  vibedrop:{kind:'ai_account',setup:'任务创建一枚匿名密钥并仅在本机加密保存；密钥或发布结果不明时不会自动重试',verification:{checkedAt:'2026-10-12',sourceUrl:'https://vibedrop.cc/skill.md'}},
   plopino:{kind:'ai_account',setup:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可用邮箱和密码连接，注册结果不明不会重复注册',verification:{checkedAt:'2026-10-11',sourceUrl:'https://plopino.com/publish'}},
   'here-now':{kind:'existing_account',setup:'首次需要邮箱验证并连接个人账号 API key；关联网站后按审核与排期发布，邮箱验证码仍需本人完成',verification:{checkedAt:'2026-10-11',sourceUrl:'https://here.now/docs'}},
   raindrop:{kind:'existing_account',setup:'本人注册 Raindrop 并确认邮箱，在最外层建立专用公开合集；在显示选项中开启描述/摘要，复制实际 Public Page 地址，再粘贴个人 Test token 完成连接。软件不会自动注册或改变合集公开性',aliases:['Raindrop.io','raindrop.page'],verification:{checkedAt:'2026-10-10',sourceUrl:'https://help.raindrop.io/public-page'}},
