@@ -118,7 +118,8 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   await clickText('资料页');check('profile filter does not claim article automation',await evaluate('document.querySelectorAll(".channel-table tbody tr:not(.channel-details-row)").length===4&&document.body.innerText.includes("仅维护资料页")'));
   await clickText('全部');await delay(100);await capture('channels.png');
   await evaluate(`document.querySelector('[aria-label="查看 GitHub 详情"]').click()`);await delay(150);
-  check('list rows disclose capability boundaries and honest unknown metrics',await evaluate('document.body.innerText.includes("资格与执行边界")&&document.body.innerText.includes("权威未知")&&document.body.innerText.includes("不会以 0 代替")'));
+  check('list rows disclose capability boundaries and honest unknown metrics',await evaluate('document.body.innerText.includes("资格与执行边界")&&document.body.innerText.includes("DR 未知")&&document.body.innerText.includes("Google PR 无当前公开值")&&document.body.innerText.includes("官方公开快照，非实时查询")'));
+  check('catalog displays all exact official DR snapshots with linked attribution',await evaluate(`(()=>{const cells=[...document.querySelectorAll('.metric-cell')];const scored=cells.filter(c=>/^DR [0-9]/.test(c.querySelector('strong')?.textContent??''));return scored.length===34&&scored.every(c=>c.querySelector('a')?.href==='https://ahrefs.com/'&&c.innerText.includes('2026-10'))&&cells.filter(c=>c.querySelector('strong')?.textContent==='DR 未知').length===62})()`));
 
   await clickText('金融 / 加密内容');await delay(100);
   check('finance filter shows conditional financial candidates and keeps restrictions visible',await evaluate('document.body.innerText.includes("WordPress.com")&&document.body.innerText.includes("Publish0x（仅人工原创）")&&!document.body.innerText.includes("Product Hunt")&&document.body.innerText.includes("分类不代表返佣内容获准或可立即发布")&&document.body.innerText.includes("当前停用")'));

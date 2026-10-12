@@ -1,5 +1,6 @@
 import type { Category, Channel, Site } from '../shared/types.js';
 import {channelDiscoveryFor} from './channel-discovery';
+import {channelAuthoritySnapshot} from './channel-authority-snapshots';
 
 const checkedAt = '2026-09-27';
 type Entry = Pick<Channel, 'id'|'name'|'domain'|'submitUrl'|'categories'|'kind'|'free'|'freeNote'|'quality'|'qualityReason'|'rulesUrl'|'notes'> &
@@ -18,6 +19,7 @@ function channel(entry: Entry): Channel {
     provenance: 'built-in',
     evidenceStatus: 'rules_checked',
     checkedAt,
+    authority:channelAuthoritySnapshot(entry.domain),
     ...entry,
   };
 }

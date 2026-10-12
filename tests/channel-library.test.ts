@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {CHANNELS,matchChannels} from '../src/integrations/catalog';
 import {eligibilityFor} from '../src/integrations/eligibility';
 import {composeChannels,saveCustomChannel,deleteCustomChannel,importChannelMetrics} from '../src/integrations/channel-library';
+import {channelAuthoritySnapshot} from '../src/integrations/channel-authority-snapshots';
 import type {Site} from '../src/shared/types';
 const site:Site={id:'site',domain:'example.com',url:'https://example.com',email:'owner@example.com',name:'Recipes',description:'Cooking and recipes',category:'content',language:'en',monthlyTarget:2,status:'ready',createdAt:'2026-01-01'};
 const channel=(id:string)=>CHANNELS.find(c=>c.id===id)!;
@@ -58,4 +59,47 @@ test('metrics reject encoded credentials and future measurement periods',()=>{
  const base={channelId:CHANNELS[0].id,traffic:{monthly:100,source:'https://example.com/metrics',asOf:'2026-09-01',period:'2026-08'}};
  assert.throws(()=>importChannelMetrics({},[{...base,traffic:{...base.traffic,period:'9999-12'}}],CHANNELS));
  assert.throws(()=>importChannelMetrics({},[{...base,traffic:{...base.traffic,source:'https://example.com/?%74oken=synthetic-canary'}}],CHANNELS));
+});
+
+test('authority measurements preserve their explicit target without attributing it to the channel or a new page',()=>{
+ const authority={name:'Ahrefs DR',value:0,source:'https://metrics.example.com/report',asOf:'2026-09-01',scope:'domain' as const,target:'example.com'};
+ const metrics=importChannelMetrics({},[{channelId:'telegraph',authority}],CHANNELS);
+ const composed=composeChannels(CHANNELS,[],metrics).find(c=>c.id==='telegraph')!;
+ assert.equal(composed.domain,'telegra.ph');
+ assert.deepEqual(composed.authority,authority);
+ const legacy=importChannelMetrics({},[{channelId:'telegraph',authority:{name:'DR',value:42,source:authority.source,asOf:authority.asOf}}],CHANNELS);
+ assert.equal(legacy.telegraph.authority?.target,undefined);
+ assert.equal(legacy.telegraph.authority?.scope,undefined);
+ const subdomain=importChannelMetrics({},[{channelId:'telegraph',authority:{...authority,scope:'subdomain',target:'journal.example.com'}}],CHANNELS);
+ assert.equal(subdomain.telegraph.authority?.target,'journal.example.com');
+});
+
+test('authority target validation distinguishes a public domain from a credential-free page URL',()=>{
+ const authority={name:'Example score',value:42,source:'https://metrics.example.com/report',asOf:'2026-09-01',scope:'domain' as const,target:'example.com'};
+ const apply=(patch:Record<string,unknown>)=>importChannelMetrics({},[{channelId:'telegraph',authority:{...authority,...patch}}],CHANNELS);
+ for(const target of ['https://example.com/article','example.com/article','localhost','127.0.0.1','example.invalid'])assert.throws(()=>apply({target}));
+ assert.throws(()=>apply({scope:undefined}));
+ for(const target of ['http://example.com/article','https://user:pass@example.com/article','https://example.com/?%74oken=fixture'])assert.throws(()=>apply({scope:'page',target}));
+ assert.equal(apply({scope:'page',target:'https://example.com/article'}).telegraph.authority?.target,'https://example.com/article');
+});
+
+test('official monthly DR snapshots retain month precision and never propagate to hosted subdomains',()=>{
+ for(const domain of ['github.com','medium.com','wordpress.com']){
+  const score=channelAuthoritySnapshot(domain)!;
+  assert.equal(score.target,domain);assert.equal(score.scope,'domain');assert.equal(score.asOf,undefined);
+  assert.equal(score.dataMonth,'2026-10');assert.equal(score.checkedAt,'2026-10-12');assert.equal(score.provenance,'official_snapshot');
+ }
+ for(const domain of ['gist.github.com','github.io','author.wordpress.com','author.medium.com','__proto__'])assert.equal(channelAuthoritySnapshot(domain),undefined);
+ const base=CHANNELS.find(c=>c.domain==='github.com')!;
+ assert.equal(base.authority?.provenance,'official_snapshot');
+ const userScore={name:'Ahrefs DR',value:0,source:'https://metrics.example.com/user-report',asOf:'2026-09-01',scope:'domain' as const,target:'github.com'};
+ const imported=importChannelMetrics({},[{channelId:base.id,authority:userScore}],CHANNELS);
+ assert.deepEqual(composeChannels(CHANNELS,[],imported).find(c=>c.id===base.id)?.authority,userScore);
+ assert.throws(()=>importChannelMetrics({},[{channelId:base.id,authority:channelAuthoritySnapshot('github.com')}],CHANNELS));
+});
+
+test('month-only metric imports require an actual check date and retain the original precision',()=>{
+ const authority={name:'Ahrefs DR',value:0,source:'https://metrics.example.com/report',dataMonth:'2026-09',checkedAt:'2026-09-28',scope:'domain',target:'example.com'};
+ assert.equal(importChannelMetrics({},[{channelId:'telegraph',authority}],CHANNELS).telegraph.authority?.asOf,undefined);
+ for(const patch of [{checkedAt:undefined},{dataMonth:'2099-01'},{dataMonth:'2026-13'},{dataMonth:undefined}])assert.throws(()=>importChannelMetrics({},[{channelId:'telegraph',authority:{...authority,...patch}}],CHANNELS));
 });

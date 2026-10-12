@@ -23,7 +23,15 @@ export const CustomChannelInput=z.object({
  freeNote:z.string().trim().min(1).max(500),rulesUrl:httpsUrl,notes:z.string().trim().min(1).max(2000),
  requirements:z.array(qualification).max(30).optional(),enabled:z.boolean().optional(),
 }).strict();
-const Authority=z.object({name:z.string().trim().min(1).max(80),value:z.number().finite().min(0).max(100),source:httpsUrl,asOf:date,scope:z.enum(['domain','subdomain','page']).optional()}).strict();
+const Authority=z.object({name:z.string().trim().min(1).max(80),value:z.number().finite().min(0).max(100),source:httpsUrl,asOf:date.optional(),scope:z.enum(['domain','subdomain','page']).optional(),target:z.string().trim().min(1).max(2048).optional(),dataMonth:z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/).optional(),checkedAt:date.optional()}).strict().superRefine((value,ctx)=>{
+ if(!value.asOf&&!value.dataMonth)ctx.addIssue({code:'custom',path:['asOf'],message:'需要数据日期或来源明确提供的数据月份'});
+ if(value.dataMonth&&(!value.checkedAt||value.dataMonth>value.checkedAt.slice(0,7)))ctx.addIssue({code:'custom',path:['dataMonth'],message:'月度数据必须有核查日期，且数据月份不能晚于核查月份'});
+ // Older imports did not record the measured target; preserve them without inferring one.
+ if(value.target===undefined)return;
+ if(!value.scope){ctx.addIssue({code:'custom',path:['scope'],message:'填写测量对象时必须选择域名、子域名或页面口径'});return}
+ const valid=value.scope==='page'?httpsUrl.safeParse(value.target).success:host.safeParse(value.target).success;
+ if(!valid)ctx.addIssue({code:'custom',path:['target'],message:value.scope==='page'?'页面指标需要不含凭据的公开 HTTPS 测量地址':'域名指标的测量对象只能填写公开域名，不能包含网址路径'});
+});
 const Traffic=z.object({monthly:z.number().finite().int().min(0).max(1e13),source:httpsUrl,asOf:date,region:z.string().trim().max(80).optional(),period:z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/).optional(),metric:z.enum(['visits','organicVisits']).optional(),estimated:z.boolean().optional()}).strict().refine(value=>!value.period||value.period<=value.asOf.slice(0,7),'流量月份不能晚于核查日期所在月份');
 export const MetricRows=z.array(z.object({channelId:z.string().min(1).max(100),authority:Authority.nullable().optional(),traffic:Traffic.nullable().optional()}).strict().refine(x=>x.authority!==undefined||x.traffic!==undefined,'每行需要权重或流量数据')).min(1).max(1000);
 

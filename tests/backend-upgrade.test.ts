@@ -158,6 +158,16 @@ test('validated backup preserves a real custom-channel id and sourced metrics',(
  const restored=validateBackup({state,secrets:{}}).state;assert.equal(restored.customChannels?.[0].id,custom[0].id);assert.deepEqual(restored.channelMetrics?.[custom[0].id],state.channelMetrics[custom[0].id]);
 });
 
+test('metric backup restores explicit measurement targets and leaves older imports unmodified',()=>{
+ const state=emptyState();
+ state.channelMetrics={telegraph:{authority:{name:'Ahrefs DR',value:0,source:'https://metrics.example.org/report',asOf:'2026-09-28',scope:'subdomain',target:'journal.example.org'}},'github-gist':{authority:{name:'DR',value:42,source:'https://metrics.example.org/legacy',asOf:'2026-09-28'}}};
+ assert.deepEqual(validateBackup({state,secrets:{}}).state.channelMetrics,state.channelMetrics);
+ state.channelMetrics['github-gist']={authority:{name:'DR',value:42,source:'https://metrics.example.org/monthly',dataMonth:'2026-09',checkedAt:'2026-09-28',scope:'domain',target:'example.org'}};
+ assert.deepEqual(validateBackup({state,secrets:{}}).state.channelMetrics,state.channelMetrics);
+ state.channelMetrics.telegraph.authority!.target='https://example.org/article';
+ assert.throws(()=>validateBackup({state,secrets:{}}),/测量对象/);
+});
+
 
 test('password import rejects managed API channels and existing API identities before encryption',()=>{
  const store=new Store(':memory:');let encrypted=false;

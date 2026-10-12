@@ -9,7 +9,7 @@ function financeSite(language='en'):Site{return {id:'publisher',domain:'publishe
 
 test('publisher and brand expansion is evidence-backed and remains manual',()=>{
  assert.equal(CHANNELS.length,96);
- for(const id of addedIds){const channel=CHANNELS.find(item=>item.id===id);assert(channel,id);assert.equal(channel.automation,'manual',id);assert.equal(channel.checkedAt,'2026-09-30',id);assert.equal(channel.evidenceStatus,'rules_checked',id);assert.equal(channel.authority,undefined,id);assert.equal(channel.traffic,undefined,id);assert(channel.rulesUrl.startsWith('https://'),id)}
+ for(const id of addedIds){const channel=CHANNELS.find(item=>item.id===id);assert(channel,id);assert.equal(channel.automation,'manual',id);assert.equal(channel.checkedAt,'2026-09-30',id);assert.equal(channel.evidenceStatus,'rules_checked',id);if(channel.authority){assert.equal(channel.authority.target,channel.domain,id);assert.equal(channel.authority.provenance,'official_snapshot',id)}assert.equal(channel.traffic,undefined,id);assert(channel.rulesUrl.startsWith('https://'),id)}
  const blogger=CHANNELS.find(channel=>channel.id==='blogger');assert(blogger);assert.equal(blogger.automation,'api');assert.match(blogger.notes,/OAuth/);assert.match(blogger.notes,/绑定.*博客/);
  assert.equal(CHANNELS.filter(channel=>channel.automation==='api').length,27);
  const prose=CHANNELS.find(channel=>channel.id==='prose');assert(prose);assert.equal(prose.enabled,false);assert.equal(prose.evidenceStatus,'source_checked');

@@ -57,3 +57,9 @@
 /* Let short windows scroll the page instead of squeezing results below the filters. */
 @media(max-height:850px){.channels-page.page{height:auto;min-height:calc(100vh - 114px)}.channels-page>.directory-panel{flex:none}.channels-page .table-scroll{flex:none;min-height:240px;max-height:55vh}}
 @media(max-width:1070px){.channels-page .channel-summary{flex-wrap:wrap;row-gap:12px}.channels-page .channel-summary>p{display:block;flex:0 0 100%;margin:0;padding-left:0}}
+
+/* Preserve metric scope and dates without stretching the channel directory. */
+.metric-cell{min-width:170px;max-width:220px;white-space:normal;overflow-wrap:anywhere}
+.metric-cell strong{font-size:12px;color:#263852}
+.metric-cell a{color:#315bc8;text-decoration:underline;text-underline-offset:2px}
+.metric-cell small{font-size:10px;color:#65758e}
