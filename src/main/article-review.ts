@@ -9,6 +9,7 @@ import {isArticleTopicUrl} from '../shared/topic-policy';
 import {socialDraftError} from '../shared/social-content';
 import {supanoteDraftError} from '../integrations/supanote-publisher';
 import {docsMdDraftError} from '../integrations/docs-md-publisher';
+import {katbinDraftError} from '../integrations/katbin-publisher';
 import {htmlAppDraftError} from '../integrations/html-app-publisher';
 import {raindropDraftError} from '../shared/raindrop-content';
 import {TopicDiscoveryError} from '../integrations/topics';
@@ -173,6 +174,7 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
   if(!task.draft?.body.trim())return fail('AI 核对未通过：稿件正文为空。');
   const betterThanHtmlError=channel.id==='betterthanhtml'?betterThanHtmlDraftError(task.draft):undefined;if(betterThanHtmlError)return fail(betterThanHtmlError,[],'content_rejected');
   const supanoteError=channel.id==='supanote'?supanoteDraftError(task.draft):undefined;if(supanoteError)return fail(supanoteError,[],'content_rejected');
+  const katbinError=channel.id==='katbin'?katbinDraftError(task,site):undefined;if(katbinError)return fail(katbinError,[],'content_rejected');
   const docsMdError=channel.id==='docs-md'?docsMdDraftError(task.draft):undefined;if(docsMdError)return fail(docsMdError,[],'content_rejected');
   const htmlAppError=channel.id==='html-app'?htmlAppDraftError(task,site):undefined;if(htmlAppError)return fail(htmlAppError,[],'content_rejected');
   const formatError=channel.id==='raindrop'?raindropDraftError(task.draft):socialDraftError(task,site,channel);if(formatError)return fail(formatError,[],'content_rejected');

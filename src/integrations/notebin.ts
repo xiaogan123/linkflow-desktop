@@ -324,7 +324,7 @@ async function capturedRequest(url:string,init:RequestInit,maximum:number,deps:N
   try{return await abortable(captured,foreground.signal)}finally{foreground.stop();void captured.catch(()=>undefined)}
 }
 function safeReason(error:unknown){return error instanceof RequestFailure?error.kind:'persistence_or_contract'}
-function signupBody(challenge:NotebinPowChallenge,nonce:number,displayName:string){return JSON.stringify({challenge_id:challenge.challengeId,nonce,display_name:displayName})}
+function signupBody(challenge:NotebinPowChallenge,nonce:number,displayName:string){return JSON.stringify({challenge_id:challenge.challengeId,nonce:String(nonce),display_name:displayName})}
 function mintBody(){return JSON.stringify({audience:NOTEBIN_ORIGIN,scopes:['note:read','note:create']})}
 export function notebinNoteRequest(title:string,description:string,markdown:string){
   if(typeof title!=='string'||!title.trim()||title.length>300||typeof description!=='string'||description.length>1000||typeof markdown!=='string'||!markdown.trim())throw Error('Notebin 稿件输入无效');
