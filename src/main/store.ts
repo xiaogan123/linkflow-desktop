@@ -124,6 +124,38 @@ function assertKatbinTransition(previous:State,next:State,previousCiphers:Record
   }
 }
 
+function assertPasteMystTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.pastemyst)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.pastemyst,current=after?.pastemyst,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||prior.remoteCreatedAt!==undefined&&current.remoteCreatedAt!==prior.remoteCreatedAt||before.submittedAt!==after.submittedAt
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('PasteMyst 单次发布意图或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('PasteMyst 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('PasteMyst 加密原始响应不能删除或替换');
+  }
+}
+
+function assertMarkdownPasteTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.markdownPaste)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.markdownPaste,current=after?.markdownPaste,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||prior.remoteCreatedAt!==undefined&&current.remoteCreatedAt!==prior.remoteCreatedAt||before.submittedAt!==after.submittedAt
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('Markdown Pastebin 单次发布意图或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('Markdown Pastebin 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('Markdown Pastebin 加密原始响应不能删除或替换');
+  }
+}
+
 function email(value:string|undefined){return (value??'').trim().toLowerCase()}
 function sameMailboxIdentity(mailbox:Pick<Mailbox,'host'|'port'|'user'|'secure'>,legacy:Pick<Settings['mail'],'host'|'port'|'user'|'secure'>){const host=(value:string)=>value.trim().toLowerCase().replace(/\.$/,'');return host(mailbox.host)===host(legacy.host)&&mailbox.port===legacy.port&&mailbox.user.trim()===legacy.user.trim()&&mailbox.secure===legacy.secure}
 /** Additive migration only: it never deletes identities, tasks, legacy fields or secret keys. */
@@ -202,12 +234,12 @@ export class Store {
     if(JSON.stringify(this.state)!==JSON.stringify(previous)||JSON.stringify(this.allCiphers())!==JSON.stringify(previousCiphers))throw Error('Store 更新期间已有更晚的持久化结果，已拒绝旧快照覆盖');
   }
   update(fn:(draft:State)=>void):void{
-    const previous=this.read(),previousCiphers=this.allCiphers(),draft=structuredClone(previous);fn(draft);this.assertNoNestedWrite(previous,previousCiphers);draft.events=draft.events.slice(-500);assertShareClaimTransition(previous,draft,previousCiphers,previousCiphers);assertKatbinTransition(previous,draft,previousCiphers,previousCiphers);this.persist(draft);this.state=draft;this.notify();
+    const previous=this.read(),previousCiphers=this.allCiphers(),draft=structuredClone(previous);fn(draft);this.assertNoNestedWrite(previous,previousCiphers);draft.events=draft.events.slice(-500);assertShareClaimTransition(previous,draft,previousCiphers,previousCiphers);assertKatbinTransition(previous,draft,previousCiphers,previousCiphers);assertPasteMystTransition(previous,draft,previousCiphers,previousCiphers);assertMarkdownPasteTransition(previous,draft,previousCiphers,previousCiphers);this.persist(draft);this.state=draft;this.notify();
   }
   updateWithCiphers(fn:(draft:State)=>void,ciphers:Record<string,string>,deleteKeys:string[]=[]):void{
     if(deleteKeys.some(key=>Object.hasOwn(ciphers,key)))throw Error('同一加密字段不能在一次事务中同时写入和删除');
     const previous=this.read(),previousCiphers=this.allCiphers(),draft=structuredClone(previous);fn(draft);this.assertNoNestedWrite(previous,previousCiphers);draft.events=draft.events.slice(-500);
-    const nextCiphers={...previousCiphers,...ciphers};for(const key of deleteKeys)delete nextCiphers[key];assertShareClaimTransition(previous,draft,previousCiphers,nextCiphers);assertKatbinTransition(previous,draft,previousCiphers,nextCiphers);
+    const nextCiphers={...previousCiphers,...ciphers};for(const key of deleteKeys)delete nextCiphers[key];assertShareClaimTransition(previous,draft,previousCiphers,nextCiphers);assertKatbinTransition(previous,draft,previousCiphers,nextCiphers);assertPasteMystTransition(previous,draft,previousCiphers,nextCiphers);assertMarkdownPasteTransition(previous,draft,previousCiphers,nextCiphers);
     this.db.exec('BEGIN IMMEDIATE');
     try{this.persist(draft);for(const key of deleteKeys)this.deleteCipher(key);for(const [key,value] of Object.entries(ciphers))this.setCipher(key,value);this.db.exec('COMMIT')}catch(error){this.db.exec('ROLLBACK');throw error}
     this.state=draft;this.notify();
@@ -221,7 +253,7 @@ export class Store {
   deleteCipher(key:string){this.db.prepare('DELETE FROM secrets WHERE key=?').run(key)}
   allCiphers():Record<string,string>{return Object.fromEntries((this.db.prepare('SELECT key,value FROM secrets').all() as {key:string,value:string}[]).map(x=>[x.key,x.value]))}
   restore(state:State,ciphers:Record<string,string>){
-    const previous=this.read(),previousCiphers=this.allCiphers();state=structuredClone(migrateState(state));assertShareClaimTransition(previous,state,previousCiphers,ciphers,true,true);assertKatbinTransition(previous,state,previousCiphers,ciphers);
+    const previous=this.read(),previousCiphers=this.allCiphers();state=structuredClone(migrateState(state));assertShareClaimTransition(previous,state,previousCiphers,ciphers,true,true);assertKatbinTransition(previous,state,previousCiphers,ciphers);assertPasteMystTransition(previous,state,previousCiphers,ciphers);assertMarkdownPasteTransition(previous,state,previousCiphers,ciphers);
     this.db.exec('BEGIN IMMEDIATE');
     try{this.persist(state);this.db.exec('DELETE FROM secrets');for(const [k,v]of Object.entries(ciphers))this.setCipher(k,v);this.db.exec('COMMIT');}catch(e){this.db.exec('ROLLBACK');throw e;}
     this.state=state;this.notify();

@@ -1,7 +1,7 @@
 import type {Account,Snapshot} from '../shared/types';
 import {validNotebinAccount} from '../shared/notebin-account';
 
-export type ConnectionChannelId='notebin'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'markdrop'|'katbin'|'draftmark'|'here-now'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
+export type ConnectionChannelId='notebin'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'markdrop'|'katbin'|'pastemyst'|'markdownpaste'|'draftmark'|'here-now'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'read_only'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -27,6 +27,8 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'html-app',name:'ht-ml.app',format:'全文',firstStep:'无需账号；公开内容可能被抓取或复制，服务不保证长期保留。'},
   {id:'deed-page',name:'deed.page',format:'全文',firstStep:'免注册发布静态全文；首次发布会加密保存一次性所有者令牌，后续文章复用同一免费所有者与配额。默认不设到期时间，但不保证长期可用或保留。'},
   {id:'katbin',name:'Katbin',format:'全文',firstStep:'免账号发布完整 Markdown；原始创建响应在本机加密保留。结果不明不重发；没有匿名编辑、删除或列表找回。'},
+  {id:'pastemyst',name:'PasteMyst',format:'全文',firstStep:'免账号发布完整 Markdown；原始创建响应在本机加密保留。结果不明不重发；没有安全的匿名所有者编辑、删除或列表找回。'},
+  {id:'markdownpaste',name:'Markdown Pastebin',format:'全文',firstStep:'免账号发布完整 Markdown；expires_in=0 只表示不主动过期。官方源码存在按 ID 无认证删除，客户端不会调用删除，不能视为永久或受保护存储。'},
   {id:'markdrop',name:'Markdrop',format:'全文',firstStep:'免注册发布 Markdown 全文；一次性编辑密钥使用操作系统加密后仅存本机。默认不到期，但不保证长期可用或保留。'},
   {id:'draftmark',name:'Draftmark',format:'全文',firstStep:'免注册发布公开 Markdown 全文；逐文档 magic token 和 API key 使用操作系统加密后仅存本机。没有免费层 SLA 或永久保留保证。'},
   {id:'here-now',name:'here.now',format:'全文',firstStep:'一次连接已验证邮箱的个人账户命名 API key；可同时只读核对已有页面。匿名 24 小时页面不作为永久身份。'},
@@ -48,7 +50,7 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖';firs
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
 const needsBinding=new Set<ConnectionChannelId>(['notebin','vibedrop','plopino','here-now','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
-const selfProvisioned=new Set<ConnectionChannelId>(['notebin','vibedrop','plopino','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','katbin','draftmark']);
+const selfProvisioned=new Set<ConnectionChannelId>(['notebin','vibedrop','plopino','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','katbin','pastemyst','markdownpaste','draftmark']);
 
 const fingerprintPattern=/^[0-9a-f]{64}$/;
 
@@ -107,7 +109,7 @@ function usable(account:Account,id:ConnectionChannelId){
 export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBindings'|'sites'|'tasks'|'channels'>|null):ConnectionOverviewRow[]{
   if(!data)return [];
   return channels.map(({id,name,format,firstStep})=>{
-    const accounts=['docs-md','katbin','html-app'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id);
+    const accounts=['docs-md','katbin','pastemyst','markdownpaste','html-app'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id);
     const connected=accounts.filter(account=>usable(account,id));
     const connectedIds=new Set(connected.map(account=>account.id));
     const accountById=new Map(connected.map(account=>[account.id,account]));
@@ -142,7 +144,7 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
       else if(connected.length){state='read_only';detail=`${connected.length} 个个人 key 已通过列表读取${boundSiteIds.size?`，保留 ${boundSiteIds.size} 个网站关联`:''}；仅验证读取，发布未启用。邮箱和身份由你声明。`;}
       else {state='first_connection';detail=firstStep;}
     }else if(!data.channels.find(channel=>channel.id===id&&channel.enabled)){
-      state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='raindrop'?'可连接本人账号、专用公开合集与 Test token；首篇真实发布和匿名读回尚待验收，当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':id==='docs-md'?'无需注册账号；真实托管公开页验收完成前保持停用。':id==='html-app'?'无需账号；正式启用后须在首次提交前阅读公开内容提示与条款并确认，真实发布验收前保持停用。':id==='deed-page'?'免注册静态全文；首次发布会生成一次性所有者令牌并只在本机加密保存。渠道当前停用时不会自动发布。':id==='katbin'?'免账号 Markdown 全文；原始创建响应加密保留，结果不明不会重发或猜测文章 ID。渠道当前停用时不会自动发布。':id==='markdrop'?'免注册 Markdown 全文；一次性编辑密钥仅在本机加密保存。渠道当前停用时不会自动发布。':id==='draftmark'?'免注册公开 Markdown 全文；逐文档凭据仅在本机加密保存。真实发布验收前保持停用。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
+      state='unavailable';detail=id==='prose'?'可只读验证本人专用 SSH/SFTP 身份；邀请与真实发布资格尚待验收，当前不会自动发布。':id==='leaflet'?'真实授权和公开全文发布尚待验收；当前不会自动发布。':id==='raindrop'?'可连接本人账号、专用公开合集与 Test token；首篇真实发布和匿名读回尚待验收，当前不会自动发布。':id==='wordpress-com'?'浏览器授权和真实公开发布尚待验收；原身份与历史记录保留。':id==='docs-md'?'无需注册账号；真实托管公开页验收完成前保持停用。':id==='html-app'?'无需账号；正式启用后须在首次提交前阅读公开内容提示与条款并确认，真实发布验收前保持停用。':id==='deed-page'?'免注册静态全文；首次发布会生成一次性所有者令牌并只在本机加密保存。渠道当前停用时不会自动发布。':id==='pastemyst'?'免账号 Markdown 全文；原始创建响应加密保留，结果不明不会重发或猜测文章 ID。没有安全的匿名所有者修改、删除或列表找回；渠道当前停用时不会自动发布。':id==='markdownpaste'?'免账号 Markdown 全文；expires_in=0 只表示不主动过期。官方源码存在按 ID 无认证删除，客户端不会调用；渠道当前停用时不会自动发布。':id==='katbin'?'免账号 Markdown 全文；原始创建响应加密保留，结果不明不会重发或猜测文章 ID。渠道当前停用时不会自动发布。':id==='markdrop'?'免注册 Markdown 全文；一次性编辑密钥仅在本机加密保存。渠道当前停用时不会自动发布。':id==='draftmark'?'免注册公开 Markdown 全文；逐文档凭据仅在本机加密保存。真实发布验收前保持停用。':'渠道当前停用，不参与自动任务；原身份与历史记录保留。';
     }else if(selfProvisioned.has(id)&&!issue&&!unbound&&(!['plopino','vibedrop','notebin'].includes(id)||!accounts.length)){state='no_setup';detail=firstStep;}
     else if(!accounts.length){state='first_connection';detail=firstStep;}
     else if(issue){

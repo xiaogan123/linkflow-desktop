@@ -10,6 +10,8 @@ import {socialDraftError} from '../shared/social-content';
 import {supanoteDraftError} from '../integrations/supanote-publisher';
 import {docsMdDraftError} from '../integrations/docs-md-publisher';
 import {katbinDraftError} from '../integrations/katbin-publisher';
+import {pastemystDraftError} from '../integrations/pastemyst-publisher';
+import {markdownPasteDraftError} from '../integrations/markdownpaste-publisher';
 import {htmlAppDraftError} from '../integrations/html-app-publisher';
 import {raindropDraftError} from '../shared/raindrop-content';
 import {TopicDiscoveryError} from '../integrations/topics';
@@ -175,6 +177,8 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
   const betterThanHtmlError=channel.id==='betterthanhtml'?betterThanHtmlDraftError(task.draft):undefined;if(betterThanHtmlError)return fail(betterThanHtmlError,[],'content_rejected');
   const supanoteError=channel.id==='supanote'?supanoteDraftError(task.draft):undefined;if(supanoteError)return fail(supanoteError,[],'content_rejected');
   const katbinError=channel.id==='katbin'?katbinDraftError(task,site):undefined;if(katbinError)return fail(katbinError,[],'content_rejected');
+  const pastemystError=channel.id==='pastemyst'?pastemystDraftError(task,site):undefined;if(pastemystError)return fail(pastemystError,[],'content_rejected');
+  const markdownPasteError=channel.id==='markdownpaste'?markdownPasteDraftError(task,site):undefined;if(markdownPasteError)return fail(markdownPasteError,[],'content_rejected');
   const docsMdError=channel.id==='docs-md'?docsMdDraftError(task.draft):undefined;if(docsMdError)return fail(docsMdError,[],'content_rejected');
   const htmlAppError=channel.id==='html-app'?htmlAppDraftError(task,site):undefined;if(htmlAppError)return fail(htmlAppError,[],'content_rejected');
   const formatError=channel.id==='raindrop'?raindropDraftError(task.draft):socialDraftError(task,site,channel);if(formatError)return fail(formatError,[],'content_rejected');
