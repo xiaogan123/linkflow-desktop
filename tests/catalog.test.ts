@@ -17,7 +17,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, ['betterthanhtml','supanote','docs-md','katbin','pastemyst','markdownpaste','markdrop','plopino','vibedrop','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, ['betterthanhtml','supanote','docs-md','katbin','pstrs','pastemyst','markdownpaste','markdrop','plopino','vibedrop','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority){
       const metric=channel.authority;
       assert.equal(metric.name,'Ahrefs DR');assert.equal(metric.provenance,'official_snapshot');

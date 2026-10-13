@@ -100,6 +100,7 @@ const onboardingById:Record<string,OnboardingDefinition>={
   betterthanhtml:{kind:'no_signup',setup:'无需账号即可发布公开全文；不承诺编辑或删除'},
   'deed-page':{kind:'no_signup',setup:'无需账号或邮箱；首次发布生成的一次性所有者令牌只加密保存在本机，后续文章复用同一令牌与免费配额。公开内容可能被抓取或复制，服务不保证可用性或永不丢失',verification:{checkedAt:'2026-10-11',sourceUrl:'https://deed.page/terms'}},
   katbin:{kind:'no_signup',setup:'无需账号或邮箱；原始创建响应在本机加密保留，结果不明不会重发或猜测远端 ID。匿名文章目前无法编辑、删除或列出；平台不保证长期保留',verification:{checkedAt:'2026-10-13',sourceUrl:'https://github.com/SphericalKat/katbin/tree/6a288d1886bf0db5e7103d478c562b160c7380cb'}},
+  pstrs:{kind:'no_signup',setup:'无需账号或邮箱；固定请求最长 365 天保留。原始响应和管理令牌只在本机加密保存；206 截断、超时或未知回包不重发，过期不自动续期。不保证搜索收录或永久保留',verification:{checkedAt:'2026-10-13',sourceUrl:'https://paster.abhicracker.com/web'}},
   pastemyst:{kind:'no_signup',setup:'无需账号或邮箱；原始创建响应在本机加密保留，结果不明不会重发或猜测远端 ID。匿名稿件没有安全的所有者编辑、删除或列表找回流程；平台不保证长期保留',verification:{checkedAt:'2026-10-13',sourceUrl:'https://github.com/CodeMyst/pastemyst/tree/ac1e63cb1a3696b7e3a4458959a1ec0b879904de'}},
   markdownpaste:{kind:'no_signup',setup:'无需账号或邮箱；明确提交 expires_in=0，只表示服务端不安排主动过期。官方源码包含按 ID 无认证删除，客户端不会提供或调用删除；不能视为永久、受保护或有所有权的存储',verification:{checkedAt:'2026-10-13',sourceUrl:'https://github.com/randishdeviant/markdown-paste/tree/5deb03c549a5f26e8b926fe99180b1ab00417520'}},
   markdrop:{kind:'no_signup',setup:'无需账号或邮箱；每篇文章返回的一次性编辑密钥只加密保存在本机，结果不明时核对原页面，不重复提交。公开内容可能被抓取或复制，服务不保证长期可用或保留',verification:{checkedAt:'2026-10-11',sourceUrl:'https://api.markdrop.in/openapi.json'}},

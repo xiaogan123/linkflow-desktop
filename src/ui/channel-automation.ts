@@ -5,7 +5,7 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','katbin','pastemyst','markdownpaste','draftmark']);
+const automaticIdentity=new Set(['notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','katbin','pstrs','pastemyst','markdownpaste','draftmark']);
 const connectedIdentity=new Set(['here-now','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
@@ -40,6 +40,7 @@ const setupById:Record<string,string>={
   'html-app':'免账号公开静态全文；免费 best-effort 服务不保证保留，真实验收前保持停用',
   'deed-page':'免注册发布静态全文；首次发布加密保存一次性所有者令牌，后续文章复用同一令牌；默认不设到期时间，但服务不保证长期可用或保留',
   katbin:'免账号发布完整 Markdown；原始响应加密留存，未知结果不重发；没有匿名编辑、删除或列表找回，不保证长期保存或搜索收录',
+  pstrs:'免账号发布最长 365 天的完整 Markdown；原始响应与管理令牌加密留存，206 或未知结果不重发，过期不自动续期；不保证搜索收录或永久保留',
   pastemyst:'免账号发布完整 Markdown；原始响应加密留存，未知结果不重发；没有匿名所有者编辑、删除或列表找回，不保证长期保存或搜索收录',
   markdownpaste:'免账号发布完整 Markdown；expires_in=0 只表示不主动过期；官方源码存在按 ID 无认证删除，客户端不提供或调用删除，不能视为永久或受保护存储',
   markdrop:'免注册发布 Markdown 全文；一次性编辑密钥自动加密保存在本机，结果不明时只核对原页面；默认不设到期时间，但服务不保证长期可用或保留',
@@ -57,7 +58,7 @@ const setupById:Record<string,string>={
 };
 
 export function channelSourceLabels(id:string){
-  if(['betterthanhtml','supanote','docs-md','katbin','pastemyst','markdownpaste','html-app','markdrop','draftmark','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
+  if(['betterthanhtml','supanote','docs-md','katbin','pstrs','pastemyst','markdownpaste','html-app','markdrop','draftmark','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
   const guidance=['telegraph','paper-wf','verbose'].includes(id);
   return {checked:guidance?'接口与公开资料核查':'规则核查',open:id==='telegraph'?'官方 API 文档':guidance?'官方公开说明':'官方规则'};
 }

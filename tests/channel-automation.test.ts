@@ -33,7 +33,7 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','nostr','pastemyst','plopino','supanote','telegraph','verbose','vibedrop']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','nostr','pastemyst','plopino','pstrs','supanote','telegraph','verbose','vibedrop']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);

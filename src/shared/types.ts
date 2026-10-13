@@ -5,6 +5,7 @@ import type {DeedPagePersistence} from '../integrations/deed-page';
 import type {MarkdropPersistence} from '../integrations/markdrop';
 import type {KatbinPersistence} from '../integrations/katbin';
 import type {PasteMystPersistence} from '../integrations/pastemyst';
+import type {PstrsPersistence} from '../integrations/pstrs';
 import type {MarkdownPastePersistence} from '../integrations/markdownpaste';
 import type {DraftmarkPersistence} from '../integrations/draftmark';
 import type {HereNowPersistence} from '../integrations/here-now';
@@ -51,6 +52,10 @@ export interface DeedPageTaskReceipt {operationId:string;ownerAccountId:string;s
 export interface MarkdropTaskReceipt {operationId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published'}
 export interface KatbinTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string}
 export interface PasteMystTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;remoteCreatedAt?:number}
+export interface PstrsTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'partial_response'|'api_receipt'|'published';id?:string;expiresAt?:number}
+export interface Task {pstrs?:PstrsTaskReceipt}
+export interface ExecutionContext {pstrsPersistence?:PstrsPersistence}
+export interface ExecutionResult {pstrs?:PstrsTaskReceipt}
 export interface MarkdownPasteTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;remoteCreatedAt?:string}
 export interface DraftmarkTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';slug?:string}
 export interface HereNowTaskReceipt {operationId:string;accountId:string;remoteAccountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'create_unknown'|'opaque_response'|'staged'|'uploaded'|'finalize_unknown'|'api_receipt'|'published';slug?:string;versionId?:string}

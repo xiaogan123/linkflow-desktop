@@ -14,14 +14,14 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,32);
+  assert.equal(rows.length,33);
   assert.equal(row(data,'notebin').state,'unavailable');
   assert.match(row(data,'notebin').detail,/当前停用/);
   assert.equal(row(data,'vibedrop').state,'no_setup');
   assert.match(row(data,'vibedrop').detail,/自动建立并复用匿名发布身份.*无需邮箱.*不会重复发布/);
   assert.equal(row(data,'plopino').state,'no_setup');
   assert.match(row(data,'plopino').detail,/邮箱和密码.*自动建立一次.*不会重复注册/);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['vibedrop','plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','katbin','pastemyst','markdownpaste','markdrop','draftmark','supanote','nostr','telegraph']);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['vibedrop','plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','katbin','pstrs','pastemyst','markdownpaste','markdrop','draftmark','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
@@ -175,8 +175,8 @@ test('every disabled API stays unavailable without erasing connection or histori
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
-    if(!['wordpress-com','blogger','docs-md','katbin','pastemyst','markdownpaste','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
-    else if(['docs-md','katbin','pastemyst','markdownpaste','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
+    if(!['wordpress-com','blogger','docs-md','katbin','pstrs','pastemyst','markdownpaste','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    else if(['docs-md','katbin','pstrs','pastemyst','markdownpaste','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
   }
 });
 
