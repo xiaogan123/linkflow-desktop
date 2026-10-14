@@ -26,6 +26,10 @@ test('an imported remote Blogger draft without a submission timestamp cannot swi
 
 test('publisher receipts alone preserve remote work through timeout, recovery and deferred resume',()=>{
  const receipts:Partial<Task>[]=[
+  {channelId:'slugpost',slugPost:{operationId:'slugpost_fixture',slug:'fixture-slug',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'ui_receipt'}},
+  {channelId:'memorywiki',memoryWiki:{operationId:'memorywiki_fixture',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'api_receipt',id:'fixture-page'}},
+  {channelId:'brewpage',brewPage:{operationId:'brewpage_fixture',ownerAccountId:'fixture-account',filename:'fixture.html',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'api_receipt',id:'fixture-page'}},
+  {channelId:'shiply',shiply:{operationId:'shiply_11111111111141118111111111111111',accountId:'22222222-2222-4222-8222-222222222222',emailHash:'a'.repeat(64),sourceHash:'b'.repeat(64),requestHash:'c'.repeat(64),createdAt:stamp,stage:'finalize_unknown',slug:'fixture-site',versionId:'version-1'}},
   {channelId:'blogger',blogger:{blogId:'123456',postId:'654321',operationId:'synthetic-operation',contentHash:'a'.repeat(64),stage:'draft'}},
   {channelId:'paragraph',paragraph:{publicationId:'fixture-publication',slug:'fixture-post',contentHash:'a'.repeat(64),stage:'draft',postId:'fixture-post'}},
   {channelId:'bluesky',bluesky:{did:'did:plc:abcdefghijklmnopqrstuvwx',rkey:'fixture-post',recordHash:'a'.repeat(64),recordCreatedAt:stamp,stage:'creating'}},
@@ -148,6 +152,9 @@ test('alternative topics remain reserved by a different publisher receipt withou
  const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp},{url:'https://example.com/guide-three',discoveredAt:stamp}]};
  const review={status:'failed' as const,reason:'Needs correction',reasonCode:'content_rejected' as const,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
  const receipts:Partial<Task>[]=[
+  {channelId:'slugpost',slugPost:{operationId:'slugpost_fixture',slug:'fixture-slug',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'ui_receipt'}},
+  {channelId:'memorywiki',memoryWiki:{operationId:'memorywiki_fixture',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'api_receipt',id:'fixture-page'}},
+  {channelId:'brewpage',brewPage:{operationId:'brewpage_fixture',ownerAccountId:'fixture-account',filename:'fixture.html',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp,stage:'api_receipt',id:'fixture-page'}},
   {channelId:'blogger',blogger:{blogId:'123456',postId:'654321',operationId:'synthetic-operation',contentHash:'a'.repeat(64),stage:'draft'}},
   {channelId:'paragraph',paragraph:{publicationId:'fixture-publication',slug:'fixture-post',contentHash:'a'.repeat(64),stage:'draft',postId:'fixture-post'}},
   {channelId:'bluesky',checkpoint:'bluesky_publish_uncertain'},

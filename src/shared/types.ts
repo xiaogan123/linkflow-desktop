@@ -1,14 +1,26 @@
+import type {NextgenSlidesPersistence} from '../integrations/nextgen-slides';
+import type {YourwebsPersistence} from '../integrations/yourwebs';
+import type {TotpagePersistence} from '../integrations/totpage';
+import type {MDViewPersistence} from '../integrations/mdview';
+import type {TxtSbsPersistence} from '../integrations/txtsbs';
+import type {AgentDropPersistence} from '../integrations/agentdrop';
+import type {ShipPagePersistence,ShipPageReadbackEvidence} from '../integrations/shippage';
 import type {SupanotePersistence} from '../integrations/supanote';
 import type {DocsMdPersistence} from '../integrations/docs-md';
 import type {HtmlAppPersistence} from '../integrations/html-app';
 import type {DeedPagePersistence} from '../integrations/deed-page';
+import type {BrewPagePersistence} from '../integrations/brewpage';
 import type {MarkdropPersistence} from '../integrations/markdrop';
 import type {KatbinPersistence} from '../integrations/katbin';
+import type {MDSharePersistence} from '../integrations/mdshare';
 import type {PasteMystPersistence} from '../integrations/pastemyst';
 import type {PstrsPersistence} from '../integrations/pstrs';
 import type {MarkdownPastePersistence} from '../integrations/markdownpaste';
+import type {SlugPostBoundaryEvent,SlugPostPersistence} from '../integrations/slugpost';
 import type {DraftmarkPersistence} from '../integrations/draftmark';
+import type {MemoryWikiPersistence} from '../integrations/memorywiki';
 import type {HereNowPersistence} from '../integrations/here-now';
+import type {ShiplyPersistence} from '../integrations/shiply';
 import type {PlopinoPersistence} from '../integrations/plopino';
 import type {VibeDropPublicationPersistence} from '../integrations/vibedrop';
 import type {NotebinIdentityBinding,NotebinPublicationPersistence} from '../integrations/notebin';
@@ -49,17 +61,34 @@ export interface SupanoteTaskReceipt {operationId:string;contentHash:string;crea
 export interface DocsMdTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'api_receipt'|'published';id?:string}
 export interface HtmlAppTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'api_receipt'|'published';siteId?:string}
 export interface DeedPageTaskReceipt {operationId:string;ownerAccountId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';version?:string}
+export interface BrewPageTaskReceipt {operationId:string;ownerAccountId:string;filename:string;sourceHash:string;requestHash:string;createdAt:string;stage:'owner_token_pending'|'owner_token_opaque'|'ready'|'submitting'|'opaque_response'|'api_receipt'|'published';ownerId?:string;id?:string;publicUrl?:string;expiresAt?:string;sizeBytes?:number;hostingVersion?:number;recoveryGets?:number}
+export interface Task {brewPage?:BrewPageTaskReceipt}
+export interface ExecutionContext {brewPagePersistence?:BrewPagePersistence}
+export interface ExecutionResult {brewPage?:BrewPageTaskReceipt}
 export interface MarkdropTaskReceipt {operationId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published'}
 export interface KatbinTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string}
+export interface MDShareTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';slug?:string}
+export interface Task {mdshare?:MDShareTaskReceipt}
+export interface ExecutionContext {mdsharePersistence?:MDSharePersistence}
+export interface ExecutionResult {mdshare?:MDShareTaskReceipt}
 export interface PasteMystTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;remoteCreatedAt?:number}
 export interface PstrsTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'partial_response'|'api_receipt'|'published';id?:string;expiresAt?:number}
 export interface Task {pstrs?:PstrsTaskReceipt}
 export interface ExecutionContext {pstrsPersistence?:PstrsPersistence}
 export interface ExecutionResult {pstrs?:PstrsTaskReceipt}
 export interface MarkdownPasteTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;remoteCreatedAt?:string}
+export interface SlugPostTaskReceipt {operationId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'ui_receipt'|'published';boundaryJournal?:SlugPostBoundaryEvent[]}
+export interface Task {slugPost?:SlugPostTaskReceipt}
+export interface ExecutionResult {slugPost?:SlugPostTaskReceipt}
 export interface DraftmarkTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';slug?:string}
+export interface MemoryWikiTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;remoteCreatedAt?:string;remoteUpdatedAt?:string;deduplicated?:boolean}
+export interface Task {memoryWiki?:MemoryWikiTaskReceipt}
+export interface ExecutionContext {memoryWikiPersistence?:MemoryWikiPersistence}
+export interface ExecutionResult {memoryWiki?:MemoryWikiTaskReceipt}
 export interface HereNowTaskReceipt {operationId:string;accountId:string;remoteAccountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'create_unknown'|'opaque_response'|'staged'|'uploaded'|'finalize_unknown'|'api_receipt'|'published';slug?:string;versionId?:string}
 export interface Task {hereNow?:HereNowTaskReceipt}
+export interface ShiplyTaskReceipt {operationId:string;accountId:string;emailHash:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'create_unknown'|'opaque_response'|'staged'|'upload_unknown'|'uploaded'|'finalize_unknown'|'api_receipt'|'published';slug?:string;versionId?:string}
+export interface Task {shiply?:ShiplyTaskReceipt}
 export interface PlopinoTaskReceipt {operationId:string;accountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';boardId?:string;publicUrl?:string;ownership?:'pending'|'account_list_match';accountDefaultRetention?:'pending'|'no_default_expiry';boardExpiry?:'unknown';deletion?:'unknown'}
 export interface VibeDropTaskReceipt {operationId:string;accountId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';siteId?:string;slug?:string;publicUrl?:string;expiresAt?:null;hasPassword?:false;ownership?:'pending'|'owned_list_match';approval?:'pending'|'explore_match'}
 export interface NotebinTaskReceipt {operationId:string;localAccountId:string;rootAccountId:string;noteKeyFingerprint:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'owned';itemId?:string;publicUrl?:string;viewUrl?:string;rawUrl?:string;remoteCreatedAt?:number;retention?:'no_scheduled_expiry'|'expiring'|'unknown';expiresAt?:number|null;ownership?:'pending'|'owned_list_match'}
@@ -77,6 +106,7 @@ export type AccountStatus='draft'|'needs_verification'|'registered'|'credentials
 export type AccountIssueCode='legacy_saved'|'password_missing'|'bad_password'|'email_exists'|'username_taken'|'verification_required'|'registration_failed'|'registration_unknown'|'restricted';
 export interface AccountDiagnostic {code:AccountIssueCode;message:string;at:string;retryable:boolean}
 export interface Account {hereNow?:{version:1;checkedAt:string;accountId:string;keyFingerprint:string;identity:'verified_personal';existingSlug?:string;existingSiteUrl?:string}}
+export interface Account {shiply?:{version:1;emailHash:string;requestedAt:string;previousRequestedAt?:string;stage:'requesting'|'request_unknown'|'code_sent'|'verifying'|'verify_unknown'|'verify_opaque'|'ready';keyFingerprint?:string}}
 export interface NotebinAccountProof {version:1;rootAccountId:string;rootKeyFingerprint:string;whoamiResponseHash:string;noteKeyFingerprint:string;keyId:string;keyListResponseHash:string;noteReadResponseHash:string;audience:'https://notebin.ca';scopes:readonly ['note:read','note:create'];rootIdentity:'exact_readback';keyBinding:'exact_response'|'exact_readback';verifiedAt:string}
 export interface Account {raindrop?:RaindropAccountBinding;denoReadAccess?:{version:1;checkedAt:string;appId:string;appSlug:string;declaredOrgSlug:string;tokenFingerprint:string;identity:'app_verified_org_declared'};markestReadAccess?:{version:1;checkedAt:string;keyFingerprint:string;identity:'user_declared'};mataroaExcludedSiteIds?:string[];verboseExcludedSiteIds?:string[];rentryExcludedSiteIds?:string[];publicationUrl?:string;displayName?:string;credentialKind?:'password'|'api_token'|'oauth';id:string;channelId:string;email:string;username:string;mailboxId?:string;createdAt:string;status:AccountStatus;hasPassword:boolean;source?:'generated'|'imported';updatedAt?:string;lastUsedAt?:string;registeredAt?:string;verifiedAt?:string;registrationAttempts?:number;diagnostic?:AccountDiagnostic}
 export interface Account {notebin?:NotebinAccountProof;notebinJournal?:NotebinIdentityJournal}
@@ -103,9 +133,12 @@ declare global {interface Window {linkflow?:AppApi}}
 export interface SecretStore {get(key:string):Promise<string|undefined>;set(key:string,value:string):Promise<void>;delete(key:string):Promise<void>}
 export interface AiPort {json<T>(instruction:string,data:unknown,schema?:Record<string,unknown>,signal?:AbortSignal):Promise<T>}
 export interface ExecutionContext {hereNowPersistence?:HereNowPersistence}
+export interface ExecutionContext {shiplyPersistence?:ShiplyPersistence}
 export interface ExecutionContext {site:Site;channel:Channel;task:Task;settings:Settings;mailbox?:Mailbox;secrets:SecretStore;ai:AiPort;signal:AbortSignal;supanotePersistence?:SupanotePersistence;docsMdPersistence?:DocsMdPersistence;htmlAppPersistence?:HtmlAppPersistence;deedPagePersistence?:DeedPagePersistence;markdropPersistence?:MarkdropPersistence;katbinPersistence?:KatbinPersistence;pastemystPersistence?:PasteMystPersistence;markdownPastePersistence?:MarkdownPastePersistence;draftmarkPersistence?:DraftmarkPersistence;getAccount:()=>Account|undefined;saveAccount:(account:Account,password?:string)=>Promise<void>;checkpoint:(partial:Partial<Task>)=>void;log:(message:string)=>void}
+export interface ExecutionContext {slugPostPersistence?:SlugPostPersistence}
 export interface ExecutionResult {status:TaskStatus;message:string;publicUrl?:string;checkpoint?:string;submittedAt?:string;raindrop?:RaindropReceipt;leaflet?:LeafletReceipt;wordpress?:WordPressReceipt;verbose?:VerboseReceipt;prose?:ProseReceipt;rentry?:RentryReceipt;lucid?:LucidReceipt;betterthanhtml?:BetterThanHtmlReceipt;supanote?:SupanoteTaskReceipt;docsMd?:DocsMdTaskReceipt;htmlApp?:HtmlAppTaskReceipt;deedPage?:DeedPageTaskReceipt;markdrop?:MarkdropTaskReceipt;katbin?:KatbinTaskReceipt;pastemyst?:PasteMystTaskReceipt;markdownPaste?:MarkdownPasteTaskReceipt;draftmark?:DraftmarkTaskReceipt}
 export interface ExecutionResult {hereNow?:HereNowTaskReceipt}
+export interface ExecutionResult {shiply?:ShiplyTaskReceipt}
 export interface Task {plopino?:PlopinoTaskReceipt}
 export interface ExecutionContext {plopinoPersistence?:PlopinoPersistence}
 export interface ExecutionResult {plopino?:PlopinoTaskReceipt}
@@ -119,3 +152,40 @@ export interface LinkResult {outcome?:'found'|'absent'|'unreachable'|'invalid';f
 export const PLOPINO_IPC_COMMANDS=['account:connect-plopino'] as const;
 export const IPC_COMMANDS=['snapshot','site:add','site:update','site:delete','site:analyze','site:pause','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:save-key','task:retry','task:skip','task:verify','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit'] as const;
 export const HERE_NOW_IPC_COMMANDS=['account:connect-here-now','account:cancel-here-now'] as const;
+export const SHIPLY_IPC_COMMANDS=['account:request-shiply-code','account:resend-shiply-code','account:verify-shiply-code','account:recover-shiply-verify'] as const;
+
+export interface NextgenSlidesTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string}
+export interface Task {nextgenSlides?:NextgenSlidesTaskReceipt}
+export interface ExecutionContext {nextgenSlidesPersistence?:NextgenSlidesPersistence}
+export interface ExecutionResult {nextgenSlides?:NextgenSlidesTaskReceipt}
+export interface YourwebsTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;subdomain?:string;remoteCreatedAt?:number;expiresAt?:number}
+export interface Task {yourwebs?:YourwebsTaskReceipt}
+export interface ExecutionContext {yourwebsPersistence?:YourwebsPersistence}
+export interface ExecutionResult {yourwebs?:YourwebsTaskReceipt}
+
+export interface TotpageTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string}
+export interface Task {totpage?:TotpageTaskReceipt}
+export interface ExecutionContext {totpagePersistence?:TotpagePersistence}
+export interface ExecutionResult {totpage?:TotpageTaskReceipt}
+
+export interface MDViewTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';documentId?:string;shortId?:string;expiresAt?:number}
+export interface Task {mdview?:MDViewTaskReceipt}
+export interface ExecutionContext {mdviewPersistence?:MDViewPersistence}
+export interface ExecutionResult {mdview?:MDViewTaskReceipt}
+
+export interface TxtSbsTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string}
+export interface Task {txtsbs?:TxtSbsTaskReceipt}
+export interface ExecutionContext {txtsbsPersistence?:TxtSbsPersistence}
+export interface ExecutionResult {txtsbs?:TxtSbsTaskReceipt}
+
+export interface AgentDropTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string;expiresAt?:number}
+export interface Task {agentdrop?:AgentDropTaskReceipt}
+export interface ExecutionContext {agentdropPersistence?:AgentDropPersistence}
+export interface ExecutionResult {agentdrop?:AgentDropTaskReceipt}
+
+export interface ShipPageTaskReceipt {operationId:string;accountId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;authenticated:boolean;stage:'submitting'|'opaque_response'|'api_receipt'|'published';publicUrl?:string;expiresAt?:string;readback?:ShipPageReadbackEvidence}
+export interface ShipPageAccountProof {version:1;agentFingerprint:string;keyFingerprint:string;claimUrlHash:string;registrationResponseHash:string;registeredAt:string}
+export interface Task {shipPage?:ShipPageTaskReceipt}
+export interface Account {shipPage?:ShipPageAccountProof}
+export interface ExecutionContext {shipPagePersistence?:ShipPagePersistence}
+export interface ExecutionResult {shipPage?:ShipPageTaskReceipt}

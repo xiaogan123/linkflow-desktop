@@ -103,7 +103,7 @@ const clickText=async text=>{const found=await evaluate(`(()=>{const b=[...docum
   check('channel summary separates directory size from actual automation modes',await evaluate(`(()=>{const text=document.querySelector('.channel-summary')?.innerText||'';return ['启用的目录渠道','免首次连接','连接后自动（含短帖）','注册可能待验证'].every(label=>text.includes(label))})()`));
   const summaryCounts=await evaluate(`Array.from(document.querySelectorAll('.channel-summary strong'),node=>node.textContent.trim())`);
   const activeChannels=(await command('snapshot')).channels.filter(channel=>channel.enabled);
-  const selfSetupIds=['pstrs','pastemyst','markdownpaste','katbin','notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','deed-page','markdrop','draftmark'];
+  const selfSetupIds=['mdshare','mdview','txtsbs','agentdrop','shippage','memorywiki','totpage','slugpost','nextgen-slides','yourwebs','pstrs','pastemyst','markdownpaste','katbin','notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','deed-page','brewpage','markdrop','draftmark'];
   const connectedIds=['here-now','github-gist','blogger','paragraph','hive','bluesky'];
   const expectedSelfSetup=activeChannels.filter(c=>selfSetupIds.includes(c.id));
   const expectedConnected=activeChannels.filter(c=>connectedIds.includes(c.id));

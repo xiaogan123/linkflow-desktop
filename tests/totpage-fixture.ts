@@ -1,0 +1,1 @@
+export function totFixture(slug='AbCdEfGhIjKlMnOpQrStUv'){const share_url=`https://tot.page/${slug}`;return {document:{id:'doc_01K012345678901234567890123',workspace_id:'ws_01K012345678901234567890123',doc_path:'index.html',kind:'html',version:null,share_url,file_url:null},workspace:{id:'ws_01K012345678901234567890123',slug,share_url,visibility:'open'}}}

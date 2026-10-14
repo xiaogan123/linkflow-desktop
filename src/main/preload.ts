@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import {HERE_NOW_IPC_COMMANDS,IPC_COMMANDS,PLOPINO_IPC_COMMANDS,type DraftClipboardRequest} from '../shared/types';
-const allowed=new Set<string>([...IPC_COMMANDS,...HERE_NOW_IPC_COMMANDS,...PLOPINO_IPC_COMMANDS]);
+import {HERE_NOW_IPC_COMMANDS,IPC_COMMANDS,PLOPINO_IPC_COMMANDS,SHIPLY_IPC_COMMANDS,type DraftClipboardRequest} from '../shared/types';
+const allowed=new Set<string>([...IPC_COMMANDS,...HERE_NOW_IPC_COMMANDS,...PLOPINO_IPC_COMMANDS,...SHIPLY_IPC_COMMANDS]);
 contextBridge.exposeInMainWorld('linkflow',{
   invoke:async(command:string,payload:unknown={})=>{if(!allowed.has(command))throw Error('不支持的操作');const response=await ipcRenderer.invoke('linkflow:command',command,payload);if(!response.ok)throw Error(response.error);return response.value;},
   copyDraft:async(payload:DraftClipboardRequest)=>{const response=await ipcRenderer.invoke('linkflow:draft-copy',payload);if(!response?.ok)throw Error(response?.error??'复制失败');},

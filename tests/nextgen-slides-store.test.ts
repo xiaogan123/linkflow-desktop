@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Store,emptyState} from '../src/main/store';
+import {hasExternalAttempt} from '../src/main/task-recovery';
+import type {Task,Site} from '../src/shared/types';
+
+const at='2026-10-14T03:00:00.000Z',created=Date.parse(at),site:Site={id:'22222222-2222-4222-8222-222222222222',domain:'example.test',url:'https://example.test/',email:'owner@example.test',name:'Example',description:'Software guide',category:'software',language:'en',monthlyTarget:1,status:'ready',createdAt:at};
+const task:Task={id:'11111111-1111-4111-8111-111111111111',siteId:site.id,channelId:'nextgen-slides',sourceDomain:'nextgenslides.dev',status:'review',createdAt:at,updatedAt:at,scheduledAt:at,submittedAt:at,publicUrl:'https://nextgenslides.dev/s/EXAMPLE0000',attempts:0,message:'fixture',draft:{title:'Guide',description:'A software guide',body:'Keep the original backup.'},nextgenSlides:{operationId:'nextgenSlides_'+'1'.repeat(32),sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:at,stage:'api_receipt',id:'EXAMPLE0000'}};
+function fixture(){const directory=mkdtempSync(join(tmpdir(),'nextgenSlides-store-')),store=new Store(join(directory,'state.sqlite')),state=emptyState();state.sites=[site];state.tasks=[task];store.updateWithCiphers(current=>Object.assign(current,state),{['publication:'+task.id]:'synthetic-encrypted-response'});return {store,close(){store.close();rmSync(directory,{recursive:true,force:true})}};}
+test('retained NextgenSlides identity, source, object, domain and ciphertext cannot be rewritten',()=>{const f=fixture();try{for(const mutate of [(t:Task)=>{t.nextgenSlides!.id='another-page'},(t:Task)=>{t.nextgenSlides!.sourceHash='c'.repeat(64)},(t:Task)=>{t.nextgenSlides!.requestHash='d'.repeat(64)},(t:Task)=>{t.nextgenSlides!.stage='submitting'},(t:Task)=>{t.draft!.body='Replacement'},(t:Task)=>{delete t.nextgenSlides}])assert.throws(()=>f.store.update(s=>mutate(s.tasks[0])));assert.throws(()=>f.store.update(s=>{s.tasks=[]}));assert.throws(()=>f.store.updateWithCiphers(()=>{}, {['publication:'+task.id]:'replacement'}));assert.throws(()=>f.store.update(s=>{s.sites[0].url='https://other.example/'}));assert.equal(f.store.read().tasks[0].nextgenSlides!.id,'EXAMPLE0000')}finally{f.close()}});
+test('valid publication promotion preserves original receipt and external-attempt guard',()=>{const f=fixture();try{assert.equal(hasExternalAttempt({...task,submittedAt:undefined,publicUrl:undefined}),true);f.store.update(s=>{s.tasks[0].nextgenSlides!.stage='published';s.tasks[0].status='live';s.tasks[0].firstLiveAt=at});assert.equal(f.store.read().tasks[0].nextgenSlides!.stage,'published');assert.equal(f.store.getCipher('publication:'+task.id),'synthetic-encrypted-response')}finally{f.close()}});

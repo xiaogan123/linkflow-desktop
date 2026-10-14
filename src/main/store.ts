@@ -124,6 +124,22 @@ function assertKatbinTransition(previous:State,next:State,previousCiphers:Record
   }
 }
 
+function assertMDShareTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.mdshare)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.mdshare,current=after?.mdshare,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.slug&&current.slug!==prior.slug||before.submittedAt!==after.submittedAt
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('MDShare 单次发布意图或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('MDShare 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('MDShare 加密原始响应不能删除或替换');
+  }
+}
+
 function assertPasteMystTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
   const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
   for(const before of previous.tasks){
@@ -149,10 +165,156 @@ function assertPstrsTransition(previous:State,next:State,previousCiphers:Record<
       ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
       ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
       ||order[current.stage]<order[prior.stage]||prior.stage==='partial_response'&&current.stage!=='partial_response'||prior.id&&current.id!==prior.id||prior.expiresAt!==undefined&&current.expiresAt!==prior.expiresAt||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl
-      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('PST.RS 单次发布意图、到期时间或原稿不能删除、更换或回退');
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('PST.RS 单次发布意图、对象或原稿不能删除、更换或回退');
     const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
     if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('PST.RS 原网站身份不能更换');
     if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('PST.RS 加密原始响应不能删除或替换');
+  }
+}
+
+function assertNextgenSlidesTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.nextgenSlides)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.nextgenSlides,current=after?.nextgenSlides,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('NextgenSlides 单次发布意图、对象或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('NextgenSlides 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('NextgenSlides 加密原始响应不能删除或替换');
+  }
+}
+function assertYourwebsTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.yourwebs)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.yourwebs,current=after?.yourwebs,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||prior.subdomain&&current.subdomain!==prior.subdomain||prior.remoteCreatedAt!==undefined&&current.remoteCreatedAt!==prior.remoteCreatedAt||prior.expiresAt!==undefined&&current.expiresAt!==prior.expiresAt||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('Yourwebs 单次发布意图、到期时间或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('Yourwebs 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('Yourwebs 加密原始响应不能删除或替换');
+  }
+}
+
+function assertMemoryWikiTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.memoryWiki)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.memoryWiki,current=after?.memoryWiki,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||prior.remoteCreatedAt!==undefined&&current.remoteCreatedAt!==prior.remoteCreatedAt
+      ||prior.remoteUpdatedAt!==undefined&&current.remoteUpdatedAt!==prior.remoteUpdatedAt||prior.deduplicated!==undefined&&current.deduplicated!==prior.deduplicated
+      ||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('Memory.wiki 单次发布意图、远端身份或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('Memory.wiki 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('Memory.wiki 加密原始响应与编辑令牌不能删除或替换');
+  }
+}
+
+function assertTotpageTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.totpage)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.totpage,current=after?.totpage,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('Totpage 单次发布意图、对象或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('Totpage 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('Totpage 加密原始响应不能删除或替换');
+  }
+}
+
+function assertMDViewTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.mdview)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.mdview,current=after?.mdview,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.documentId&&current.documentId!==prior.documentId||prior.shortId&&current.shortId!==prior.shortId||prior.expiresAt!==undefined&&current.expiresAt!==prior.expiresAt
+      ||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('MDView 单次发布意图、有限期对象或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('MDView 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('MDView 加密原始响应不能删除或替换');
+  }
+}
+
+function assertTxtSbsTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.txtsbs)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.txtsbs,current=after?.txtsbs,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id
+      ||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('txt.sbs 单次发布意图、对象或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('txt.sbs 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('txt.sbs 加密原始响应不能删除或替换');
+  }
+}
+
+function assertAgentDropTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.agentdrop)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.agentdrop,current=after?.agentdrop,key=`publication:${before.id}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain
+      ||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl
+      ||current.operationId!==prior.operationId||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt
+      ||order[current.stage]<order[prior.stage]||prior.id&&current.id!==prior.id||prior.expiresAt!==undefined&&current.expiresAt!==prior.expiresAt||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl
+      ||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('AgentDrop 单次发布意图、对象或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('AgentDrop 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('AgentDrop 加密原始响应不能删除或替换');
+  }
+}
+
+function assertShipPageTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const accounts=next.accounts.filter(account=>account.channelId==='shippage');
+  if(accounts.length>1)throw Error('ShipPage 只能保留一个本机平台账号');
+  const account=accounts[0],operations=new Set<string>(),slugs=new Set<string>(),order={submitting:0,opaque_response:1,api_receipt:2,published:3};
+  for(const task of next.tasks){
+    const receipt=task.shipPage;if(!receipt)continue;
+    const binding=next.accountBindings.find(value=>value.siteId===task.siteId&&value.channelId==='shippage');
+    if(task.channelId!=='shippage'||task.sourceDomain!=='shippage.ai'||!account||task.accountId!==account.id||receipt.accountId!==account.id||binding?.accountId!==account.id)throw Error('ShipPage 任务必须绑定唯一平台账号');
+    if(operations.has(receipt.operationId)||slugs.has(receipt.slug))throw Error('ShipPage 单次发布意图或 slug 不能重复');
+    operations.add(receipt.operationId);slugs.add(receipt.slug);
+  }
+  for(const before of previous.tasks){
+    if(!before.shipPage)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.shipPage,current=after?.shipPage,publicationKey=`publication:${before.id}`,accountKey=`account:${prior.accountId}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain||after.accountId!==before.accountId
+      ||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl||current.operationId!==prior.operationId||current.accountId!==prior.accountId
+      ||current.slug!==prior.slug||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt||current.authenticated!==prior.authenticated
+      ||order[current.stage]<order[prior.stage]||before.submittedAt!==after.submittedAt||prior.publicUrl&&current.publicUrl!==prior.publicUrl||prior.expiresAt&&current.expiresAt!==prior.expiresAt
+      ||prior.readback&&JSON.stringify(current.readback)!==JSON.stringify(prior.readback)
+      ||before.publicUrl&&after.publicUrl!==before.publicUrl||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('ShipPage 唯一账号、单次发布意图、到期时间或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('ShipPage 原网站身份不能更换');
+    if(previousCiphers[publicationKey]!==undefined&&nextCiphers[publicationKey]!==previousCiphers[publicationKey])throw Error('ShipPage 加密原始响应不能删除或替换');
+    if(previousCiphers[accountKey]!==undefined&&nextCiphers[accountKey]!==previousCiphers[accountKey])throw Error('ShipPage 唯一账号 API key 不能删除或替换');
+  }
+  for(const before of previous.accounts){
+    if(before.channelId!=='shippage')continue;
+    const after=next.accounts.find(account=>account.id===before.id),key=`account:${before.id}`;
+    if(!after||after.channelId!=='shippage'||after.email!==before.email||after.source!==before.source||after.credentialKind!==before.credentialKind
+      ||(before.shipPage&&JSON.stringify(after.shipPage)!==JSON.stringify(before.shipPage))||(before.hasPassword&&(!after.hasPassword||after.status!==before.status||after.username!==before.username)))throw Error('ShipPage 唯一账号或已验证身份不能删除、替换或回退');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('ShipPage 唯一账号 API key 不能删除或替换');
   }
 }
 
@@ -169,6 +331,34 @@ function assertMarkdownPasteTransition(previous:State,next:State,previousCiphers
     const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
     if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('Markdown Pastebin 原网站身份不能更换');
     if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('Markdown Pastebin 加密原始响应不能删除或替换');
+  }
+}
+
+function assertSlugPostTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={submitting:0,opaque_response:1,ui_receipt:2,published:3};
+  for(const before of previous.tasks){
+    if(!before.slugPost)continue;
+    const after=next.tasks.find(task=>task.id===before.id),prior=before.slugPost,current=after?.slugPost,key=`publication:${before.id}`;
+    const priorJournal=prior.boundaryJournal??[],currentJournal=current?.boundaryJournal??[],journalChanged=JSON.stringify(currentJournal)!==JSON.stringify(priorJournal);
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain||after.accountId!==before.accountId||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl||current.operationId!==prior.operationId||current.slug!==prior.slug||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt||order[current.stage]<order[prior.stage]||currentJournal.length<priorJournal.length||currentJournal.length>16||JSON.stringify(currentJournal.slice(0,priorJournal.length))!==JSON.stringify(priorJournal)||journalChanged&&(prior.stage!=='submitting'||current.stage!=='submitting')||before.submittedAt!==after.submittedAt||before.publicUrl&&after.publicUrl!==before.publicUrl||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('SlugPost 单次网页意图、派发证据或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);
+    if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('SlugPost 原网站身份不能更换');
+    if(previousCiphers[key]!==undefined&&nextCiphers[key]!==previousCiphers[key])throw Error('SlugPost 加密原始回执不能删除或替换');
+  }
+}
+
+function assertBrewPageTransition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void{
+  const order={owner_token_pending:0,owner_token_opaque:1,ready:2,submitting:3,opaque_response:4,api_receipt:5,published:6};
+  for(const before of previous.tasks){
+    if(!before.brewPage)continue;const after=next.tasks.find(task=>task.id===before.id),prior=before.brewPage,current=after?.brewPage,publicationKey=`publication:${before.id}`,accountKey=`account:${prior.ownerAccountId}`;
+    if(!after||!current||after.siteId!==before.siteId||after.channelId!==before.channelId||after.sourceDomain!==before.sourceDomain||JSON.stringify(after.draft)!==JSON.stringify(before.draft)||after.topicUrl!==before.topicUrl||current.operationId!==prior.operationId||current.ownerAccountId!==prior.ownerAccountId||current.filename!==prior.filename||current.sourceHash!==prior.sourceHash||current.requestHash!==prior.requestHash||current.createdAt!==prior.createdAt||order[current.stage]<order[prior.stage]||before.submittedAt!==after.submittedAt||prior.ownerId&&current.ownerId!==prior.ownerId||prior.id&&current.id!==prior.id||prior.publicUrl&&current.publicUrl!==prior.publicUrl||prior.expiresAt&&current.expiresAt!==prior.expiresAt||prior.sizeBytes&&current.sizeBytes!==prior.sizeBytes||prior.hostingVersion&&current.hostingVersion!==prior.hostingVersion||(current.recoveryGets??0)<(prior.recoveryGets??0)||(current.recoveryGets??0)>7||before.accountId&&after.accountId!==before.accountId||before.publicUrl&&after.publicUrl!==before.publicUrl||before.firstLiveAt&&after.firstLiveAt!==before.firstLiveAt)throw Error('BrewPage 所有者、单次发布意图、到期时间或原稿不能删除、更换或回退');
+    const beforeSite=previous.sites.find(site=>site.id===before.siteId),afterSite=next.sites.find(site=>site.id===before.siteId);if(!beforeSite||!afterSite||beforeSite.url!==afterSite.url||beforeSite.domain!==afterSite.domain)throw Error('BrewPage 原网站身份不能更换');
+    if(prior.ownerId){
+      const beforeAccount=previous.accounts.find(account=>account.id===prior.ownerAccountId),afterAccount=next.accounts.find(account=>account.id===prior.ownerAccountId),beforeBinding=previous.accountBindings.find(binding=>binding.siteId===before.siteId&&binding.channelId==='brewpage'),afterBinding=next.accountBindings.find(binding=>binding.siteId===before.siteId&&binding.channelId==='brewpage');
+      if(!beforeAccount||!afterAccount||afterAccount.channelId!=='brewpage'||afterAccount.username!==beforeAccount.username||afterAccount.credentialKind!==beforeAccount.credentialKind||afterAccount.status!==beforeAccount.status||afterAccount.hasPassword!==beforeAccount.hasPassword||afterAccount.source!==beforeAccount.source||!beforeBinding||!afterBinding||afterBinding.accountId!==prior.ownerAccountId||beforeBinding.accountId!==afterBinding.accountId)throw Error('BrewPage 已确认所有者账号和站点绑定不能删除或更换');
+    }
+    if(previousCiphers[publicationKey]!==undefined&&nextCiphers[publicationKey]!==previousCiphers[publicationKey]&&!(prior.stage==='owner_token_opaque'&&current.stage==='ready'&&nextCiphers[publicationKey]===undefined))throw Error('BrewPage 加密原始响应不能删除或替换');
+    if(previousCiphers[accountKey]!==undefined&&nextCiphers[accountKey]!==previousCiphers[accountKey])throw Error('BrewPage 所有者令牌不能删除或替换');
   }
 }
 
@@ -250,12 +440,12 @@ export class Store {
     if(JSON.stringify(this.state)!==JSON.stringify(previous)||JSON.stringify(this.allCiphers())!==JSON.stringify(previousCiphers))throw Error('Store 更新期间已有更晚的持久化结果，已拒绝旧快照覆盖');
   }
   update(fn:(draft:State)=>void):void{
-    const previous=this.read(),previousCiphers=this.allCiphers(),draft=structuredClone(previous);fn(draft);this.assertNoNestedWrite(previous,previousCiphers);draft.events=draft.events.slice(-500);assertShareClaimTransition(previous,draft,previousCiphers,previousCiphers);assertKatbinTransition(previous,draft,previousCiphers,previousCiphers);assertPstrsTransition(previous,draft,previousCiphers,previousCiphers);assertPasteMystTransition(previous,draft,previousCiphers,previousCiphers);assertMarkdownPasteTransition(previous,draft,previousCiphers,previousCiphers);this.persist(draft);this.state=draft;this.notify();
+    const previous=this.read(),previousCiphers=this.allCiphers(),draft=structuredClone(previous);fn(draft);this.assertNoNestedWrite(previous,previousCiphers);draft.events=draft.events.slice(-500);assertShareClaimTransition(previous,draft,previousCiphers,previousCiphers);assertKatbinTransition(previous,draft,previousCiphers,previousCiphers);assertMDShareTransition(previous,draft,previousCiphers,previousCiphers);assertPstrsTransition(previous,draft,previousCiphers,previousCiphers);assertYourwebsTransition(previous,draft,previousCiphers,previousCiphers);assertNextgenSlidesTransition(previous,draft,previousCiphers,previousCiphers);assertMemoryWikiTransition(previous,draft,previousCiphers,previousCiphers);assertTotpageTransition(previous,draft,previousCiphers,previousCiphers);assertMDViewTransition(previous,draft,previousCiphers,previousCiphers);assertTxtSbsTransition(previous,draft,previousCiphers,previousCiphers);assertAgentDropTransition(previous,draft,previousCiphers,previousCiphers);assertShipPageTransition(previous,draft,previousCiphers,previousCiphers);assertPasteMystTransition(previous,draft,previousCiphers,previousCiphers);assertMarkdownPasteTransition(previous,draft,previousCiphers,previousCiphers);assertSlugPostTransition(previous,draft,previousCiphers,previousCiphers);assertBrewPageTransition(previous,draft,previousCiphers,previousCiphers);this.persist(draft);this.state=draft;this.notify();
   }
   updateWithCiphers(fn:(draft:State)=>void,ciphers:Record<string,string>,deleteKeys:string[]=[]):void{
     if(deleteKeys.some(key=>Object.hasOwn(ciphers,key)))throw Error('同一加密字段不能在一次事务中同时写入和删除');
     const previous=this.read(),previousCiphers=this.allCiphers(),draft=structuredClone(previous);fn(draft);this.assertNoNestedWrite(previous,previousCiphers);draft.events=draft.events.slice(-500);
-    const nextCiphers={...previousCiphers,...ciphers};for(const key of deleteKeys)delete nextCiphers[key];assertShareClaimTransition(previous,draft,previousCiphers,nextCiphers);assertKatbinTransition(previous,draft,previousCiphers,nextCiphers);assertPstrsTransition(previous,draft,previousCiphers,nextCiphers);assertPasteMystTransition(previous,draft,previousCiphers,nextCiphers);assertMarkdownPasteTransition(previous,draft,previousCiphers,nextCiphers);
+    const nextCiphers={...previousCiphers,...ciphers};for(const key of deleteKeys)delete nextCiphers[key];assertShareClaimTransition(previous,draft,previousCiphers,nextCiphers);assertKatbinTransition(previous,draft,previousCiphers,nextCiphers);assertMDShareTransition(previous,draft,previousCiphers,nextCiphers);assertPstrsTransition(previous,draft,previousCiphers,nextCiphers);assertYourwebsTransition(previous,draft,previousCiphers,nextCiphers);assertNextgenSlidesTransition(previous,draft,previousCiphers,nextCiphers);assertMemoryWikiTransition(previous,draft,previousCiphers,nextCiphers);assertTotpageTransition(previous,draft,previousCiphers,nextCiphers);assertMDViewTransition(previous,draft,previousCiphers,nextCiphers);assertTxtSbsTransition(previous,draft,previousCiphers,nextCiphers);assertAgentDropTransition(previous,draft,previousCiphers,nextCiphers);assertShipPageTransition(previous,draft,previousCiphers,nextCiphers);assertPasteMystTransition(previous,draft,previousCiphers,nextCiphers);assertMarkdownPasteTransition(previous,draft,previousCiphers,nextCiphers);assertSlugPostTransition(previous,draft,previousCiphers,nextCiphers);assertBrewPageTransition(previous,draft,previousCiphers,nextCiphers);
     this.db.exec('BEGIN IMMEDIATE');
     try{this.persist(draft);for(const key of deleteKeys)this.deleteCipher(key);for(const [key,value] of Object.entries(ciphers))this.setCipher(key,value);this.db.exec('COMMIT')}catch(error){this.db.exec('ROLLBACK');throw error}
     this.state=draft;this.notify();
@@ -269,7 +459,7 @@ export class Store {
   deleteCipher(key:string){this.db.prepare('DELETE FROM secrets WHERE key=?').run(key)}
   allCiphers():Record<string,string>{return Object.fromEntries((this.db.prepare('SELECT key,value FROM secrets').all() as {key:string,value:string}[]).map(x=>[x.key,x.value]))}
   restore(state:State,ciphers:Record<string,string>){
-    const previous=this.read(),previousCiphers=this.allCiphers();state=structuredClone(migrateState(state));assertShareClaimTransition(previous,state,previousCiphers,ciphers,true,true);assertKatbinTransition(previous,state,previousCiphers,ciphers);assertPstrsTransition(previous,state,previousCiphers,ciphers);assertPasteMystTransition(previous,state,previousCiphers,ciphers);assertMarkdownPasteTransition(previous,state,previousCiphers,ciphers);
+    const previous=this.read(),previousCiphers=this.allCiphers();state=structuredClone(migrateState(state));assertShareClaimTransition(previous,state,previousCiphers,ciphers,true,true);assertKatbinTransition(previous,state,previousCiphers,ciphers);assertMDShareTransition(previous,state,previousCiphers,ciphers);assertPstrsTransition(previous,state,previousCiphers,ciphers);assertYourwebsTransition(previous,state,previousCiphers,ciphers);assertNextgenSlidesTransition(previous,state,previousCiphers,ciphers);assertMemoryWikiTransition(previous,state,previousCiphers,ciphers);assertTotpageTransition(previous,state,previousCiphers,ciphers);assertMDViewTransition(previous,state,previousCiphers,ciphers);assertTxtSbsTransition(previous,state,previousCiphers,ciphers);assertAgentDropTransition(previous,state,previousCiphers,ciphers);assertShipPageTransition(previous,state,previousCiphers,ciphers);assertPasteMystTransition(previous,state,previousCiphers,ciphers);assertMarkdownPasteTransition(previous,state,previousCiphers,ciphers);assertSlugPostTransition(previous,state,previousCiphers,ciphers);assertBrewPageTransition(previous,state,previousCiphers,ciphers);
     this.db.exec('BEGIN IMMEDIATE');
     try{this.persist(state);this.db.exec('DELETE FROM secrets');for(const [k,v]of Object.entries(ciphers))this.setCipher(k,v);this.db.exec('COMMIT');}catch(e){this.db.exec('ROLLBACK');throw e;}
     this.state=state;this.notify();

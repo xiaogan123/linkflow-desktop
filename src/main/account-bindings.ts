@@ -7,8 +7,11 @@ import {validMarkestReadAccount} from '../integrations/markest-connection';
 import {validDenoReadAccount} from '../integrations/deno-connection';
 import {validProseAccount} from '../integrations/prose';
 import {validDeedPageAccount} from './deed-page-publication';
+import {validBrewPageAccount} from './brewpage-publication';
 import {validHereNowAccount} from './here-now-management';
+import {validShiplyAccount} from './shiply-management';
 import {validVibeDropAccount} from './vibedrop-publication';
+import {validShipPageAccount} from './shippage-publication';
 
 export type ChannelExecutionReadiness='ready'|'autocreate'|'handoff_required'|'manual';
 
@@ -28,7 +31,8 @@ function candidateAccounts(state:State,siteId:string,channelId:string):Account[]
   const site=state.sites.find(item=>item.id===siteId);if(!site||['nostr','hive'].includes(channelId))return [];
   if(['wordpress-com','leaflet','raindrop','notebin'].includes(channelId))return state.accounts.filter(account=>account.channelId===channelId);
   if(channelId==='here-now')return state.accounts.filter(account=>account.channelId==='here-now');
-  if(['paper-wf','mataroa','verbose','prose','rentry','deed-page'].includes(channelId))return state.accounts.filter(account=>account.channelId===channelId&&!(channelId==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))&&!(channelId==='verbose'&&account.verboseExcludedSiteIds?.includes(siteId))&&!(channelId==='rentry'&&account.rentryExcludedSiteIds?.includes(siteId)));
+  if(channelId==='shiply')return state.accounts.filter(account=>account.channelId==='shiply');
+  if(['paper-wf','mataroa','verbose','prose','rentry','deed-page','brewpage','shippage'].includes(channelId))return state.accounts.filter(account=>account.channelId===channelId&&!(channelId==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))&&!(channelId==='verbose'&&account.verboseExcludedSiteIds?.includes(siteId))&&!(channelId==='rentry'&&account.rentryExcludedSiteIds?.includes(siteId)));
   return state.accounts.filter(account=>account.channelId===channelId&&(channelId==='github-gist'||lower(account.email)===lower(site.publicEmail||site.email)));
 }
 
@@ -41,7 +45,8 @@ export function accountForSiteChannel(state:State,siteId:string,channelId:string
   const candidates=candidateAccounts(state,siteId,channelId);
   if(channelId==='notebin')return candidates.length===1?candidates[0]:undefined;
   if(channelId==='here-now')return candidates.length===1?candidates[0]:undefined;
-  if(['paper-wf','mataroa','verbose','prose','rentry','deed-page'].includes(channelId))return candidates.length===1?candidates[0]:undefined;
+  if(channelId==='shiply')return candidates.length===1?candidates[0]:undefined;
+  if(['paper-wf','mataroa','verbose','prose','rentry','deed-page','brewpage'].includes(channelId))return candidates.length===1?candidates[0]:undefined;
   const usableCandidates=['telegraph','github-gist','nostr'].includes(channelId)?candidates.filter(account=>account.credentialKind==='api_token'):candidates;
   return usableCandidates.find(account=>account.status==='registered'&&account.hasPassword)
     ??usableCandidates.find(account=>account.status==='unknown'&&account.hasPassword)
@@ -148,6 +153,14 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
     if(!accountId&&!binding&&state.accounts.every(item=>item.channelId!=='notebin'))return {kind:'autocreate'};
     return {kind:'handoff_required',account};
   }
+  if(channel.id==='shippage'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='shippage'),accounts=state.accounts.filter(item=>item.channelId==='shippage'),account=accountId?accounts.find(item=>item.id===accountId):accounts[0];
+    if(accounts.length>1||accountId&&!account||binding&&binding.accountId!==account?.id)return {kind:'handoff_required',account};
+    if(account&&validShipPageAccount(account))return {kind:binding?.accountId===account.id?'ready':'autocreate',account};
+    if(!account&&!binding)return {kind:'autocreate'};
+    if(account?.source==='generated'&&account.credentialKind==='api_token'&&account.status==='draft'&&!account.hasPassword&&(account.registrationAttempts??0)===0&&(!binding||binding.accountId===account.id))return {kind:'autocreate',account};
+    return {kind:'handoff_required',account};
+  }
   if(channel.id==='paper-wf'||channel.id==='hive'||channel.id==='mataroa'||channel.id==='verbose'||channel.id==='rentry'){
     const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
     const account=accountForSiteChannel(state,siteId,channel.id,accountId);
@@ -178,10 +191,22 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
     if(account)return {kind:validDeedPageAccount(account)&&(!binding||binding.accountId===account.id)?'ready':'handoff_required',account};
     return state.accounts.every(item=>item.channelId!=='deed-page')?{kind:'autocreate'}:{kind:'handoff_required'};
   }
+  if(channel.id==='brewpage'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='brewpage');
+    const account=accountForSiteChannel(state,siteId,'brewpage',accountId);
+    if(accountId&&!account)return {kind:'handoff_required'};
+    if(account)return {kind:validBrewPageAccount(account)&&(!binding||binding.accountId===account.id)?'ready':'handoff_required',account};
+    return state.accounts.every(item=>item.channelId!=='brewpage')?{kind:'autocreate'}:{kind:'handoff_required'};
+  }
   if(channel.id==='here-now'){
     const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='here-now');
     const account=accountForSiteChannel(state,siteId,'here-now',accountId);
     return {kind:binding&&account&&binding.accountId===account.id&&validHereNowAccount(account)?'ready':'handoff_required',account};
+  }
+  if(channel.id==='shiply'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='shiply');
+    const account=accountForSiteChannel(state,siteId,'shiply',accountId);
+    return {kind:binding&&account&&binding.accountId===account.id&&validShiplyAccount(account)?'ready':'handoff_required',account};
   }
   if(['bluesky','paragraph'].includes(channel.id)){
     const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
@@ -231,6 +256,7 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='leaflet'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='leaflet'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.leaflet)&&task.accountId!==accountId))throw Error('该网站有 Leaflet 发布结果待核验，必须保留原 DID 身份。');
   if(channel.id==='raindrop'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='raindrop'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.raindrop)&&task.accountId!==accountId))throw Error('该网站有 Raindrop 条目待核验，必须保留原所有者与合集身份。');
   if(channel.id==='here-now'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='here-now'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.hereNow)&&task.accountId!==accountId))throw Error('该网站有 here.now 版本待核验，必须保留原个人身份。');
+  if(channel.id==='shiply'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='shiply'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.shiply)&&task.accountId!==accountId))throw Error('该网站有 shiply.now 版本待核验，必须保留原个人身份。');
   if(channel.id==='vibedrop'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='vibedrop'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.vibedrop)&&task.accountId!==accountId))throw Error('该网站有 VibeDrop 发布待核验，必须保留原匿名密钥。');
   if(channel.id==='notebin'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='notebin'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.notebin||task.notebinJournal)&&task.accountId!==accountId))throw Error('该网站有 Notebin 发布待核验，必须保留原 PoW 身份和专用密钥。');
   if(channel.kind==='profile'){
@@ -245,7 +271,9 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='markest'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='markest'&&task.accountId!==accountId&&reservesSingleProfile(task)))throw Error('该网站已有 Markest 结果记录，不能改变原连接');
   if(channel.id==='prose'&&!validProseAccount(account))throw Error('请先验证本人 Prose 出版身份与专用 SSH 密钥');
   if(channel.id==='deed-page'&&!validDeedPageAccount(account))throw Error('deed.page 所有者令牌不可用');
+  if(channel.id==='brewpage'&&!validBrewPageAccount(account))throw Error('BrewPage 所有者令牌不可用');
   if(channel.id==='here-now'&&!validHereNowAccount(account))throw Error('请先验证 here.now 个人账户与命名 API key');
+  if(channel.id==='shiply'&&!validShiplyAccount(account))throw Error('请先验证 shiply.now 邮箱账户与 API key');
   if(channel.id==='vibedrop'&&!validVibeDropAccount(account))throw Error('VibeDrop 匿名密钥不可用');
   if(channel.id==='notebin'&&!validNotebinAccount(account))throw Error('Notebin PoW 身份或专用密钥不可用');
   if(['paper-wf','hive','mataroa','verbose','rentry'].includes(channel.id)&&!validPublisherIdentity(account,channel.id as 'paper-wf'|'hive'|'mataroa'|'verbose'|'rentry'))throw Error(channel.id==='rentry'?'Rentry 本机发布密钥不可用':'请先验证本人出版账号及其公开地址');
@@ -266,8 +294,10 @@ export function unbindAccount(state:State,accountId:string,siteId:string,channel
   if(channelId==='leaflet'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.leaflet)))throw Error('该网站有 Leaflet 发布结果待核验，必须保留原 DID 身份。');
   if(channelId==='raindrop'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.raindrop)))throw Error('该网站有 Raindrop 条目待核验，必须保留原所有者与合集身份。');
   if(channelId==='here-now'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.hereNow)))throw Error('该网站有 here.now 版本待核验，必须保留原个人身份。');
+  if(channelId==='shiply'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.shiply)))throw Error('该网站有 shiply.now 版本待核验，必须保留原个人身份。');
   if(channelId==='vibedrop'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.vibedrop)))throw Error('该网站有 VibeDrop 发布待核验，必须保留原匿名密钥。');
   if(channelId==='notebin'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.notebin||task.notebinJournal)))throw Error('该网站有 Notebin 发布待核验，必须保留原 PoW 身份和专用密钥。');
+  if(channelId==='brewpage'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!!task.brewPage))throw Error('BrewPage 原发布意图仍绑定此所有者身份，不能解除关联。');
   if(channelId==='prose'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.prose)))throw Error('该网站有 Prose 发布结果待核验，必须保留原出版身份。');
   if(channelId==='mataroa'&&account&&state.sites.some(site=>site.id===siteId))account.mataroaExcludedSiteIds=[...new Set([...(account.mataroaExcludedSiteIds??[]),siteId])];
   if(channelId==='verbose'&&account&&state.sites.some(site=>site.id===siteId))account.verboseExcludedSiteIds=[...new Set([...(account.verboseExcludedSiteIds??[]),siteId])];

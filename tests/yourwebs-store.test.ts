@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {Store,emptyState} from '../src/main/store';
+import {hasExternalAttempt} from '../src/main/task-recovery';
+import type {Task,Site} from '../src/shared/types';
+
+const at='2026-10-14T03:00:00.000Z',created=Date.parse(at),site:Site={id:'22222222-2222-4222-8222-222222222222',domain:'example.test',url:'https://example.test/',email:'owner@example.test',name:'Example',description:'Software guide',category:'software',language:'en',monthlyTarget:1,status:'ready',createdAt:at};
+const task:Task={id:'11111111-1111-4111-8111-111111111111',siteId:site.id,channelId:'yourwebs',sourceDomain:'yourwebs.cc',status:'review',createdAt:at,updatedAt:at,scheduledAt:at,submittedAt:at,publicUrl:'https://fixture-page.yourwebs.app/',attempts:0,message:'fixture',draft:{title:'Guide',description:'A software guide',body:'Keep the original backup.'},yourwebs:{operationId:'yourwebs_'+'1'.repeat(32),sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:at,stage:'api_receipt',id:'EXAMPLE0000',subdomain:'fixture-page',remoteCreatedAt:created,expiresAt:created+30*86400000}};
+function fixture(){const directory=mkdtempSync(join(tmpdir(),'yourwebs-store-')),store=new Store(join(directory,'state.sqlite')),state=emptyState();state.sites=[site];state.tasks=[task];store.updateWithCiphers(current=>Object.assign(current,state),{['publication:'+task.id]:'synthetic-encrypted-response'});return {store,close(){store.close();rmSync(directory,{recursive:true,force:true})}};}
+test('retained Yourwebs identity, source, expiry, domain and ciphertext cannot be rewritten',()=>{const f=fixture();try{for(const mutate of [(t:Task)=>{t.yourwebs!.subdomain='another-page'},(t:Task)=>{t.yourwebs!.remoteCreatedAt!+=1000},(t:Task)=>{t.yourwebs!.expiresAt!+=1000},(t:Task)=>{t.yourwebs!.stage='submitting'},(t:Task)=>{t.draft!.body='Replacement'},(t:Task)=>{delete t.yourwebs}])assert.throws(()=>f.store.update(s=>mutate(s.tasks[0])));assert.throws(()=>f.store.update(s=>{s.tasks=[]}));assert.throws(()=>f.store.updateWithCiphers(()=>{}, {['publication:'+task.id]:'replacement'}));assert.throws(()=>f.store.update(s=>{s.sites[0].url='https://other.example/'}));assert.equal(f.store.read().tasks[0].yourwebs!.subdomain,'fixture-page')}finally{f.close()}});
+test('valid publication promotion preserves original receipt and external-attempt guard',()=>{const f=fixture();try{assert.equal(hasExternalAttempt({...task,submittedAt:undefined,publicUrl:undefined}),true);f.store.update(s=>{s.tasks[0].yourwebs!.stage='published';s.tasks[0].status='live';s.tasks[0].firstLiveAt=at});assert.equal(f.store.read().tasks[0].yourwebs!.stage,'published');assert.equal(f.store.getCipher('publication:'+task.id),'synthetic-encrypted-response')}finally{f.close()}});

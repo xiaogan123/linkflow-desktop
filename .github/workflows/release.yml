@@ -124,7 +124,7 @@ jobs:
             }
           }
 
-      - name: Validate published Windows v1.2.27 to candidate v1.2.28 native upgrade
+      - name: Validate published Windows v1.2.28 to candidate v1.2.29 native upgrade
         id: native_upgrade
         run: npm run test:update-native
 

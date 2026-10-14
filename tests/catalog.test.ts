@@ -10,14 +10,14 @@ function site(category: Category, language = 'en'): Site {
 test('catalog contains distinct curated channels with source evidence', () => {
   assert.ok(CHANNELS.length >= 58);
   assert.equal(new Set(CHANNELS.map(channel => channel.id)).size, CHANNELS.length);
-  assert.equal(CHANNELS.filter(channel => channel.automation === 'browser').length, 4);
+  assert.equal(CHANNELS.filter(channel => channel.automation === 'browser').length, 5);
   for (const channel of CHANNELS) {
     assert.ok(channel.rulesUrl.startsWith('https://'), channel.id);
     assert.ok(channel.submitUrl.startsWith('https://'), channel.id);
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, ['betterthanhtml','supanote','docs-md','katbin','pstrs','pastemyst','markdownpaste','markdrop','plopino','vibedrop','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, ['slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority){
       const metric=channel.authority;
       assert.equal(metric.name,'Ahrefs DR');assert.equal(metric.provenance,'official_snapshot');

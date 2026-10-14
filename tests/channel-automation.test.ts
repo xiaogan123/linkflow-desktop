@@ -33,7 +33,7 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','nostr','pastemyst','plopino','pstrs','supanote','telegraph','verbose','vibedrop']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','brewpage','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','pastemyst','plopino','pstrs','shippage','slugpost','supanote','telegraph','totpage','verbose','vibedrop','yourwebs']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
@@ -71,6 +71,16 @@ test('disabled, custom and unknown API rows do not inflate automatic capability 
   assert.equal(channelAutomationKind(enabledDocsMd),'ai_auto');
   assert.match(channelAutomationView(enabledDocsMd).setup??'',/免账号匿名分享.*真实托管验收前保持停用/);
   assert.equal(channelExecutionReadiness(emptyState(),'site',enabledDocsMd).kind,'ready');
+});
+
+test('ShipPage accepted automatic identity retains expiry and no-repost boundaries',()=>{
+  const value=channel('shippage');
+  assert.equal(value.enabled,true);
+  assert.equal(channelAutomationKind(value),'ai_auto');
+  assert.equal(channelMatchesAutomation(value,'ai_auto',true,'software'),true);
+  assert.match(channelAutomationView(value).setup??'',/同一创建请求自动建立一个平台账号.*所有网站复用.*14 天到期.*不重发、不换号、不自动续期/);
+  assert.doesNotMatch(channelAutomationView(value).setup??'',/真实验收前保持停用/);
+  assert.deepEqual(channelSourceLabels('shippage'),{checked:'资料核查',open:'官方说明'});
 });
 
 test('Leaflet is a distinct full article connection and excluded until live acceptance',()=>{
@@ -161,4 +171,12 @@ test('invalid Telegraph credentials replace generic locally-ready copy with acco
     assert.equal(channelAutomationKind({...value,enabled:false}),'disabled');
     assert.equal(channelAutomationKind({...value,provenance:'custom'}),'manual');
   }
+});
+
+
+test('accepted SlugPost webpage publisher is anonymous full-article automation, not a profile flow',()=>{
+  const value=channel('slugpost');assert.equal(channelAutomationKind(value),'ai_auto');
+  assert.equal(channelAutomationView(value).method,'官方网页 · 全文');
+  assert.match(channelAutomationView(value).setup??'',/免账号.*本人验证.*不重发/);
+  for(const changed of [{enabled:false},{provenance:'custom' as const},{domain:'other.invalid'},{kind:'profile' as const},{accountRequired:true},{emailRequired:true},{automation:'manual' as const}])assert.notEqual(channelAutomationKind({...value,...changed}),'ai_auto');
 });

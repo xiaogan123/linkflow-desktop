@@ -1,0 +1,44 @@
+import {randomUUID} from 'node:crypto';
+import {BrowserWindow} from 'electron';
+import type {MemoryWikiRenderedArticle} from '../integrations/memorywiki';
+import {prepareMemoryWikiReplay} from './memorywiki-replay';
+
+export interface MemoryWikiRendererHooks {
+  trackPhysical?:<T>(operation:Promise<T>)=>Promise<T>;
+}
+
+export async function renderMemoryWikiArticle(html:string,pageUrl:string,selector:string,signal:AbortSignal,hooks:MemoryWikiRendererHooks={}):Promise<MemoryWikiRenderedArticle>{
+  if(!/^https:\/\/memory\.wiki\/[A-Za-z0-9_-]{8}$/.test(pageUrl)||selector!=='#memory-wiki-ssr-body > article[itemprop="articleBody"]')throw Error('Memory.wiki 原生核验参数无效');
+  const prepared=prepareMemoryWikiReplay(html,pageUrl),partition=`memorywiki-verifier-${randomUUID()}`,documentUrl=`data:text/html;charset=utf-8;base64,${Buffer.from(prepared.html).toString('base64')}`;
+  const win=new BrowserWindow({show:false,width:1080,height:900,webPreferences:{partition,sandbox:true,contextIsolation:true,nodeIntegration:false,javascript:true,webSecurity:true,allowRunningInsecureContent:false}}),ses=win.webContents.session;
+  let externalRequests=0,violation='',rejectPending:((error:Error)=>void)|undefined;
+  const physical=<T>(operation:Promise<T>)=>hooks.trackPhysical?hooks.trackPhysical(operation):operation;
+  const fail=(message:string)=>{violation ||= message;rejectPending?.(Error(violation));if(!win.isDestroyed())win.destroy()};
+  const cancellable=<T>(pending:Promise<T>)=>new Promise<T>((resolve,reject)=>{let settled=false;const finish=(complete:(value:any)=>void,value:any)=>{if(settled)return;settled=true;complete(value)};rejectPending=error=>finish(reject,error);void pending.then(value=>finish(resolve,value),error=>finish(reject,error))}).finally(()=>{rejectPending=undefined});
+  const stop=()=>fail('Memory.wiki 原生核验已取消');signal.addEventListener('abort',stop,{once:true});
+  ses.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));ses.setPermissionCheckHandler(()=>false);ses.on('will-download',event=>event.preventDefault());
+  ses.webRequest.onBeforeRequest({urls:['<all_urls>']},(details,callback)=>{const document=details.url===documentUrl&&details.method==='GET'&&details.resourceType==='mainFrame',inert=details.method==='GET'&&prepared.allowedResourceUrls.has(details.url);if(!document&&!inert){externalRequests++;fail(`Memory.wiki 原生正文禁止外部资源: ${details.method} ${details.resourceType}`);callback({cancel:true});return}callback({cancel:false})});
+  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(event,next)=>{if(next!==documentUrl){event.preventDefault();externalRequests++;fail('Memory.wiki 原生正文禁止导航')}});
+  try{
+    if(signal.aborted)throw Error('Memory.wiki 原生核验已取消');await cancellable(physical(ses.clearStorageData()));await cancellable(physical(win.loadURL(documentUrl,{httpReferrer:''})));if(violation)throw Error(violation);
+    const result=await cancellable(physical(win.webContents.executeJavaScript(`(()=>{
+      const selector=${JSON.stringify(selector)},roots=[...document.querySelectorAll(selector)],root=roots[0];
+      const hasArea=rect=>rect.width>0&&rect.height>0;
+      const colorVisible=value=>{const compact=(value??'').toLowerCase().replace(/\\s+/g,'');if(!compact||compact==='transparent')return false;let alpha;if(compact.startsWith('rgba(')){alpha=compact.slice(compact.lastIndexOf(',')+1,-1)}else if(compact.includes('/'))alpha=compact.slice(compact.lastIndexOf('/')+1,-1);if(alpha===undefined)return true;const amount=alpha.endsWith('%')?Number(alpha.slice(0,-1))/100:Number(alpha);return Number.isFinite(amount)&&amount>0};
+      const styleVisible=element=>{for(let current=element;current instanceof Element;current=current.parentElement){const style=getComputedStyle(current),opacity=Number(style.opacity);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||style.contentVisibility==='hidden'||!Number.isFinite(opacity)||opacity<=0||style.clipPath!=='none'||style.clip!=='auto'||/opacity\\(\\s*0(?:%|(?:\\.0+)?)\\s*\\)/i.test(style.filter))return false}return true};
+      const contentBox=element=>{const outer=element.getBoundingClientRect(),scaleX=element.offsetWidth>0?outer.width/element.offsetWidth:1,scaleY=element.offsetHeight>0?outer.height/element.offsetHeight:1,left=outer.left+element.clientLeft*scaleX,top=outer.top+element.clientTop*scaleY;return {left,top,right:left+element.clientWidth*scaleX,bottom:top+element.clientHeight*scaleY,scaleX,scaleY}};
+      const reachableRects=(element,rects)=>{const page=document.scrollingElement??document.documentElement,pageWidth=Math.max(page.scrollWidth,document.documentElement.scrollWidth,document.body?.scrollWidth??0),pageHeight=Math.max(page.scrollHeight,document.documentElement.scrollHeight,document.body?.scrollHeight??0);for(const source of rects){let rect={left:source.left,right:source.right,top:source.top,bottom:source.bottom};for(let current=element;current instanceof Element;current=current.parentElement){const style=getComputedStyle(current),box=contentBox(current);for(const axis of ['X','Y']){const overflow=style['overflow'+axis],hidden=overflow==='hidden'||overflow==='clip',scrollable=overflow==='auto'||overflow==='scroll';if(!hidden&&!scrollable)continue;const horizontal=axis==='X',start=horizontal?'left':'top',end=horizontal?'right':'bottom',scale=horizontal?box.scaleX:box.scaleY,scroll=horizontal?current.scrollLeft:current.scrollTop,extent=horizontal?current.scrollWidth:current.scrollHeight;if(hidden){if(rect[start]<box[start]-.5||rect[end]>box[end]+.5)return false;continue}if(box[end]-box[start]<=0||!Number.isFinite(scale)||scale<=0)return false;const contentStart=(rect[start]-box[start])/scale+scroll,contentEnd=(rect[end]-box[start])/scale+scroll;if(contentStart<-.5||contentEnd>extent+.5)return false;rect[start]=box[start];rect[end]=box[end]}}const documentLeft=rect.left+window.scrollX,documentRight=rect.right+window.scrollX,documentTop=rect.top+window.scrollY,documentBottom=rect.bottom+window.scrollY;if(documentLeft<-.5||documentRight>pageWidth+.5||documentTop<-.5||documentBottom>pageHeight+.5)return false}return true};
+      const textVisible=node=>{const element=node.parentElement,text=node.textContent??'';if(!element||!text.trim()||!styleVisible(element))return !text.trim();const style=getComputedStyle(element);if(Number.parseFloat(style.fontSize)<=0||!colorVisible(style.color)||!colorVisible(style.webkitTextFillColor||style.color))return false;const range=document.createRange();range.selectNodeContents(node);const rects=[...range.getClientRects()].filter(hasArea);return rects.length>0&&reachableRects(element,rects)};
+      const textNodes=element=>{const nodes=[],walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);for(let node=walker.nextNode();node;node=walker.nextNode())if((node.textContent??'').trim())nodes.push(node);return nodes};
+      const elementVisible=element=>styleVisible(element)&&hasArea(element.getBoundingClientRect())&&textNodes(element).every(textVisible);
+      const appliedStyleSheets=[...document.querySelectorAll('link[data-memorywiki-style-sha256]')].filter(element=>{try{return element instanceof HTMLLinkElement&&!element.disabled&&(!element.media||matchMedia(element.media).matches)&&element.sheet&&element.sheet.cssRules.length>0}catch{return false}}).length;
+      if(!(root instanceof HTMLElement))return {articleCount:roots.length,articleText:'',articleHtml:'',allArticleTextVisible:false,links:[],appliedStyleSheets};
+      const articleNodes=textNodes(root),allArticleTextVisible=roots.length===1&&styleVisible(root)&&hasArea(root.getBoundingClientRect())&&articleNodes.length>0&&articleNodes.every(textVisible);
+      const links=[...root.querySelectorAll('a[href]')].map(element=>({href:element.href,rel:[...element.relList],text:element.textContent??'',visible:elementVisible(element)&&getComputedStyle(element).pointerEvents!=='none'}));
+      return {articleCount:roots.length,articleText:root.innerText,articleHtml:root.outerHTML,allArticleTextVisible,links,appliedStyleSheets};
+    })()`,true))) as Omit<MemoryWikiRenderedArticle,'pageUrl'|'selector'|'externalRequests'|'resourceReplay'>&{appliedStyleSheets:number};
+    if(violation||externalRequests)throw Error(violation||'Memory.wiki 原生正文发起了外部资源请求');if(result.appliedStyleSheets!==prepared.resources.styleSheets)throw Error('Memory.wiki 固定样式未完整应用');const {appliedStyleSheets,...article}=result;return {...article,pageUrl,selector,externalRequests,resourceReplay:{...prepared.resources,appliedStyleSheets}};
+  }finally{
+    signal.removeEventListener('abort',stop);if(!win.isDestroyed())win.destroy();let timer:ReturnType<typeof setTimeout>|undefined;await Promise.race([physical(ses.clearStorageData()).catch(()=>undefined),new Promise<void>(resolve=>{timer=setTimeout(resolve,2000);timer.unref?.()})]);if(timer)clearTimeout(timer);
+  }
+}

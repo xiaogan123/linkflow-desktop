@@ -118,3 +118,39 @@ test('a known Docs MD receipt shows bounded GET-only reconciliation and never ex
  assert.equal(taskPresentation(uncertain,'ai').label,'自动查询发布结果');assert.equal(taskAutomaticFollowupAt(uncertain),uncertain.reconcileAfter);assert.equal(taskHasAutomaticFollowup(uncertain),true);assert.equal(canRetryTaskManually(uncertain,'ai'),false);
  assert.equal(taskHasAutomaticFollowup({...uncertain,reconcileAttempts:3}),false);assert.equal(taskHasAutomaticFollowup(uncertain,false),false);assert.equal(taskPresentation(uncertain,'ai',false).label,'需要确认发布结果');
 });
+
+test('Shiply known receipts show bounded GET-only recovery while identity-less create stays stopped',()=>{
+ const base={operationId:'shiply_11111111111141118111111111111111',accountId:'22222222-2222-4222-8222-222222222222',emailHash:'a'.repeat(64),sourceHash:'b'.repeat(64),requestHash:'c'.repeat(64),createdAt:stamp};
+ for(const [stage,checkpoint] of [['opaque_response','shiply_opaque_response'],['staged','shiply_staged'],['upload_unknown','shiply_upload_unknown'],['uploaded','shiply_uploaded'],['finalize_unknown','shiply_finalize_unknown'],['api_receipt','shiply_api_receipt']] as const){
+  const withIdentity=!['opaque_response'].includes(stage),receipt={...base,stage,...(withIdentity?{slug:'fixture-site',versionId:'version-1'}:{})};
+  const uncertain=task({channelId:'shiply',sourceDomain:'shiply.now',status:'review',checkpoint,submittedAt:stamp,publicUrl:stage==='api_receipt'?'https://fixture-site.shiply.now/':undefined,shiply:receipt,reconcileAttempts:1,reconcileAfter:'2026-10-04T01:00:00.000Z'});
+  assert.equal(taskPresentation(uncertain,'ai').label,'自动查询发布结果',stage);assert.equal(taskAutomaticFollowupAt(uncertain),uncertain.reconcileAfter);assert.equal(canRetryTaskManually(uncertain,'ai'),false);
+  assert.equal(taskHasAutomaticFollowup({...uncertain,reconcileAttempts:3}),false);assert.equal(taskHasAutomaticFollowup({...uncertain,status:'skipped'}),false);assert.equal(taskHasAutomaticFollowup(uncertain,false),false);
+ }
+ const stopped=task({channelId:'shiply',sourceDomain:'shiply.now',status:'needs_input',checkpoint:'shiply_create_unknown',submittedAt:stamp,shiply:{...base,stage:'create_unknown'}});
+ assert.equal(taskHasAutomaticFollowup(stopped),false);assert.equal(taskPresentation(stopped,'ai').label,'提交结果未知');assert.equal(canRetryTaskManually(stopped,'ai'),false);assert.equal(canResumeDeferredTask({...stopped,deferredAt:stamp}),false);
+ const receiptOnly={...stopped,submittedAt:undefined,checkpoint:undefined,deferredAt:stamp};assert.equal(canResumeDeferredTask(receiptOnly),false);assert.equal(taskCanAutoRecover({...receiptOnly,status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,deferredAt:undefined}),false);
+});
+
+test('SlugPost, BrewPage and Memory.wiki receipts suppress resubmission and show bounded result queries',()=>{
+ const base={operationId:'fixture-operation',sourceHash:'a'.repeat(64),requestHash:'b'.repeat(64),createdAt:stamp};
+ const cases:Partial<Task>[]=[
+  {channelId:'slugpost',checkpoint:'slugpost_ui_receipt',publicUrl:'https://slugpost.com/fixture-article',slugPost:{...base,slug:'fixture-article',stage:'ui_receipt'}},
+  {channelId:'brewpage',checkpoint:'brewpage_api_receipt',publicUrl:'https://brewpage.app/public/fixture-article',brewPage:{...base,ownerAccountId:'fixture-owner',filename:'index.html',publicUrl:'https://brewpage.app/public/fixture-article',stage:'api_receipt'}},
+  {channelId:'memorywiki',checkpoint:'memorywiki_api_receipt',publicUrl:'https://memory.wiki/fixture-article',memoryWiki:{...base,id:'fixture-article',stage:'api_receipt'}},
+ ];
+ for(const item of cases){
+  const pending=task({...item,status:'needs_input',submittedAt:stamp,reconcileAttempts:1,reconcileAfter:'2026-10-04T01:00:00.000Z'});
+  assert.equal(taskPresentation(pending,'ai').label,'自动查询发布结果',item.channelId);
+  assert.equal(taskAutomaticFollowupAt(pending),pending.reconcileAfter);
+  assert.equal(canRetryTaskManually(pending,'ai'),false);
+  for(const blocked of [{...pending,reconcileAttempts:3},{...pending,status:'expired' as const},{...pending,status:'skipped' as const}])assert.equal(taskNeedsTelegraphReconciliation(blocked),false);
+  assert.equal(taskNeedsTelegraphReconciliation(pending,false),false);
+  const receiptOnly={...pending,submittedAt:undefined,publicUrl:undefined,checkpoint:undefined};
+  assert.equal(canRetryTaskManually(receiptOnly,'ai'),false);
+  assert.equal(canResumeDeferredTask({...receiptOnly,deferredAt:stamp}),false);
+  assert.equal(taskCanAutoRecover({...receiptOnly,status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp}),false);
+  const published=task({...item,status:'live',submittedAt:stamp,firstLiveAt:stamp,slugPost:item.slugPost?{...item.slugPost,stage:'published'}:undefined,brewPage:item.brewPage?{...item.brewPage,stage:'published'}:undefined,memoryWiki:item.memoryWiki?{...item.memoryWiki,stage:'published'}:undefined});
+  assert.equal(taskNeedsTelegraphReconciliation(published),false);
+ }
+});

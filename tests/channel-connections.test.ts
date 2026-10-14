@@ -14,20 +14,38 @@ function row(data:ReturnType<typeof snapshot>,id:string){const found=connectionO
 
 test('overview distinguishes self-provisioned APIs, first connections and Bluesky short posts',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.equal(rows.length,33);
+  assert.equal(rows.length,45);
+  assert.equal(row(data,'shippage').state,'no_setup');
+  assert.match(row(data,'shippage').detail,/自动建立一个平台账号.*所有网站复用.*14 天到期.*不重发、不换号、不自动续期/);
+  assert.equal(row(data,'agentdrop').state,'unavailable');
+  assert.match(row(data,'agentdrop').detail,/当前停用/);
+  assert.equal(row(data,'mdview').state,'unavailable');
+  assert.match(row(data,'mdview').detail,/当前停用.*noindex,nofollow.*30 天到期.*原稿与回执保留/);
+  assert.equal(row(data,'txtsbs').state,'no_setup');
+  assert.match(row(data,'txtsbs').detail,/无需账号.*官方公开表单.*管理密钥.*结果不明不重发/);
+  assert.equal(row(data,'shiply').state,'unavailable');
+  assert.match(row(data,'shiply').detail,/邮箱身份.*真实账号和发布验收前保持停用/);
+  assert.equal(row(data,'slugpost').state,'no_setup');
+  assert.match(row(data,'slugpost').detail,/免账号.*官方网页.*本人验证.*不重发/);
+  assert.equal(row(data,'nextgen-slides').state,'no_setup');
+  assert.match(row(data,'nextgen-slides').detail,/90 天未访问.*原始响应加密保存.*结果不明不重发/);
+  assert.equal(row(data,'yourwebs').state,'no_setup');
+  assert.match(row(data,'yourwebs').detail,/30 天.*原始响应加密保存.*结果不明不重发/);
   assert.equal(row(data,'notebin').state,'unavailable');
   assert.match(row(data,'notebin').detail,/当前停用/);
   assert.equal(row(data,'vibedrop').state,'no_setup');
   assert.match(row(data,'vibedrop').detail,/自动建立并复用匿名发布身份.*无需邮箱.*不会重复发布/);
   assert.equal(row(data,'plopino').state,'no_setup');
   assert.match(row(data,'plopino').detail,/邮箱和密码.*自动建立一次.*不会重复注册/);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['vibedrop','plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','katbin','pstrs','pastemyst','markdownpaste','markdrop','draftmark','supanote','nostr','telegraph']);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['slugpost','vibedrop','plopino','mataroa','verbose','lucid-page','betterthanhtml','deed-page','brewpage','katbin','nextgen-slides','yourwebs','totpage','txtsbs','mdshare','shippage','pstrs','pastemyst','markdownpaste','markdrop','draftmark','memorywiki','supanote','nostr','telegraph']);
   assert.equal(row(data,'rentry').state,'unavailable');
   assert.match(row(data,'rentry').detail,/当前停用/);
   assert.equal(row(data,'supanote').state,'no_setup');
   assert.equal(row(data,'docs-md').state,'unavailable');
   assert.equal(row(data,'docs-md').connectedCount,0);
   assert.match(row(data,'docs-md').detail,/无需注册账号.*真实托管公开页验收/);
+  assert.equal(row(data,'brewpage').state,'no_setup');
+  assert.match(row(data,'brewpage').detail,/免注册发布最长 30 天.*所有者令牌.*不重新获取身份或重发/);
   assert.equal(row(data,'pastemyst').state,'no_setup');
   assert.match(row(data,'pastemyst').detail,/结果不明不重发/);
   assert.equal(row(data,'markdownpaste').state,'no_setup');
@@ -160,7 +178,7 @@ test('Leaflet waits for acceptance while preserving explicit identity and bindin
 
 test('connection overview covers APIs plus the read-only Markest connection',()=>{
   const data=snapshot(),rows=connectionOverview(data);
-  assert.deepEqual(rows.map(item=>item.id).sort(),CHANNELS.filter(channel=>channel.automation==='api'||channel.id==='markest'||channel.id==='deno').map(channel=>channel.id).sort());
+  assert.deepEqual(rows.map(item=>item.id).sort(),CHANNELS.filter(channel=>channel.automation==='api'||channel.id==='slugpost'||channel.id==='markest'||channel.id==='deno').map(channel=>channel.id).sort());
   assert.equal(row(data,'betterthanhtml').state,'no_setup');
   assert.match(row(data,'betterthanhtml').detail,/无需注册账号/);
   data.tasks=[task('betterthanhtml',{firstLiveAt:at,linkCheck:'found'})];
@@ -171,12 +189,12 @@ test('connection overview covers APIs plus the read-only Markest connection',()=
 test('every disabled API stays unavailable without erasing connection or historical result counts',()=>{
   for(const channel of CHANNELS.filter(item=>item.automation==='api')){
     const data=snapshot();data.channels=CHANNELS.map(item=>({...item,enabled:item.id===channel.id?false:item.enabled}));
-    data.accounts=[account(channel.id,channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:channel.id==='here-now'?{source:'imported',username:'55555555-5555-4555-8555-555555555555',hereNow:{version:1,checkedAt:at,accountId:'55555555-5555-4555-8555-555555555555',keyFingerprint:'a'.repeat(64),identity:'verified_personal'}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
+    data.accounts=[account(channel.id,channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:channel.id==='here-now'?{source:'imported',username:'55555555-5555-4555-8555-555555555555',hereNow:{version:1,checkedAt:at,accountId:'55555555-5555-4555-8555-555555555555',keyFingerprint:'a'.repeat(64),identity:'verified_personal'}}:channel.id==='shiply'?{email:'owner@example.test',username:'owner@example.test',source:'generated',shiply:{version:1,emailHash:'a'.repeat(64),requestedAt:at,stage:'ready',keyFingerprint:'b'.repeat(64)}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
-    if(!['wordpress-com','blogger','docs-md','katbin','pstrs','pastemyst','markdownpaste','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
-    else if(['docs-md','katbin','pstrs','pastemyst','markdownpaste','html-app','notebin'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
+    if(!['wordpress-com','blogger','docs-md','katbin','pstrs','yourwebs','nextgen-slides','pastemyst','markdownpaste','html-app','totpage','mdview','txtsbs','memorywiki','mdshare','agentdrop','shippage','notebin'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    else if(['docs-md','katbin','pstrs','yourwebs','nextgen-slides','pastemyst','markdownpaste','html-app','totpage','mdview','txtsbs','memorywiki','mdshare','agentdrop','shippage','notebin'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
   }
 });
 

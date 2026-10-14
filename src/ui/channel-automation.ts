@@ -5,11 +5,12 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','katbin','pstrs','pastemyst','markdownpaste','draftmark']);
-const connectedIdentity=new Set(['here-now','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
+const automaticIdentity=new Set(['notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','mdshare','agentdrop','shippage','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki']);
+const connectedIdentity=new Set(['here-now','shiply','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
   if(!channel.enabled)return 'disabled';
+  if(channel.id==='slugpost'&&channel.domain==='slugpost.com'&&channel.provenance==='built-in'&&channel.automation==='browser'&&channel.kind==='article'&&channel.articleRequired&&!channel.accountRequired&&!channel.emailRequired)return 'ai_auto';
   if(channel.automation==='browser')return 'profile';
   if(channel.automation!=='api'||channel.provenance==='custom')return 'manual';
   if(channel.id==='paper-wf'&&channel.contentFormat!=='social')return 'registration_pending';
@@ -25,10 +26,12 @@ export function channelMatchesAutomation(channel:Channel,filter:ChannelAutomatio
 }
 
 const setupById:Record<string,string>={
+  slugpost:'免账号经官方网页发布原创全文；稿件须通过审核，遇本人验证则保留原任务；固定地址和编辑凭据加密保存，结果不明不重发。没有长期保留保证',
   notebin:'任务按官方协议完成一次有界 PoW 身份创建并铸造最小权限专用密钥；结果不明时只读对账，不重建身份或重发',
   vibedrop:'任务仅创建一次匿名密钥并加密保存；结果不明时只读对账，不重建密钥或站点',
   plopino:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可直接连接，结果不明不会重复注册；无需手工创建 API 令牌',
   'here-now':'首次连接已完成邮箱验证的个人账号 API key，并关联网站；之后按审核与排期自动发布全文',
+  shiply:'首次向本人授权邮箱请求验证码并连接账号；加密保存 API key 后复用，渠道真实验收前停用',
   telegraph:'自动创建作者身份，无需首次连接',
   nostr:'在本机建立作者身份，无需首次连接',
   mataroa:'自动建立作者账号；若平台要求验证则等待处理',
@@ -39,12 +42,22 @@ const setupById:Record<string,string>={
   supanote:'免账号匿名发布 Markdown；管理令牌仅在平台返回时加密保存，不承诺可编辑或删除',
   'html-app':'免账号公开静态全文；免费 best-effort 服务不保证保留，真实验收前保持停用',
   'deed-page':'免注册发布静态全文；首次发布加密保存一次性所有者令牌，后续文章复用同一令牌；默认不设到期时间，但服务不保证长期可用或保留',
+  brewpage:'免注册发布原创 Markdown 全文；首次任务获取并加密保存一个可复用所有者令牌，同一网站只复用这一身份。页面最长 30 天，未知结果只读对账且不重发',
   katbin:'免账号发布完整 Markdown；原始响应加密留存，未知结果不重发；没有匿名编辑、删除或列表找回，不保证长期保存或搜索收录',
+  'nextgen-slides':'免账号发布静态全文；匿名页面在 90 天未访问后可能删除，原始响应加密留存，未知结果不重发或续期；公开页验收后才计入',
+  yourwebs:'免账号发布静态全文；匿名页面保留 30 天，原始响应加密留存，未知结果不重发或续期；公开页验收后才计入',
+  'totpage':'免账号发布静态全文；开放页面的保存期限未知，持公开链接者可修改或删除，原始响应加密留存，未知结果不重发或续期；公开页验收后才计入',
+  mdview:'当前停用：实际匿名页声明 noindex,nofollow，不计入已验收外链渠道；固定 30 天到期，原稿与回执保留，不重复投稿',
+  txtsbs:'免账号通过官方公开表单发布静态 HTML 全文；逐篇管理密钥与原始响应加密保存，未知结果不重发；平台未声明定时到期，但可删除页面，匿名全文与抓取策略真实验收前保持停用',
+  mdshare:'免账号发布公开 Markdown；匿名写入开关关闭或未知结果即停止；发布后核对 API 原文与浏览器 JS 渲染全文，不保证永久保存或搜索收录',
+  'agentdrop':'当前停用：页面目标为安全跳转按钮，尚未验证可抓取的正文链接；匿名页保留 30 天，原发布记录加密留存，不重复投稿或续期',
+  shippage:'首次任务通过同一创建请求自动建立一个平台账号并发布；API key 仅在本机加密保存，之后所有网站复用这一账号。每页固定 14 天到期，未知结果不重发、不换号、不自动续期；发布后自动核验公开页与抓取条件',
   pstrs:'免账号发布最长 365 天的完整 Markdown；原始响应与管理令牌加密留存，206 或未知结果不重发，过期不自动续期；不保证搜索收录或永久保留',
   pastemyst:'免账号发布完整 Markdown；原始响应加密留存，未知结果不重发；没有匿名所有者编辑、删除或列表找回，不保证长期保存或搜索收录',
   markdownpaste:'免账号发布完整 Markdown；expires_in=0 只表示不主动过期；官方源码存在按 ID 无认证删除，客户端不提供或调用删除，不能视为永久或受保护存储',
   markdrop:'免注册发布 Markdown 全文；一次性编辑密钥自动加密保存在本机，结果不明时只核对原页面；默认不设到期时间，但服务不保证长期可用或保留',
   draftmark:'免注册发布公开 Markdown 全文；服务端生成大小写敏感的文档 ID，逐文档凭据只在本机加密保存；结果不明不重发，没有免费层 SLA 或永久保留保证',
+  memorywiki:'免注册发布公开 Markdown 全文；编辑令牌和原始回包只在本机加密保存；结果不明不重发或猜测 ID，空到期时间不代表永久 SLA',
   'docs-md':'免账号匿名分享经核对的 Markdown；编辑令牌只加密保存在本机，真实托管验收前保持停用',
   'github-gist':'首次连接本人 GitHub 账号的 Gists 令牌',
   blogger:'首次由本人完成 Google 授权并绑定博客',
@@ -58,7 +71,7 @@ const setupById:Record<string,string>={
 };
 
 export function channelSourceLabels(id:string){
-  if(['betterthanhtml','supanote','docs-md','katbin','pstrs','pastemyst','markdownpaste','html-app','markdrop','draftmark','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
+  if(['betterthanhtml','supanote','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','nextgen-slides','shippage','pstrs','yourwebs','pastemyst','markdownpaste','html-app','brewpage','markdrop','draftmark','memorywiki','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
   const guidance=['telegraph','paper-wf','verbose'].includes(id);
   return {checked:guidance?'接口与公开资料核查':'规则核查',open:id==='telegraph'?'官方 API 文档':guidance?'官方公开说明':'官方规则'};
 }
@@ -70,7 +83,7 @@ export function channelAutomationView(channel:Channel,readinessLabel?:string){
     :kind==='profile'?'需本人已有账号；仅维护资料页'
     :kind==='manual'?(channel.automation==='api'?'API 字段不代表软件已接入发布器':'由软件准备材料，需在平台人工提交')
     :setupById[channel.id];
-  const method=['ai_auto','connected_auto','registration_pending'].includes(kind)?`官方 API · ${channel.contentFormat==='social'?'短帖':'全文'}`:kind==='profile'?'浏览器资料页流程':undefined;
+  const method=['ai_auto','connected_auto','registration_pending'].includes(kind)?`${['slugpost','txtsbs'].includes(channel.id)&&kind==='ai_auto'?'官方网页':'官方 API'} · ${channel.contentFormat==='social'?'短帖':'全文'}`:kind==='profile'?'浏览器资料页流程':undefined;
   return {kind,label:label[kind],setup,method,siteReadiness:readinessLabel&&kind!=='manual'&&kind!=='disabled'?`本网站：${readinessLabel}`:undefined};
 }
 
