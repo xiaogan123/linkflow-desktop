@@ -82,7 +82,7 @@ test('custom and unmapped rows remain unknown even when they reuse a trusted id 
 test('setup combines with capability, free, finance and selected-site visibility using AND',()=>{
   const select=(automation:Parameters<typeof channelMatchesAutomation>[1],setup:Parameters<typeof channelMatchesOnboarding>[1],siteVisible=true)=>CHANNELS.filter(item=>channelMatchesDirectoryFilters(item,{automation,onboarding:setup,freeOnly:true,category:'finance',siteVisible})).map(item=>item.id).sort();
   assert.deepEqual(select('connected_auto','wallet'),['paragraph']);
-  assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','lucid-page','supanote']);
+  assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','lucid-page','supanote','txtsbs']);
   assert.deepEqual(select('ai_auto','existing_account'),[]);
   assert.deepEqual(select('connected_auto','ai_account'),[]);
   assert.deepEqual(select('connected_auto','wallet',false),[]);

@@ -33,7 +33,7 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','brewpage','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','pastemyst','plopino','pstrs','shippage','slugpost','supanote','telegraph','totpage','verbose','vibedrop','yourwebs']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','brewpage','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','pastemyst','plopino','pstrs','shippage','slugpost','supanote','telegraph','totpage','txtsbs','verbose','vibedrop','yourwebs']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
@@ -120,7 +120,7 @@ test('Verbose site readiness respects an explicit exclusion and a lost one-time 
 
 test('free and finance filters combine with capability rather than replacing it',()=>{
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'connected_auto',true,'finance')).map(item=>item.id).sort(),['bluesky','github-gist','paragraph']);
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'ai_auto',true,'finance')).map(item=>item.id).sort(),['betterthanhtml','lucid-page','mataroa','nostr','supanote','telegraph','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'ai_auto',true,'finance')).map(item=>item.id).sort(),['betterthanhtml','lucid-page','mataroa','nostr','supanote','telegraph','txtsbs','verbose']);
   assert.equal(channelMatchesAutomation(channel('paper-wf'),'registration_pending',true,'finance'),false);
   assert.equal(channelMatchesAutomation(channel('paper-wf'),'registration_pending',false,'finance'),true);
   assert.equal(channelMatchesAutomation({...channel('telegraph'),enabled:false},'all',true,'finance'),true);
