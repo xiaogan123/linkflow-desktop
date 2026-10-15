@@ -17,7 +17,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, ['slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, ['tantive','slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','wordcell','sigle','nuance','prose','tumblr'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority){
       const metric=channel.authority;
       assert.equal(metric.name,'Ahrefs DR');assert.equal(metric.provenance,'official_snapshot');
@@ -31,9 +31,32 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
     assert.match(channel.qualityReason, /[\u3400-\u9fff]/, `${channel.id} qualityReason`);
     assert.match(channel.notes, /[\u3400-\u9fff]/, `${channel.id} notes`);
-    if (channel.kind === 'community' && !['bluesky','hive','raindrop'].includes(channel.id)) assert.equal(channel.automation, 'manual');
+    if (channel.kind === 'community' && !['bluesky','hive','raindrop','colony','tantive'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
+});
+
+test('independently accepted channels are enabled with per-publication limits intact',()=>{
+  const accepted=['swarmmemo','pastyx','wordcell','openagentchat','agenthow','listed-startups','agentnotepad','large-language','product-index','tantive'];
+  for(const id of accepted){
+    const value=CHANNELS.find(channel=>channel.id===id);assert.ok(value,id);
+    assert.equal(value.enabled,true,id);
+    assert.equal(value.authority,undefined,`${id} authority`);
+    assert.equal(value.traffic,undefined,`${id} traffic`);
+    assert.doesNotMatch(value.notes,/等待.*验收|验收前保持停用|真实发布尚待/,id);
+    assert.match(value.notes,/后续每篇|后续每个产品|发布前/,id);
+  }
+  const productIndex=CHANNELS.find(channel=>channel.id==='product-index')!;
+  assert.match(productIndex.notes,/已有 GitHub 身份.*不会自动注册.*工作流批准/);
+  const listed=CHANNELS.find(channel=>channel.id==='listed-startups')!;
+  assert.match(listed.notes,/至少一个.*canonical.*提交者自报.*不是平台编辑推荐/);
+  const largeLanguage=CHANNELS.find(channel=>channel.id==='large-language')!;
+  assert.match(largeLanguage.notes,/editorial_status 为 not_selected.*不是编辑推荐/);
+  const tantive=CHANNELS.find(channel=>channel.id==='tantive');assert.ok(tantive);
+  assert.equal(tantive.enabled,true);
+  const colony=CHANNELS.find(channel=>channel.id==='colony');assert.ok(colony);assert.equal(colony.enabled,false);
+  assert.equal(tantive.accountRequired,false);
+  assert.equal(tantive.emailRequired,false);
 });
 
 test('Markdrop is enabled after live acceptance while missing hosted-content policy remains explicit',()=>{

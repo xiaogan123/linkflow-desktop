@@ -1,8 +1,12 @@
-import { app, session, BrowserWindow } from 'electron';
+import { app, session, BrowserWindow, safeStorage } from 'electron';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
+import {Vault} from '../src/main/vault';
+import {LocalBackups} from '../src/main/maintenance';
+import {validateLocalBackup} from '../src/main/backup-validation';
+import {join} from 'node:path';
 import { Controller } from '../src/main/controller';
 import { CHANNELS } from '../src/integrations/catalog';
 import { runBrowserTask, closeTaskBrowser } from '../src/integrations/browser';
@@ -28,6 +32,19 @@ const filling=(d:any)=> {const c=d.page.controls.find((c:any)=>!c.filled&&['inpu
 const importedAccount=(status:Account['status']='unknown'):Account=>({id:'11111111-1111-4111-8111-111111111111',channelId:'seed-channel',email:'audit@owner.example',username:'audit-owner',createdAt:'2026-09-01T00:00:00.000Z',status,source:'imported',hasPassword:true});
 app.whenReady().then(async()=>{
  try{
+ // Exercise the real OS encryption layer on both macOS and Windows, inside this test profile.
+ const backupStore=new Store(join(process.env.AUDIT_USER_DATA!,'large-local-backup.sqlite'));
+ const backupVault=new Vault(backupStore),largeSecret='synthetic-local-backup-value-'.repeat(500);
+ assert(backupVault.available());backupStore.update(state=>{state.settings.hasApiKey=true;state.settings.autoRun=false});await backupVault.set('apiKey',largeSecret);
+ const localCiphers=backupStore.allCiphers();assert(localCiphers.apiKey.length>10_000);
+ const localBackups=new LocalBackups(join(process.env.AUDIT_USER_DATA!,'large-local-backups'),{encrypt:clear=>safeStorage.encryptString(clear),decrypt:cipher=>safeStorage.decryptString(cipher),snapshot:()=>({state:backupStore.read(),ciphers:backupStore.allCiphers()})});
+ const localStatus=await localBackups.run(true),localPayload=await localBackups.read(localStatus.backups[0].id);
+ const localRestore=validateLocalBackup(localPayload,cipher=>safeStorage.decryptString(cipher));assert.equal(localRestore.secrets.apiKey,largeSecret);
+ const restoredPath=join(process.env.AUDIT_USER_DATA!,'large-local-restored.sqlite'),restoredStore=new Store(restoredPath),restoredVault=new Vault(restoredStore);
+ restoredStore.restore(localRestore.state,restoredVault.encryptSecrets(localRestore.secrets));assert.equal(await restoredVault.get('apiKey'),largeSecret);restoredStore.close();
+ const reopenedStore=new Store(restoredPath);assert.equal(await new Vault(reopenedStore).get('apiKey'),largeSecret);assert.equal(reopenedStore.read().settings.autoRun,false);reopenedStore.close();backupStore.close();
+ evidence.push({name:'local-backup-large-os-cipher-validates-restores-and-reopens',passed:true,platform:process.platform,cipherExceededLegacyLimit:true,automaticExecutionRemainedPaused:true});
+
  const blockedController=Object.create(Controller.prototype) as Controller;
  (blockedController as any).drafting=new Set();
  (blockedController as any).services={};

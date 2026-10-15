@@ -63,3 +63,8 @@
 .metric-cell strong{font-size:12px;color:#263852}
 .metric-cell a{color:#315bc8;text-decoration:underline;text-underline-offset:2px}
 .metric-cell small{font-size:10px;color:#65758e}
+
+.update-nav-badge{display:inline-block;margin-left:8px;border-radius:5px;padding:2px 5px;background:#dbeafe;color:#1e40af;font-size:10px;font-style:normal;vertical-align:middle;white-space:nowrap}
+.update-reminder{background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;gap:12px;flex-wrap:wrap}
+.update-reminder>span{flex:1;min-width:190px}.update-reminder strong{font-weight:600}.update-reminder small{display:block;margin-top:4px;color:#476182}
+.update-reminder>.button{white-space:nowrap}.update-reminder>.icon-button{flex:none}

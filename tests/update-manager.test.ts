@@ -276,3 +276,26 @@ test('keeps the verified check time through download without inventing a new che
   assert.equal(restored.checkedAt,undefined,'a cached package is not a fresh online check');
  }finally{await rm(directory,{recursive:true,force:true})}
 });
+
+test('background reminder check uses signed metadata only, coalesces concurrent ticks and respects a 12 hour cooldown',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-reminder-')),data=fixture('1.1.0',Buffer.from('installer'));let now=Date.parse('2026-10-15T00:00:00Z'),requests:string[]=[];const phases:string[]=[];
+ try{const manager=new UpdateManager({...options(directory,data),now:()=>new Date(now),emit:s=>phases.push(s.phase),request:(async(i,init)=>{requests.push(String(i));return data.request(i,init)}) as typeof fetch});
+ await Promise.all([manager.checkIfDue(),manager.checkIfDue()]);assert.equal(requests.length,2);assert.deepEqual(new Set(requests),new Set([UPDATE_MANIFEST_URL,UPDATE_SIGNATURE_URL]));assert.equal(manager.status().phase,'up-to-date');assert.deepEqual(phases,['checking','up-to-date']);
+ now+=12*60*60*1000-1;await manager.checkIfDue();assert.equal(requests.length,2);now++;await manager.checkIfDue();assert.equal(requests.length,4);
+ await manager.check();assert.equal(requests.length,6);await manager.checkIfDue();assert.equal(requests.length,6);
+ }finally{await rm(directory,{recursive:true,force:true})}
+});
+
+test('background checks retain available and prepared versions and never auto download or install',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-reminder-')),data=fixture('1.2.0',Buffer.from('installer'));let now=0,calls=0;
+ try{const manager=new UpdateManager({...options(directory,data),now:()=>new Date(now),request:(async(i,init)=>{calls++;return data.request(i,init)}) as typeof fetch});await manager.checkIfDue();assert.equal(calls,2);assert.equal(manager.status().phase,'available');now+=24*60*60*1000;await manager.checkIfDue();assert.equal(calls,2);await manager.download();assert.equal(calls,3);assert.equal(manager.status().phase,'prepared');now+=24*60*60*1000;await manager.checkIfDue();assert.equal(calls,3);assert.equal(manager.status().phase,'prepared');
+ }finally{await rm(directory,{recursive:true,force:true})}
+});
+
+test('offline, unsupported and recovery states cannot create rapid background retries or change preserved recovery',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'linkflow-reminder-')),data=fixture('1.2.0',Buffer.from('installer'));let now=0,calls=0;const request=(async()=>{calls++;throw Error('offline')}) as typeof fetch;
+ try{const config={...options(directory,data),now:()=>new Date(now),request},manager=new UpdateManager(config);await manager.checkIfDue();assert.equal(manager.status().phase,'failed');const first=calls;assert(first>0);now+=600000;await manager.checkIfDue();assert.equal(calls,first);now=12*60*60*1000;await manager.checkIfDue();assert(calls>first);const before=calls;
+ for(const extra of [{packaged:false},{arch:'ia32'},{unsupportedReason:'installation needs repair'}]){const unsupported=new UpdateManager({...config,...extra});await unsupported.checkIfDue()}assert.equal(calls,before);
+ await mkdir(config.updatesDirectory,{recursive:true});await writeFile(join(config.updatesDirectory,'install-error.json'),'{invalid');const recovery=new UpdateManager(config);await recovery.initialize();const preserved=recovery.status();assert.equal(preserved.recoveryPending,true);await recovery.checkIfDue();assert.deepEqual(recovery.status(),preserved);assert.equal(calls,before);
+ }finally{await rm(directory,{recursive:true,force:true})}
+});

@@ -1,7 +1,7 @@
 import type {CapacityBlockReason,Channel,Site,SiteTopic,Task} from './types';
 import {isArticleTopicUrl} from './topic-policy';
 
-const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','raindrop','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark','memorywiki','plopino','vibedrop','notebin','shippage']);
+const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','raindrop','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark','memorywiki','plopino','wordcell','vibedrop','notebin','shippage','berrry','agenthow']);
 function deterministicPostSlug(taskId:string,contentHash:string):string{
   return `lf-${taskId.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,32)}-${contentHash.slice(0,12)}`;
 }
@@ -168,9 +168,9 @@ function taskReservesTopic(task:Task):boolean{
 
 /** Registration uncertainty stays pinned, but is not an attempted article publication. */
 export function isPendingPublisherRegistration(task:Task):boolean{
-  const checkpoint=task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':task.channelId==='plopino'?'plopino_account_create_pending':task.channelId==='vibedrop'?'vibedrop_key_create_pending':task.channelId==='notebin'?'notebin_account_create_pending':undefined;
-  return !!checkpoint&&task.checkpoint===checkpoint&&!!task.accountId&&
-    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.raindrop&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.htmlApp&&!task.deedPage&&!task.markdrop&&!task.draftmark&&!task.memoryWiki;
+  const checkpoints=task.channelId==='berrry'?['berrry_register_pending','berrry_signin_pending']:[task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':task.channelId==='plopino'?'plopino_account_create_pending':task.channelId==='wordcell'?'wordcell_token_create_pending':task.channelId==='vibedrop'?'vibedrop_key_create_pending':task.channelId==='notebin'?'notebin_account_create_pending':task.channelId==='agenthow'?'agenthow_register_pending':undefined];
+  return !!task.checkpoint&&checkpoints.includes(task.checkpoint)&&!!task.accountId&&
+    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.raindrop&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.htmlApp&&!task.deedPage&&!task.markdrop&&!task.draftmark&&!task.memoryWiki&&!task.berrry&&!task.agentHow;
 }
 
 function topicCandidates(site:Site,tasks:Task[]):{known:boolean;available:string[];invalid:boolean}{
@@ -194,7 +194,7 @@ function originalTaskCanRecover(task:Task):boolean{
 }
 
 function hasUnresolvedExternalAttempt(task:Task):boolean{
-  return !!task.notebin||!!task.notebinJournal||!!task.vibedrop||!!task.plopino||!!task.blogger||!!task.bluesky||!!task.leaflet||!!task.raindrop||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||!!task.htmlApp||!!task.deedPage||!!task.markdrop||!!task.draftmark||!!task.memoryWiki||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending','plopino_account_create_pending','vibedrop_key_create_pending','notebin_account_create_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration)/i.test(task.checkpoint??'');
+  return !!task.agentHow||!!task.berrry||!!task.notebin||!!task.notebinJournal||!!task.wordcell||!!task.vibedrop||!!task.plopino||!!task.blogger||!!task.bluesky||!!task.leaflet||!!task.raindrop||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||!!task.htmlApp||!!task.deedPage||!!task.markdrop||!!task.draftmark||!!task.memoryWiki||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending','plopino_account_create_pending','wordcell_token_create_pending','vibedrop_key_create_pending','notebin_account_create_pending','agenthow_register_pending','berrry_register_pending','berrry_signin_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration)/i.test(task.checkpoint??'');
 }
 
 function terminalBlock(task:Task):PublicationOpportunity|undefined{

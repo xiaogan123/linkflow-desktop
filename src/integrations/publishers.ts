@@ -24,15 +24,26 @@ import {runMarkdropTask,reconcileMarkdropTask} from './markdrop-publisher';
 import {runDraftmarkTask,reconcileDraftmarkTask} from './draftmark-publisher';
 import {preparePlopinoIdentity,runPlopinoTask,reconcilePlopinoTask} from './plopino-publisher';
 import {prepareVibeDropIdentity,runVibeDropTask,reconcileVibeDropTask} from './vibedrop-publisher';
+import {prepareWordcellIdentity,runWordcellTask,reconcileWordcellTask} from './wordcell-publisher';
 import {acceptNotebinPublication,makeNotebinContentApproval,notebinDraftIdentity,publishReviewedNotebinNote,recoverUnknownNotebinCreate,type NotebinDraftIdentity,type NotebinPublisherDependencies} from './notebin-publisher';
 import type {NotebinPublicationReceipt} from './notebin';
+import {prepareOpenAgentChatIdentity,reconcileOpenAgentChatTask,runOpenAgentChatTask} from './openagentchat-publisher';
+import {prepareAgentNotepadIdentity,reconcileAgentNotepadTask,runAgentNotepadTask} from './agentnotepad-publisher';
+import {prepareColonyIdentity,reconcileColonyTask,runColonyTask} from './colony-publisher';
+import {prepareAgentHowIdentity,reconcileAgentHowTask,runAgentHowTask} from './agenthow-publisher';
+import {prepareBerrryIdentity,reconcileBerrryTask,runBerrryTask} from './berrry-publisher';
+import {prepareLargeLanguageIdentity,reconcileLargeLanguageTask,runLargeLanguageTask} from './large-language-publisher';
+import {prepareSwarmMemoIdentity,reconcileSwarmMemoTask,runSwarmMemoTask} from './swarmmemo-publisher';
+import {reconcileTantiveTask,runTantiveTask} from './tantive-publisher';
 function withPlopinoPersistence(context:ExecutionContext){context.plopinoPersistence??=(context.secrets as typeof context.secrets&{plopinoPersistence?:ExecutionContext['plopinoPersistence']}).plopinoPersistence;return context}
 function withVibeDropPersistence(context:ExecutionContext){context.vibedropPersistence??=(context.secrets as typeof context.secrets&{vibedropPersistence?:ExecutionContext['vibedropPersistence']}).vibedropPersistence;return context}
+function withWordcellPersistence(context:ExecutionContext){context.wordcellPersistence??=(context.secrets as typeof context.secrets&{wordcellPersistence?:ExecutionContext['wordcellPersistence']}).wordcellPersistence;return context}
+function withTantivePersistence(context:ExecutionContext){const hidden=context.secrets as typeof context.secrets&{tantivePersistence?:ExecutionContext['tantivePersistence'];tantiveDependencies?:ExecutionContext['tantiveDependencies']};context.tantivePersistence??=hidden.tantivePersistence;context.tantiveDependencies??=hidden.tantiveDependencies;return context}
 
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
   publish(context:ExecutionContext):Promise<ExecutionResult>;
-  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>;markdrop?:NonNullable<ExecutionContext['task']['markdrop']>;draftmark?:NonNullable<ExecutionContext['task']['draftmark']>;vibedrop?:NonNullable<ExecutionContext['task']['vibedrop']>;notebin?:NonNullable<ExecutionContext['task']['notebin']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
+  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>;markdrop?:NonNullable<ExecutionContext['task']['markdrop']>;draftmark?:NonNullable<ExecutionContext['task']['draftmark']>;vibedrop?:NonNullable<ExecutionContext['task']['vibedrop']>;wordcell?:NonNullable<ExecutionContext['task']['wordcell']>;notebin?:NonNullable<ExecutionContext['task']['notebin']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
 }
 
 function exactNotebinTarget(task:Pick<Task,'topicUrl'>,site:Pick<Site,'url'>){return task.topicUrl??site.url}
@@ -69,7 +80,16 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   draftmark:{publish:runDraftmarkTask,reconcile:reconcileDraftmarkTask},
   plopino:{prepare:context=>preparePlopinoIdentity(withPlopinoPersistence(context)),publish:context=>runPlopinoTask(withPlopinoPersistence(context)),reconcile:context=>reconcilePlopinoTask(withPlopinoPersistence(context))},
   vibedrop:{prepare:context=>prepareVibeDropIdentity(withVibeDropPersistence(context)),publish:context=>runVibeDropTask(withVibeDropPersistence(context)),reconcile:context=>reconcileVibeDropTask(withVibeDropPersistence(context))},
+  wordcell:{prepare:context=>prepareWordcellIdentity(withWordcellPersistence(context)),publish:context=>runWordcellTask(withWordcellPersistence(context)),reconcile:context=>reconcileWordcellTask(withWordcellPersistence(context))},
   notebin:{publish:context=>runNotebinTask(context),reconcile:context=>reconcileNotebinTask(context)},
+  openagentchat:{prepare:prepareOpenAgentChatIdentity,publish:runOpenAgentChatTask,reconcile:reconcileOpenAgentChatTask},
+  agentnotepad:{prepare:prepareAgentNotepadIdentity,publish:runAgentNotepadTask,reconcile:reconcileAgentNotepadTask},
+  colony:{prepare:prepareColonyIdentity,publish:runColonyTask,reconcile:reconcileColonyTask},
+  agenthow:{prepare:prepareAgentHowIdentity,publish:runAgentHowTask,reconcile:reconcileAgentHowTask},
+  berrry:{prepare:prepareBerrryIdentity,publish:runBerrryTask,reconcile:reconcileBerrryTask},
+  'large-language':{prepare:prepareLargeLanguageIdentity,publish:runLargeLanguageTask,reconcile:reconcileLargeLanguageTask},
+  swarmmemo:{prepare:prepareSwarmMemoIdentity,publish:runSwarmMemoTask,reconcile:reconcileSwarmMemoTask},
+  tantive:{publish:context=>runTantiveTask(withTantivePersistence(context)),reconcile:(context=>reconcileTantiveTask(withTantivePersistence(context))) as ApiPublisher['reconcile']},
 };
 /** Only registered built-in API adapters may execute; a catalog label grants nothing. */
 export function publisherFor(channel:Channel):ApiPublisher|undefined{

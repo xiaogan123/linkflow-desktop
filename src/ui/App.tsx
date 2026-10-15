@@ -19,6 +19,7 @@ import {SiteTools} from './pages/SiteTools';
 import {SettingsPage} from './pages/SettingsPage';
 import {TaskCenter} from './pages/TaskCenter';
 import {UpdateCenter} from './pages/UpdateCenter';
+import {UpdateReminder,updateReminder,useUpdateStatus} from './update-reminder';
 import {DraftCopyActions} from './pages/DraftCopyActions';
 import {monthlyPageProgress,monthlyReset,planningStatus} from './planning-status';
 import {needsDedicatedConnection} from './account-guidance';
@@ -63,6 +64,7 @@ export default function App(){
   const [settings,setSettings]=useState<Settings|null>(null),[apiKey,setApiKey]=useState(''),[mailPassword,setMailPassword]=useState('');
   const settingsDirty=useRef(false);
   const api=window.linkflow;
+  const updateState=useUpdateStatus(!demo),updateNotice=updateReminder(updateState);
   useEffect(()=>{
     let active:HTMLElement|null=null,previous:HTMLElement|null=null;
     const focusable=(dialog:HTMLElement)=>[...dialog.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex]:not([tabindex="-1"])')].filter(element=>element.offsetParent!==null&&element.getAttribute('aria-hidden')!=='true');
@@ -131,12 +133,13 @@ export default function App(){
   return <div className="app-shell">
     <aside className="sidebar"><div className="traffic" aria-hidden="true"/><div className="brand"><span className="brand-mark"><LinkSimple size={38} weight="bold"/></span><div><strong>外链助手</strong><small>LINKFLOW</small></div></div>
       <nav aria-label="主导航" className="nav"><NavButton icon={House} active={page==='overview'||page==='site'} onClick={()=>nav('overview')}>总览</NavButton><NavButton icon={FileText} active={page==='tasks'} onClick={()=>nav('tasks')}>任务</NavButton><NavButton icon={Funnel} active={page==='channels'} onClick={()=>nav('channels')}>渠道</NavButton><NavButton icon={UserCircle} active={page==='accounts'} onClick={()=>nav('accounts')}>账号</NavButton></nav>
-      <div className="sidebar-bottom"><NavButton icon={ArrowsClockwise} active={page==='updates'} onClick={()=>nav('updates')}>更新中心</NavButton><NavButton icon={Gear} active={page==='settings'} onClick={()=>nav('settings')}>设置</NavButton><div className="runtime-indicator"><span className={`dot ${demo?'blue':data?.runtime.busy?'green':data?.settings.autoRun?'green':'gray'}`}/><div><strong>{demo?'演示模式':data?.runtime.busy?'正在执行':data?.settings.autoRun?(data.runtime.aiReady?'按计划待命':'等待 AI 连接'):'自动执行已暂停'}</strong><small>{demo?'仅供预览':data?.settings.autoRun?'系统按计划运行':data?'恢复后继续检查已排任务':'等待桌面服务'}</small></div></div></div>
+      <div className="sidebar-bottom"><NavButton icon={ArrowsClockwise} active={page==='updates'} onClick={()=>nav('updates')}>更新中心{updateNotice&&<em className="update-nav-badge">{updateNotice.label}</em>}</NavButton><NavButton icon={Gear} active={page==='settings'} onClick={()=>nav('settings')}>设置</NavButton><div className="runtime-indicator"><span className={`dot ${demo?'blue':data?.runtime.busy?'green':data?.settings.autoRun?'green':'gray'}`}/><div><strong>{demo?'演示模式':data?.runtime.busy?'正在执行':data?.settings.autoRun?(data.runtime.aiReady?'按计划待命':'等待 AI 连接'):'自动执行已暂停'}</strong><small>{demo?'仅供预览':data?.settings.autoRun?'系统按计划运行':data?'恢复后继续检查已排任务':'等待桌面服务'}</small></div></div></div>
     </aside>
     <main className="main"><div className="topline"><span><i className="workspace-dot"/>个人工作空间</span><span>{fullDate}</span></div>
       {!api&&!demo&&<div className="banner warning"><WarningCircle size={20}/> 桌面服务未连接。可在浏览器中开启演示模式预览界面。<Button variant="text" onClick={()=>setDemo(true)}>开启演示模式</Button></div>}
       {api&&!demo&&<button className="demo-switch" onClick={()=>setDemo(true)}>预览演示</button>}
       {demo&&<button className="demo-exit" onClick={()=>setDemo(false)}>演示模式 · 返回真实数据</button>}
+      <UpdateReminder state={demo?null:updateState} hidden={page==='updates'} onOpen={()=>nav('updates')}/>
       {error&&<div role="alert" className="banner error"><WarningCircle size={18}/><span>{error}</span><button aria-label="关闭错误" onClick={()=>setError('')}><X size={18}/></button></div>}
       {notice&&<div role="status" className="banner success"><CheckCircle size={18}/><span>{notice}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={18}/></button></div>}
       {data&&!demo&&!data.settings.autoRun&&<div className="banner plan-paused" role="status"><Pause size={18}/><span><strong>自动执行已暂停。</strong>已排任务会保留；恢复后系统会立即继续检查。</span><Button variant="primary" onClick={()=>void act('plan:run',undefined,'自动执行已恢复，正在检查计划。')} disabled={pending||demo}><Play size={16}/>恢复自动执行</Button></div>}

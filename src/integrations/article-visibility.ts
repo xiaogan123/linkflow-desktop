@@ -3,10 +3,16 @@ import type {CheerioAPI} from 'cheerio';
 /** Static visibility checks; never executes scripts or fetches page styles. */
 export function styleConcealsArticle(style:string):boolean{
   const css=style.toLowerCase().replace(/\/\*[\s\S]*?\*\//g,'').replace(/\s+/g,'');
-  const hidden=/(?:^|;)(?:display:none|visibility:(?:hidden|collapse)|content-visibility:hidden|opacity:0|font-size:0(?:px|em|rem|%)?)(?:!important)?(?:;|$)/.test(css);
-  const clipped=/(?:^|;)(?:overflow|overflow-y):(?:hidden|clip)(?:!important)?(?:;|$)/.test(css)
-    && /(?:^|;)(?:height|max-height):(?:\d|\.)[^;]*(?:;|$)/.test(css);
-  return hidden||clipped||/(?:^|;)(?:clip:rect\(|clip-path:inset\()/i.test(css);
+  const hidden=/(?:^|;)(?:display:none|visibility:(?:hidden|collapse)|content-visibility:hidden|opacity:0(?:\.0+)?|font-size:0(?:\.0+)?(?:px|em|rem|%)?)(?:!important)?(?:;|$)/.test(css);
+  const clipped=/(?:^|;)(?:overflow|overflow-x|overflow-y):(?:hidden|clip)(?:!important)?(?:;|$)/.test(css)
+    && /(?:^|;)(?:height|max-height|width|max-width):(?:\d|\.)[^;]*(?:;|$)/.test(css);
+  const transparent=/(?:^|;)(?:color|-webkit-text-fill-color):(?:transparent|rgba\([^;]*,0(?:\.0+)?\)|(?:rgb|hsl|color)[a-z-]*\([^;]*\/0(?:\.0+)?%?\))(?:!important)?(?:;|$)/.test(css);
+  // A static check cannot prove that a positioned/clipped article is reachable.
+  // Native acceptance separately checks its actual computed text rectangles.
+  const fixed=/(?:^|;)position:fixed(?:!important)?(?:;|$)/.test(css);
+  const offscreen=/(?:^|;)(?:left|right|top|bottom):-[1-9]\d{3,}(?:px|em|rem|vw|vh)(?:!important)?(?:;|$)/.test(css);
+  const transformed=/(?:^|;)transform:[^;]*(?:scale(?:x|y|3d)?\(0(?:\.0+)?(?:[,)]))/.test(css);
+  return hidden||clipped||transparent||fixed||offscreen||transformed||/(?:^|;)(?:clip:rect\(|clip-path:(?!none(?:!important)?(?:;|$)))/i.test(css);
 }
 
 // Hiding a generated pseudo-element does not hide its originating DOM element.

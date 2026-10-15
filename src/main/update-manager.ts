@@ -103,6 +103,7 @@ export class UpdateManager {
   private recoveryPending=false;
   private recoverySupersedePromise?:Promise<UpdateState>;
   private downloadAbort?:AbortController;
+  private lastAutomaticCheckAt?:number;
   private downloadPromise?:Promise<UpdateState>;
   constructor(private options:UpdateManagerOptions){
     this.files={...realFiles,...options.files};this.recoveryPorts={...realRecoveryPorts,...options.recoveryPorts};this.platform=resolveUpdatePlatform(options.platform,options.arch);this.current={phase:'idle',currentVersion:options.currentVersion};
@@ -282,6 +283,18 @@ export class UpdateManager {
     const manifestBytes=Buffer.from(record.manifest,'base64'),signature=Buffer.from(record.signature,'ascii');verifyManifestSignature(manifestBytes,signature,this.options.publicKey);const manifest=parseUpdateManifest(manifestBytes),asset=this.platform&&manifest.assets[this.platform];
     if(!asset||compareVersions(manifest.version,this.options.currentVersion)<=0)return false;const artifactPath=join(this.options.updatesDirectory,record.artifactFile);if(!inside(this.options.updatesDirectory,artifactPath))return false;const info=await this.files.lstat(artifactPath);if(!info.isFile()||info.isSymbolicLink()||info.size!==asset.size||await hashFile(artifactPath,this.files.createReadStream)!==asset.sha256)return false;
     this.verified={manifest,manifestBytes,signature};this.artifactPath=artifactPath;this.set(this.targetState('prepared',{progress:{receivedBytes:asset.size,totalBytes:asset.size,percent:100}}));return true;
+  }
+  async checkIfDue():Promise<UpdateState>{
+    // Use the existing signed feed, never an installer download, for reminders.
+    if(!this.options.packaged||this.options.unsupportedReason||!this.platform||this.recoveryPending||
+      ['checking','available','downloading','prepared','installing'].includes(this.current.phase)||
+      this.current.phase==='failed'&&!!this.current.targetVersion)return this.status();
+    const now=(this.options.now?.()??new Date()).getTime();
+    const checked=Date.parse(this.current.checkedAt??'');
+    const previous=Math.max(this.lastAutomaticCheckAt??-Infinity,Number.isFinite(checked)?checked:-Infinity);
+    if(!Number.isFinite(now)||now-previous<12*60*60*1000)return this.status();
+    this.lastAutomaticCheckAt=now;
+    return this.check();
   }
   async check():Promise<UpdateState>{
     if(this.recoveryPending)return this.status();if(!this.supported())return this.status();if(['checking','downloading','installing'].includes(this.current.phase))throw Error('更新操作正在进行');this.set({phase:'checking',currentVersion:this.options.currentVersion});

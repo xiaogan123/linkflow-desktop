@@ -44,6 +44,7 @@ if(!process.versions.electron){
     channels:[
       channel('github-gist','GitHub Gist','api'),
       channel('telegraph','Telegraph','api'),
+      channel('shiply','Shiply.now','api'),
       channel('product-hunt','Product Hunt','browser'),
       channel('github','GitHub','browser'),
     ],
@@ -51,6 +52,7 @@ if(!process.versions.electron){
       {id:'telegraph-api',channelId:'telegraph',email:'owner@owner.example',username:'telegraph-author',mailboxId:'mailbox-1',createdAt:now,status:'registered',hasPassword:true,credentialKind:'api_token',source:'generated'},
       {id:'gist-api',channelId:'github-gist',email:'',username:'gist-owner',createdAt:now,status:'registered',hasPassword:true,credentialKind:'api_token',source:'imported'},
       {id:'github-password',channelId:'github',email:'login@example.com',username:'github-user',mailboxId:'mailbox-1',createdAt:now,status:'registered',hasPassword:true,credentialKind:'password',source:'imported'},
+      {id:'shiply-pending',channelId:'shiply',email:'owner@owner.example',username:'shiply-owner',createdAt:now,updatedAt:'2026-10-03T00:20:00.001Z',status:'needs_verification',hasPassword:false,credentialKind:'api_token',source:'generated',shiply:{version:1,emailHash:'2c595b7ddd8d967fcf46f63af51c81f6181fe0efd4fdc236f2a45696b2edeaf0',previousRequestedAt:now,requestedAt:'2026-10-03T00:20:00.001Z',stage:'code_sent'}},
     ],
     mailboxes:[{id:'mailbox-1',label:'主收件箱',host:'imap.example.com',port:993,user:'inbox@example.com',secure:true,hasPassword:true,aliases:[],createdAt:now,updatedAt:now}],
     accountBindings:[{id:'binding-telegraph',siteId:'site-1',channelId:'telegraph',accountId:'telegraph-api',createdAt:now,updatedAt:now}],
@@ -76,7 +78,16 @@ if(!process.versions.electron){
   };
   ipcMain.handle('fixture',(_event,name,payload)=>{
     if(name==='snapshot')return clone(state);
+    if(name==='app:update-status')return {phase:'idle',currentVersion:'1.2.29'};
     actions.push({name,payload:clone(payload)});
+    if(name==='account:resend-shiply-code'){
+      const account=state.accounts.find(item=>item.id===payload.accountId&&item.channelId==='shiply');
+      if(!account?.shiply)throw new Error('fixture Shiply identity missing');
+      const requestedAt=new Date().toISOString();
+      account.shiply={...account.shiply,previousRequestedAt:account.shiply.requestedAt,requestedAt,stage:'code_sent'};
+      account.updatedAt=requestedAt;
+      return clone(account);
+    }
     if(name==='account:set-bindings'){
       replaceBindings(payload);
       return {ok:true};
@@ -121,6 +132,15 @@ if(!process.versions.electron){
     check('Telegraph API identity is identified as task-created',await evaluate('document.body.innerText.includes("任务自动创建的 API 身份")'));
     check('API identities never expose the password reveal action',await evaluate('!document.querySelector("button[aria-label=\\"查看 telegraph-author 的密码\\"]")&&!document.querySelector("button[aria-label=\\"查看 gist-owner 的密码\\"]")'));
     check('ordinary password account keeps its reveal action',await evaluate('!!document.querySelector("button[aria-label=\\"查看 github-user 的密码\\"]")'));
+
+    await clickLabel('查看 shiply-owner 的 Shiply 身份');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接 Shiply.now 邮箱身份"');
+    check('an expired later Shiply code exposes another explicit same-identity renewal',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]'),button=[...dialog.querySelectorAll('button')].find(item=>item.innerText.trim()==='为原身份请求新验证码');return dialog.innerText.includes('当前验证码已明确过期；可为同一身份手动请求新验证码。')&&!!button&&!button.disabled})()`));
+    await clickText('为原身份请求新验证码');
+    const shiplyRenewal=actions.findLast(item=>item.name==='account:resend-shiply-code');
+    check('Shiply renewal sends only the existing account id',shiplyRenewal?.payload.accountId==='shiply-pending'&&Object.keys(shiplyRenewal.payload).join(',')==='accountId');
+    check('the fresh Shiply code hides another renewal until it expires',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return ![...dialog.querySelectorAll('button')].some(item=>item.innerText.trim()==='为原身份请求新验证码')&&!dialog.innerText.includes('当前验证码已明确过期')})()`));
+    await clickText('关闭');
 
     await clickText('添加 / 连接账号');
     await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="添加或连接账号"');

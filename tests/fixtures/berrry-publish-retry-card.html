@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="index,follow"><title>Synthetic publishing recovery card</title><style>
+body{font:17px/1.6 system-ui,sans-serif;margin:2rem;color:#182333;background:#fff}main{max-width:48rem;margin:auto}label{display:block;margin-top:1rem}select{font:inherit;padding:.5rem}section{border:1px solid #ccd4df;padding:1rem;margin:1rem 0}a{color:#1747ab}
+</style></head><body><main><h1>Synthetic publishing recovery card</h1>
+<p>This is invented test content for a publishing client. It contains no customer account, accepted manuscript, or observed publication identifier.</p>
+<section><h2>Fixture controls</h2><label for="outcome">Choose a synthetic state</label><select id="outcome"><option value="pending">Pending</option><option value="recorded">Recorded</option></select><label for="recovery">Choose a fixture detail</label><select id="recovery"><option value="compact">Compact</option><option value="expanded">Expanded</option></select><p id="advice" aria-live="polite">The synthetic operation is pending. Compact fixture detail.</p></section>
+<section><h2>Verification scenario</h2><p>The test client keeps one artificial operation identifier across a simulated restart. A synthetic response supplies the same content for ownership and public-page checks.</p><p>Changing either control updates this local fixture only. No network request or browser storage is used.</p></section>
+<footer><p><a href="https://github.com/xiaogan123/linkflow-desktop">Public software reference used by the fixture</a></p><p><a href="/remix">Remix on Berrry</a></p></footer></main>
+<script>
+const outcome=document.getElementById('outcome'),recovery=document.getElementById('recovery'),advice=document.getElementById('advice');
+function update(){advice.textContent=(outcome.value==='recorded'?'The synthetic operation is recorded.':'The synthetic operation is pending.')+' '+(recovery.value==='expanded'?'Expanded fixture detail.':'Compact fixture detail.')}
+outcome.addEventListener('change',update);recovery.addEventListener('change',update);
+</script></body></html>

@@ -6,10 +6,14 @@ export type ConnectionAction={kind:'connect'|'locate'|'none';label?:string};
 export type AccountReadiness={needsAttention:boolean;reusable:boolean};
 
 const secondaryIds=new Set<ConnectionChannelId>(['deno','markest']);
-const dedicatedIds=new Set<ConnectionChannelId>(['here-now','shiply','plopino','mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
-const bindingIds=new Set<string>(['here-now','shiply','hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
+const dedicatedIds=new Set<ConnectionChannelId>(['openagentchat','agentnotepad','colony','large-language','here-now','shiply','plopino','mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
+const bindingIds=new Set<string>(['openagentchat','agentnotepad','colony','large-language','here-now','shiply','hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
 
 const actionLabels:Partial<Record<ConnectionChannelId,string>>={
+  openagentchat:'连接 OpenAgentChat',
+  agentnotepad:'连接 AgentNotepad',
+  colony:'连接 Colony',
+  'large-language':'连接 LargeLanguage',
   'here-now':'连接 here.now',
   'shiply':'连接 Shiply.now',
   plopino:'连接 Plopino',

@@ -5,8 +5,8 @@ import type {ChannelReadiness} from './presentation';
 export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pending'|'profile'|'manual'|'disabled';
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
-const automaticIdentity=new Set(['notebin','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','mdshare','agentdrop','shippage','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki']);
-const connectedIdentity=new Set(['here-now','shiply','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop']);
+const automaticIdentity=new Set(['swarmmemo','tantive','notebin','wordcell','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','pastyx','mdshare','agentdrop','shippage','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki','agenthow','agentnotepad','openagentchat','large-language','listed-startups']);
+const connectedIdentity=new Set(['here-now','shiply','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop','product-index']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
   if(!channel.enabled)return 'disabled';
@@ -26,9 +26,12 @@ export function channelMatchesAutomation(channel:Channel,filter:ChannelAutomatio
 }
 
 const setupById:Record<string,string>={
+  swarmmemo:'本机自动建立并复用签名身份，无需邮箱或钱包；已完成真实发布与公开页验收，结果不明只读核对原页面、不重发；不保证永久保留',
+  tantive:'免账号按固定官方 API 逐字预览并发布；临时票据和原始响应只在本机加密保存，结果不明时只按原 request ID 只读核对；后续每篇仍须独立审核和公开页核验',
   slugpost:'免账号经官方网页发布原创全文；稿件须通过审核，遇本人验证则保留原任务；固定地址和编辑凭据加密保存，结果不明不重发。没有长期保留保证',
   notebin:'任务按官方协议完成一次有界 PoW 身份创建并铸造最小权限专用密钥；结果不明时只读对账，不重建身份或重发',
   vibedrop:'任务仅创建一次匿名密钥并加密保存；结果不明时只读对账，不重建密钥或站点',
+  wordcell:'首次任务仅创建一次固定托管令牌并加密保存；已完成真实令牌建立与公开页验收，结果不明时只读查询同一 operation，不重复 PUT 或新建 slug；不保证永久保留',
   plopino:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可直接连接，结果不明不会重复注册；无需手工创建 API 令牌',
   'here-now':'首次连接已完成邮箱验证的个人账号 API key，并关联网站；之后按审核与排期自动发布全文',
   shiply:'首次向本人授权邮箱请求验证码并连接账号；加密保存 API key 后复用，渠道真实验收前停用',
@@ -48,7 +51,8 @@ const setupById:Record<string,string>={
   yourwebs:'免账号发布静态全文；匿名页面保留 30 天，原始响应加密留存，未知结果不重发或续期；公开页验收后才计入',
   'totpage':'免账号发布静态全文；开放页面的保存期限未知，持公开链接者可修改或删除，原始响应加密留存，未知结果不重发或续期；公开页验收后才计入',
   mdview:'当前停用：实际匿名页声明 noindex,nofollow，不计入已验收外链渠道；固定 30 天到期，原稿与回执保留，不重复投稿',
-  txtsbs:'免账号通过官方公开表单发布静态 HTML 全文；逐篇管理密钥与原始响应加密保存，未知结果不重发；平台未声明定时到期，但可删除页面，匿名全文与抓取策略真实验收前保持停用',
+  txtsbs:'免账号通过官方公开表单发布静态 HTML 全文；逐篇管理密钥与原始响应加密保存，未知结果不重发；已完成真实匿名全文、原生链接与抓取策略验收，后续每篇仍需独立审核与核验；平台未声明定时到期但可删除页面，不保证永久保存',
+  pastyx:'免账号按官方匿名 API 发布 Markdown 全文；编辑密钥和原始响应只在本机加密保存，未知结果不重发。已完成一次真实匿名全文与恢复验收；expiry=never 不代表永久保存',
   mdshare:'免账号发布公开 Markdown；匿名写入开关关闭或未知结果即停止；发布后核对 API 原文与浏览器 JS 渲染全文，不保证永久保存或搜索收录',
   'agentdrop':'当前停用：页面目标为安全跳转按钮，尚未验证可抓取的正文链接；匿名页保留 30 天，原发布记录加密留存，不重复投稿或续期',
   shippage:'首次任务通过同一创建请求自动建立一个平台账号并发布；API key 仅在本机加密保存，之后所有网站复用这一账号。每页固定 14 天到期，未知结果不重发、不换号、不自动续期；发布后自动核验公开页与抓取条件',
@@ -58,6 +62,12 @@ const setupById:Record<string,string>={
   markdrop:'免注册发布 Markdown 全文；一次性编辑密钥自动加密保存在本机，结果不明时只核对原页面；默认不设到期时间，但服务不保证长期可用或保留',
   draftmark:'免注册发布公开 Markdown 全文；服务端生成大小写敏感的文档 ID，逐文档凭据只在本机加密保存；结果不明不重发，没有免费层 SLA 或永久保留保证',
   memorywiki:'免注册发布公开 Markdown 全文；编辑令牌和原始回包只在本机加密保存；结果不明不重发或猜测 ID，空到期时间不代表永久 SLA',
+  agenthow:'首次任务自动建立并复用一个如实命名的无邮箱 actor；key和原始响应只在本机加密保存。注册最多一次，未知结果不换 label、不重试；每篇仍需独立审核与公开页核验',
+  agentnotepad:'首次任务自动建立并跨网站复用一个无邮箱 agent；API key和原始响应只在本机加密保存。注册最多一次，未知结果不换名、不重试；每篇仍需独立审核与公开页核验',
+  openagentchat:'首次任务自动建立并复用一个如实命名的无邮箱 agent，也可连接用户已有 token；token只在本机加密保存。注册最多一次，未知结果不换名、不重试；不保证收录或长期保留',
+  'large-language':'首次任务自动建立并复用一个如实命名的无邮箱 agent，也可连接用户已有 token；token只在本机加密保存。未知结果不换名、不重试；公开资料库收录不代表编辑推荐',
+  'listed-startups':'免账号提交已审核的真实产品资料；发布前按固定 slug 与产品网址查重，未知结果只读核对且不重发。资料由提交者自报，不是编辑推荐，不保证收录或长期保留',
+  'product-index':'首次连接本人已有 GitHub 身份的专用令牌；软件不自动注册 GitHub。每个产品只创建一个固定 issue，未知结果只按原作者与逐字相同正文恢复；还需平台工作流批准',
   'docs-md':'免账号匿名分享经核对的 Markdown；编辑令牌只加密保存在本机，真实托管验收前保持停用',
   'github-gist':'首次连接本人 GitHub 账号的 Gists 令牌',
   blogger:'首次由本人完成 Google 授权并绑定博客',
@@ -71,7 +81,7 @@ const setupById:Record<string,string>={
 };
 
 export function channelSourceLabels(id:string){
-  if(['betterthanhtml','supanote','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','nextgen-slides','shippage','pstrs','yourwebs','pastemyst','markdownpaste','html-app','brewpage','markdrop','draftmark','memorywiki','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
+  if(['tantive','betterthanhtml','supanote','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','shippage','pstrs','yourwebs','pastemyst','markdownpaste','html-app','brewpage','markdrop','draftmark','memorywiki','sigle','nuance'].includes(id))return {checked:'资料核查',open:'官方说明'};
   const guidance=['telegraph','paper-wf','verbose'].includes(id);
   return {checked:guidance?'接口与公开资料核查':'规则核查',open:id==='telegraph'?'官方 API 文档':guidance?'官方公开说明':'官方规则'};
 }
@@ -83,7 +93,7 @@ export function channelAutomationView(channel:Channel,readinessLabel?:string){
     :kind==='profile'?'需本人已有账号；仅维护资料页'
     :kind==='manual'?(channel.automation==='api'?'API 字段不代表软件已接入发布器':'由软件准备材料，需在平台人工提交')
     :setupById[channel.id];
-  const method=['ai_auto','connected_auto','registration_pending'].includes(kind)?`${['slugpost','txtsbs'].includes(channel.id)&&kind==='ai_auto'?'官方网页':'官方 API'} · ${channel.contentFormat==='social'?'短帖':'全文'}`:kind==='profile'?'浏览器资料页流程':undefined;
+  const method=['ai_auto','connected_auto','registration_pending'].includes(kind)?`${['slugpost','txtsbs'].includes(channel.id)&&kind==='ai_auto'?'官方网页':'官方 API'} · ${channel.kind==='directory'?'产品资料':channel.contentFormat==='social'?'短帖':'全文'}`:kind==='profile'?'浏览器资料页流程':undefined;
   return {kind,label:label[kind],setup,method,siteReadiness:readinessLabel&&kind!=='manual'&&kind!=='disabled'?`本网站：${readinessLabel}`:undefined};
 }
 

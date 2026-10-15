@@ -10,8 +10,8 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.28',candidateVersion:'1.2.29',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.28/Linkflow-1.2.28-windows-x64-setup.exe',sha256:'c73e39b87f3b29436b6dacce679aa1cd5dbf8c9802a2dffb850a7fa38478ed99'};
-const macPublishedUpgrade={sourceVersion:'1.2.28',candidateVersion:'1.2.29',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.28/Linkflow-1.2.28-mac-arm64.zip',sha256:'aba5833338f5bf5835cde1f169b2b0852c462b20899a1fe9a952748c0619d303'};
+const windowsUpgrade={sourceVersion:'1.2.29',candidateVersion:'1.2.30',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.29/Linkflow-1.2.29-windows-x64-setup.exe',sha256:'80c68e1cb454e9b3c4292c62179f4145ff2b3aa8f98e103878f77c2e024e2dc6'};
+const macPublishedUpgrade={sourceVersion:'1.2.29',candidateVersion:'1.2.30',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.29/Linkflow-1.2.29-mac-arm64.zip',sha256:'7947f18428ac126515d642a46644c27763cc94750be18ea643761df605d1192b'};
 const usage=`Usage:
   node scripts/update-native-smoke.mjs
   node scripts/update-native-smoke.mjs --mac-published-source [archive]
@@ -53,7 +53,7 @@ const bridgeIndex=process.argv.indexOf('--mac-bridge');
 const publishedSourceIndex=process.argv.indexOf('--mac-published-source');
 if(bridgeIndex>=0&&publishedSourceIndex>=0)throw Error('Choose either --mac-published-source or --mac-bridge');
 if(publishedSourceIndex>=0){
- if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.28-zip]');
+ if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.29-zip]');
  Object.assign(plan,probePlan(process.platform,process.arch,version,'published-source'));
  const [path]=process.argv.slice(publishedSourceIndex+1);if(path)plan.sourcePath=resolve(path);
 }
@@ -69,7 +69,7 @@ if(process.platform==='win32'){
  if(existing)throw Error('A pre-existing Linkflow registration prevents the isolated installer probe');
 }
 
-const directory=await mkdtemp(join(tmpdir(),'linkflow-update-native-')),installParent=join(directory,'Install Path With Spaces');await mkdir(installParent);
+const directory=await mkdtemp(join(tmpdir(),'linkflow-update-native-')),installParent=join(directory,'Install Path 中文 With Spaces');await mkdir(installParent);
 const application=join(installParent,process.platform==='darwin'?'外链助手.app':'Linkflow');
 const executable=process.platform==='darwin'?join(application,'Contents','MacOS','外链助手'):join(application,'外链助手.exe');
 const resources=process.platform==='darwin'?join(application,'Contents','Resources'):join(application,'resources');
@@ -118,7 +118,7 @@ const workerExitDeadline=Date.now()+10_000;while(alive(handoff.workerPid)&&Date.
 if(!report.passed){if(report.diagnostic)console.error('NATIVE_UPDATE_DIAGNOSTIC '+JSON.stringify(report.diagnostic));throw Error('Native updater probe failed')}
 assert.deepEqual(await readFile(marker),markerBytes);assert((await stat(executable)).isFile());
 if(repairedFile){assert.equal(sha256(await readFile(repairedFile)),repairHash);report.checks.push('NSIS actually replaced the resource at the exact existing path')}
-report.checks.push('installed preparer exited before installer authorization','real helper runtime runs outside install directory','same target path contains spaces','synthetic sidecar marker outside the application preserved (not a SQLite migration proof)');
+report.checks.push('installed preparer exited before installer authorization','real helper runtime runs outside install directory','same target path contains Chinese characters and spaces','synthetic sidecar marker outside the application preserved (not a SQLite migration proof)');
 if(process.platform==='win32'){
  const installedAsarSha256=sha256(await readFile(installedAsar)),installedVersion=asarVersion(installedAsar);assert.equal(report.outcome,'installed');assert.equal(installedVersion,version);assert.equal(installedAsarSha256,candidateAsarSha256);assert.notEqual(installedAsarSha256,sourceAsarSha256);
  report.upgrade={sourceVersion,sourceAsarSha256,candidateVersion:version,candidateAsarSha256,installedVersion,installedAsarSha256};report.checks.push(`published Windows v${sourceVersion} ASAR upgraded to the exact candidate v${version} ASAR`);

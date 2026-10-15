@@ -33,14 +33,38 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['betterthanhtml','brewpage','deed-page','draftmark','katbin','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','pastemyst','plopino','pstrs','shippage','slugpost','supanote','telegraph','totpage','txtsbs','verbose','vibedrop','yourwebs']);
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agenthow','agentnotepad','betterthanhtml','brewpage','deed-page','draftmark','katbin','large-language','listed-startups','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','shippage','slugpost','supanote','swarmmemo','tantive','telegraph','totpage','txtsbs','verbose','vibedrop','wordcell','yourwebs']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph','product-index']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
   assert.match(channelAutomationView(channel('paper-wf')).setup,/人机验证/);
   assert.match(channelAutomationView(channel('bluesky')).method??'',/短帖/);
   assert.match(channelAutomationView(channel('blogger')).setup,/本人完成 Google 授权/);
   assert.match(channelAutomationView(channel('deed-page')).setup,/免注册发布静态全文.*不保证长期可用或保留/);
+});
+
+test('accepted batch channels expose their actual UI capability and safety boundaries',()=>{
+  const automatic=['swarmmemo','tantive','pastyx','wordcell','agenthow','agentnotepad','openagentchat','large-language','listed-startups'];
+  for(const id of automatic){
+    const value=channel(id);assert.equal(value.enabled,true,id);assert.equal(channelAutomationKind(value),'ai_auto',id);
+    assert.equal(channelAutomationKind({...value,enabled:false}),'disabled',id);
+    assert.equal(channelAutomationKind({...value,provenance:'custom'}),'manual',id);
+  }
+  assert.match(channelAutomationView(channel('swarmmemo')).setup??'',/无需邮箱或钱包.*真实发布.*不重发/);
+  assert.match(channelAutomationView(channel('tantive')).setup??'',/免账号.*原 request ID.*每篇仍须独立审核/);
+  const productIndex=channel('product-index');assert.equal(productIndex.enabled,true);assert.equal(channelAutomationKind(productIndex),'connected_auto');
+  assert.equal(channelAutomationKind({...productIndex,enabled:false}),'disabled');assert.equal(channelAutomationKind({...productIndex,provenance:'custom'}),'manual');
+  const pastyxSetup=channelAutomationView(channel('pastyx')).setup??'';assert.match(pastyxSetup,/已完成一次真实/);assert.match(pastyxSetup,/未知结果不重发/);assert.match(pastyxSetup,/不代表永久保存/);
+  assert.match(channelAutomationView(channel('wordcell')).setup??'',/已完成真实令牌建立.*不重复 PUT.*不保证永久/);
+  for(const id of ['agenthow','agentnotepad','openagentchat'])assert.match(channelAutomationView(channel(id)).setup??'',/无邮箱.*未知结果.*不重试/,id);
+  assert.match(channelAutomationView(channel('large-language')).setup??'',/公开资料库收录不代表编辑推荐/);
+  assert.match(channelAutomationView(channel('listed-startups')).setup??'',/产品资料.*自报.*不是编辑推荐/);
+  assert.match(channelAutomationView(channel('listed-startups')).method??'',/官方 API · 产品资料/);
+  assert.match(channelAutomationView(productIndex).setup??'',/已有 GitHub.*不自动注册 GitHub.*工作流批准/);
+  assert.match(channelAutomationView(productIndex).method??'',/官方 API · 产品资料/);
+  for(const id of automatic.filter(value=>value!=='pastyx'))assert.equal(channelMatchesAutomation(channel(id),'ai_auto',true,'finance'),false,id);
+  assert.equal(channelMatchesAutomation(channel('pastyx'),'ai_auto',true,'finance'),true);
+  assert.equal(channelMatchesAutomation(productIndex,'connected_auto',true,'finance'),false);
 });
 
 test('disabled, custom and unknown API rows do not inflate automatic capability counts',()=>{
@@ -120,7 +144,7 @@ test('Verbose site readiness respects an explicit exclusion and a lost one-time 
 
 test('free and finance filters combine with capability rather than replacing it',()=>{
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'connected_auto',true,'finance')).map(item=>item.id).sort(),['bluesky','github-gist','paragraph']);
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'ai_auto',true,'finance')).map(item=>item.id).sort(),['betterthanhtml','lucid-page','mataroa','nostr','supanote','telegraph','txtsbs','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'ai_auto',true,'finance')).map(item=>item.id).sort(),['betterthanhtml','lucid-page','mataroa','nostr','pastyx','supanote','telegraph','txtsbs','verbose']);
   assert.equal(channelMatchesAutomation(channel('paper-wf'),'registration_pending',true,'finance'),false);
   assert.equal(channelMatchesAutomation(channel('paper-wf'),'registration_pending',false,'finance'),true);
   assert.equal(channelMatchesAutomation({...channel('telegraph'),enabled:false},'all',true,'finance'),true);
@@ -179,4 +203,12 @@ test('accepted SlugPost webpage publisher is anonymous full-article automation, 
   assert.equal(channelAutomationView(value).method,'官方网页 · 全文');
   assert.match(channelAutomationView(value).setup??'',/免账号.*本人验证.*不重发/);
   for(const changed of [{enabled:false},{provenance:'custom' as const},{domain:'other.invalid'},{kind:'profile' as const},{accountRequired:true},{emailRequired:true},{automation:'manual' as const}])assert.notEqual(channelAutomationKind({...value,...changed}),'ai_auto');
+});
+
+test('accepted txt.sbs automation copy preserves review and retention limits without a stale disable claim',()=>{
+  const value=channel('txtsbs'),view=channelAutomationView(value);
+  assert.equal(channelAutomationKind(value),'ai_auto');
+  assert.match(view.setup??'',/已完成真实匿名全文.*后续每篇仍需独立审核与核验.*不保证永久保存/);
+  assert.match(view.setup??'',/未知结果不重发/);
+  assert.doesNotMatch(view.setup??'',/验收前|保持停用/);
 });

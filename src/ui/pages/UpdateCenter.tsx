@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useState} from 'react';
+import {useCallback,useEffect,useRef,useState} from 'react';
 import {ArrowClockwise,CheckCircle,DownloadSimple,Info,ShieldCheck,WarningCircle,X} from '@phosphor-icons/react';
 import type {UpdatePhase,UpdateState} from '../../shared/update-types';
 import {Button} from '../components';
@@ -8,7 +8,7 @@ type Props={demo:boolean;platform?:string;currentVersion?:string;taskBusy:boolea
 
 const activePhases=new Set<UpdatePhase>(['checking','downloading','installing']);
 const phaseCopy:Record<UpdatePhase,{label:string;title:string;body:string;tone:string}>={
-  idle:{label:'尚未检查',title:'在应用内完成更新',body:'只有点击检查后才会联网；发现版本后也由你决定何时下载和安装。',tone:'muted'},
+  idle:{label:'尚未检查',title:'在应用内完成更新',body:'正式客户端启动后会检查官方更新，运行期间每 12 小时再检查；由你决定何时下载和安装。',tone:'muted'},
   checking:{label:'正在检查',title:'正在检查新版本',body:'正在读取官方更新信息，请稍候。',tone:'blue'},
   available:{label:'有可用更新',title:'新版本可以下载',body:'查看版本说明后，可直接在这里下载。',tone:'blue'},
   downloading:{label:'正在下载',title:'正在下载更新',body:'可以继续查看页面，也可以取消本次下载。',tone:'blue'},
@@ -25,20 +25,25 @@ const formatPlatform=(value?:string)=>value==='darwin-arm64'||value==='darwin'?'
 const errorText=(value:unknown)=>value instanceof Error?value.message:String(value);
 
 export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Props){
+  const statusSequence=useRef(0),statusReadSequence=useRef(0),mounted=useRef(false);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;statusSequence.current++}},[demo]);
   const [state,setState]=useState<UpdateState>({phase:'idle',currentVersion:currentVersion??'—'});
   const [command,setCommand]=useState<UpdateCommand|null>(null);
   const [lastCommand,setLastCommand]=useState<UpdateCommand>('app:check-update');
 
   const readStatus=useCallback(async(recovery=false)=>{
     if(demo||!window.linkflow)return;
-    try{const result=await window.linkflow.invoke<UpdateState>('app:update-status');setState(result);return result}
-    catch(error){setState(previous=>recovery?{...previous,error:'暂时无法读取恢复进度；仍在等待验证结果。'}:{...previous,phase:'failed',retryable:true,error:errorText(error)});return undefined}
+    const request=++statusReadSequence.current,epoch=statusSequence.current;
+    try{const result=await window.linkflow.invoke<UpdateState>('app:update-status');if(!mounted.current||request!==statusReadSequence.current||epoch!==statusSequence.current)return;setState(result);return result}
+    catch(error){if(!mounted.current||request!==statusReadSequence.current||epoch!==statusSequence.current)return;setState(previous=>recovery?{...previous,error:'暂时无法读取恢复进度；仍在等待验证结果。'}:{...previous,phase:'failed',retryable:true,error:errorText(error)});return undefined}
   },[demo]);
 
   useEffect(()=>{
     if(demo){setState({phase:'idle',currentVersion:currentVersion??'1.1.0'});return}
     void readStatus();
   },[demo,currentVersion,readStatus]);
+
+  useEffect(()=>{if(demo)return;return window.linkflow?.onUpdate?.(next=>{statusSequence.current++;if(mounted.current)setState(next)})},[demo]);
 
   useEffect(()=>{
     if(demo||!activePhases.has(state.phase))return;
@@ -49,15 +54,17 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
   const run=async(next:UpdateCommand)=>{
     if(demo||!window.linkflow)return;
     if((next==='app:install-update'||next==='app:recover-update')&&taskBusy){onResult(false,next==='app:recover-update'?'请等待当前任务结束，再验证并恢复更新。':'请等待当前任务结束，再安装并重启。');return}
+    const request=++statusSequence.current;
     setCommand(next);setLastCommand(next);
     if(next==='app:check-update'||next==='app:install-update'||next==='app:recover-update')setState(previous=>({...previous,phase:next==='app:install-update'?'installing':'checking',retryable:next==='app:recover-update'?false:previous.retryable,recoveryPending:next==='app:recover-update'?true:previous.recoveryPending,error:undefined}));
     try{
       const result=await window.linkflow.invoke<UpdateState>(next);
+      if(!mounted.current||request!==statusSequence.current)return;
       setState(result);
       if(next==='app:recover-update'&&!result.recoveryPending&&result.phase!=='failed')onResult(true,'已验证当前正式版本，旧更新事务已归档，恢复副本保留。');
       if(next==='app:cancel-update')onResult(true,'正在取消下载。');
-    }catch(error){const result=await readStatus(next==='app:recover-update'),message=next==='app:recover-update'?(result?.error??'无法安全恢复更新；恢复副本和原事务已保留'):errorText(error);if(next==='app:recover-update'&&!result)setState(previous=>({...previous,phase:'failed',retryable:false,recoveryPending:true,error:message}));onResult(false,message)}
-    finally{setCommand(null)}
+    }catch(error){if(!mounted.current||request!==statusSequence.current)return;const recoveryRead=statusReadSequence.current+1,result=await readStatus(next==='app:recover-update');if(!mounted.current||request!==statusSequence.current||recoveryRead!==statusReadSequence.current)return;const message=next==='app:recover-update'?(result?.error??'无法安全恢复更新；恢复副本和原事务已保留'):errorText(error);if(next==='app:recover-update'&&!result)setState(previous=>({...previous,phase:'failed',retryable:false,recoveryPending:true,error:message}));onResult(false,message)}
+    finally{if(mounted.current)setCommand(null)}
   };
 
   const copy=state.phase==='checking'&&state.recoveryPending
@@ -78,7 +85,7 @@ export function UpdateCenter({demo,platform,currentVersion,taskBusy,onResult}:Pr
 
   return <div className="page update-center-page">
     <div className="page-heading update-heading"><div><div className="eyebrow">APPLICATION / 更新中心</div><h1>更新留在应用里完成。</h1><p>先查看版本说明，再决定下载与安装时间。</p></div><span className="heading-seal"><ShieldCheck size={16}/>下载后校验安装包</span></div>
-    {demo&&<div className="banner warning"><Info size={18}/>演示模式只展示更新中心，不会检查网络、下载或安装。</div>}
+    {demo&&<div className="banner warning"><Info size={18}/>演示模式只展示更新中心，不会触发检查、下载或安装。</div>}
     <div className="update-center-grid">
       <section className="panel update-status-card" aria-live="polite">
         <header><div className={`update-phase-icon ${copy.tone}`}>{state.phase==='failed'||state.phase==='unsupported'?<WarningCircle size={25}/>:state.phase==='downloading'?<DownloadSimple size={25}/>:state.phase==='prepared'||state.phase==='installed'||state.phase==='up-to-date'?<CheckCircle size={25}/>:<ArrowClockwise size={25}/>}</div><div><span className={`badge ${copy.tone}`}>{copy.label}</span><h2>{copy.title}</h2><p>{copy.body}</p></div></header>

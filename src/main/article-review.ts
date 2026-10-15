@@ -18,17 +18,23 @@ import {yourwebsDraftError} from '../integrations/yourwebs-publisher';
 import {totpageDraftError} from '../integrations/totpage-publisher';
 import {mdviewDraftError} from '../integrations/mdview-publisher';
 import {txtsbsDraftError} from '../integrations/txtsbs-publisher';
+import {pastyxDraftError} from '../integrations/pastyx-publisher';
 import {agentdropDraftError} from '../integrations/agentdrop-publisher';
+import {listedStartupsDraftError} from '../integrations/listed-startups-publisher';
+import {productIndexDraftError} from '../integrations/product-index-publisher';
 import {shipPageDraftError} from '../integrations/shippage-publisher';
 import {markdownPasteDraftError} from '../integrations/markdownpaste-publisher';
 import {slugPostDraftError} from '../integrations/slugpost-publisher';
 import {htmlAppDraftError} from '../integrations/html-app-publisher';
+import {agentHowDraftError} from '../integrations/agenthow-publisher';
+import {createBerrryInput} from '../integrations/berrry-publisher';
+import {createSwarmMemoReviewedInput,swarmMemoDraftError} from '../integrations/swarmmemo-publisher';
 import {raindropDraftError} from '../shared/raindrop-content';
 import {TopicDiscoveryError} from '../integrations/topics';
 import {channelEvidenceSources,currentChannelPolicyDecision,supportsOfficialGuidanceReview} from './channel-policy';
 
 export const ARTICLE_REVIEW_CONTRACT_VERSION=4;
-const ACCOUNT_PUBLICATION_REVIEW_CHANNELS=new Set(['wordpress-com','leaflet','raindrop','paper-wf','hive','mataroa','verbose','prose','rentry']);
+const ACCOUNT_PUBLICATION_REVIEW_CHANNELS=new Set(['wordpress-com','leaflet','raindrop','paper-wf','hive','mataroa','verbose','prose','rentry','large-language','product-index']);
 
 const DISCLOSURE_LINK=/affiliate|referr|commission|rebate|partner|disclos|disclaimer|about|terms|关于|返佣|推荐|佣金|合作|披露|免责声明/i;
 const SITE_RELEVANCE=/affiliate|referr|commission|rebate|partner|disclos|sponsor|author|operator|owner|maintain|about|terms|作者|运营|站长|所有者|返佣|推荐|佣金|合作|赞助|披露|免责/i;
@@ -42,7 +48,7 @@ const RAINDROP_REVIEW_INSTRUCTION=REVIEW_INSTRUCTION+' 本稿是公开资源书�
 const GUIDANCE_REVIEW_INSTRUCTION=REVIEW_INSTRUCTION+' 本次是当前内置渠道的官方资料核对：完整内容政策尚未找到，保留 channelRules=unknown；不能把 API 或产品说明当成完整政策，也不要求每个主题另有明确许可。另返回 knownChannelRestrictions，依据已抓取的准确官方 API 和产品资料，独立检查当前稿件和使用方式是否与其中明确的用途、限制或禁令冲突。没有发现已知冲突且用途可据实核对时此项为 pass；有明确冲突为 fail，有具体未解决的适用性或使用限制疑点为 unknown。仅缺少单独的完整政策文档，不构成这一项 unknown 的理由。发现明确禁止的内容不可因政策不完整而放行。五项内容检查和 knownChannelRestrictions 全 pass 时仍返回 verdict=unknown，因为完整 channelRules 未知。事实缺证、作者或佣金关系含糊继续 unknown/fail，不能以可发 API 代替内容审查。';
 
 export interface ArticleEvidence {url:string;kind:'site'|'site_detail'|'qualification'|'rules'|'api'|'product_guidance'|'content_policy';text:string;excerpt:string;appliesTo?:string;applicability?:'verified'|'unconfirmed'}
-export interface ArticleReviewDependencies {fetchHtml?:(url:string,signal?:AbortSignal)=>Promise<{url:string;html:string}>;now?:()=>Date;account?:Pick<Account,'id'|'channelId'|'username'|'publicationUrl'>}
+export interface ArticleReviewDependencies {fetchHtml?:(url:string,signal?:AbortSignal)=>Promise<{url:string;html:string}>;now?:()=>Date;account?:Pick<Account,'id'|'channelId'|'username'|'publicationUrl'|'largeLanguage'>}
 
 function canonical(value:unknown):unknown{
   if(Array.isArray(value))return value.map(canonical);
@@ -51,7 +57,7 @@ function canonical(value:unknown):unknown{
 }
 function digest(value:unknown){return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}
 export function articleContentHash(task:Pick<Task,'draft'|'topicUrl'|'topicContentHash'>){return digest({draft:task.draft??null,topicUrl:task.topicUrl,topicContentHash:task.topicContentHash})}
-export function articleContextHash(site:Site,channel:Channel,settings:Settings,account?:ArticleReviewDependencies['account']){return digest({reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,site:{id:site.id,url:site.url,domain:site.domain,name:site.name,description:site.description,category:site.category,language:site.language,email:site.email,publicEmail:site.publicEmail,qualifications:site.qualifications,blogger:site.blogger,paragraph:site.paragraph,status:site.status},...(ACCOUNT_PUBLICATION_REVIEW_CHANNELS.has(channel.id)?{publication:account&&account.channelId===channel.id?{id:account.id,username:account.username,publicationUrl:account.publicationUrl}:null}:{}),channel:{id:channel.id,domain:channel.domain,kind:channel.kind,automation:channel.automation,articleRequired:channel.articleRequired,contentFormat:channel.contentFormat,free:channel.free,freeNote:channel.freeNote,notes:channel.notes,rulesUrl:channel.rulesUrl,evidenceSources:channel.evidenceSources,policyDecision:currentChannelPolicyDecision(site,channel),checkedAt:channel.checkedAt,allowedHosts:channel.allowedHosts,enabled:channel.enabled,requirements:channel.requirements},settings:{provider:settings.provider,codexPath:settings.codexPath,apiBase:settings.apiBase,model:settings.model,reasoningEffort:settings.reasoningEffort,articleReviewMode:getArticleReviewMode(site,settings)}})}
+export function articleContextHash(site:Site,channel:Channel,settings:Settings,account?:ArticleReviewDependencies['account']){return digest({reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,site:{id:site.id,url:site.url,domain:site.domain,name:site.name,description:site.description,category:site.category,language:site.language,email:site.email,publicEmail:site.publicEmail,qualifications:site.qualifications,blogger:site.blogger,paragraph:site.paragraph,status:site.status},...(ACCOUNT_PUBLICATION_REVIEW_CHANNELS.has(channel.id)?{publication:account&&account.channelId===channel.id?{id:account.id,username:account.username,publicationUrl:account.publicationUrl,...(account.largeLanguage?{largeLanguage:{actorId:account.largeLanguage.actorId,displayName:account.largeLanguage.displayName,responsibleHuman:account.largeLanguage.responsibleHuman,producerType:account.largeLanguage.producerType,producerName:account.largeLanguage.producerName}}:{})}:null}:{}),channel:{id:channel.id,domain:channel.domain,kind:channel.kind,automation:channel.automation,articleRequired:channel.articleRequired,contentFormat:channel.contentFormat,free:channel.free,freeNote:channel.freeNote,notes:channel.notes,rulesUrl:channel.rulesUrl,evidenceSources:channel.evidenceSources,policyDecision:currentChannelPolicyDecision(site,channel),checkedAt:channel.checkedAt,allowedHosts:channel.allowedHosts,enabled:channel.enabled,requirements:channel.requirements},settings:{provider:settings.provider,codexPath:settings.codexPath,apiBase:settings.apiBase,model:settings.model,reasoningEffort:settings.reasoningEffort,articleReviewMode:getArticleReviewMode(site,settings)}})}
 
 function normalizePageText(value:string){return value.replace(/\s+/g,' ').trim()}
 function textFromHtml(html:string,siteEvidence=false){
@@ -194,13 +200,20 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
   const totpageError=channel.id==='totpage'?totpageDraftError(task,site):undefined;if(totpageError)return fail(totpageError,[],'content_rejected');
   const mdviewError=channel.id==='mdview'?mdviewDraftError(task,site):undefined;if(mdviewError)return fail(mdviewError,[],'content_rejected');
   const txtsbsError=channel.id==='txtsbs'?txtsbsDraftError(task,site):undefined;if(txtsbsError)return fail(txtsbsError,[],'content_rejected');
+  const pastyxError=channel.id==='pastyx'?pastyxDraftError(task,site):undefined;if(pastyxError)return fail(pastyxError,[],'content_rejected');
   const agentdropError=channel.id==='agentdrop'?agentdropDraftError(task,site):undefined;if(agentdropError)return fail(agentdropError,[],'content_rejected');
+  const listedStartupsError=channel.id==='listed-startups'?listedStartupsDraftError(task,site):undefined;if(listedStartupsError)return fail(listedStartupsError,[],'content_rejected');
+  const productIndexError=channel.id==='product-index'?productIndexDraftError(task,site):undefined;if(productIndexError)return fail(productIndexError,[],'content_rejected');
   const shipPageError=channel.id==='shippage'?shipPageDraftError(task,site):undefined;if(shipPageError)return fail(shipPageError,[],'content_rejected');
   const pastemystError=channel.id==='pastemyst'?pastemystDraftError(task,site):undefined;if(pastemystError)return fail(pastemystError,[],'content_rejected');
   const markdownPasteError=channel.id==='markdownpaste'?markdownPasteDraftError(task,site):undefined;if(markdownPasteError)return fail(markdownPasteError,[],'content_rejected');
   const slugPostError=channel.id==='slugpost'?slugPostDraftError(task,site):undefined;if(slugPostError)return fail(slugPostError,[],'content_rejected');
   const docsMdError=channel.id==='docs-md'?docsMdDraftError(task.draft):undefined;if(docsMdError)return fail(docsMdError,[],'content_rejected');
   const htmlAppError=channel.id==='html-app'?htmlAppDraftError(task,site):undefined;if(htmlAppError)return fail(htmlAppError,[],'content_rejected');
+  const agentHowError=channel.id==='agenthow'?agentHowDraftError(task,site):undefined;if(agentHowError)return fail(agentHowError,[],'content_rejected');
+  const berrryInput=channel.id==='berrry'?createBerrryInput(task,site):undefined;if(channel.id==='berrry'&&(!berrryInput||JSON.stringify(berrryInput)!==JSON.stringify(task.berrryInput)))return fail('Berrry 当前完整 HTML、精确目标或任务绑定无效。',[],'content_rejected');
+  const swarmMemoError=channel.id==='swarmmemo'?swarmMemoDraftError(task,site):undefined;if(swarmMemoError)return fail(swarmMemoError,[],'content_rejected');
+  if(channel.id==='swarmmemo'&&task.swarmMemoInput){const approval=task.swarmMemoInput.approval,input=createSwarmMemoReviewedInput(task,site,approval);if(!input||JSON.stringify(input)!==JSON.stringify(task.swarmMemoInput))return fail('SwarmMemo 当前审核稿、精确目标或审核绑定无效。',[],'content_rejected')}
   const formatError=channel.id==='raindrop'?raindropDraftError(task.draft):socialDraftError(task,site,channel);if(formatError)return fail(formatError,[],'content_rejected');
   let stage:'evidence'|'ai'='evidence';
   try{
