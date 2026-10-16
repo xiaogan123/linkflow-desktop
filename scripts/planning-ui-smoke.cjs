@@ -81,6 +81,16 @@ if(!process.versions.electron){
     check('overview page-gap copy does not request invented qualifications',await evaluate('document.body.innerText.includes("页面尚未核验")&&document.body.innerText.includes("尚待建立计划")&&!document.body.innerText.includes("需补充资格或渠道")'));
     check('next-month queued work does not cover the current-month page gap',await evaluate('document.querySelector(".capacity-note").innerText.includes("本月还有 11 个页面尚未核验")&&document.querySelector(".capacity-note").innerText.includes("0 个已排期或在途，11 个尚待建立计划")'));
 
+    await clickText('查看全部 2 项');
+    await waitFor('document.querySelectorAll(".work-identity").length===2');
+    check('overview attention card opens the human-action filter',await evaluate(`(()=>{const tab=[...document.querySelectorAll('.task-filter-tabs button')].find(item=>item.innerText==='需你处理');const labels=[...document.querySelectorAll('.work-table .badge')].map(item=>item.innerText);return tab?.getAttribute('aria-pressed')==='true'&&labels.includes('稿件待人工审核')&&labels.includes('需要连接账号')})()`));
+
+    await clickText('任务');
+    await waitFor('document.querySelectorAll(".work-identity").length===5');
+    await clickText('总览');
+    await clickText('查看全部 2 项');
+    await waitFor('document.querySelectorAll(".work-identity").length===2');
+    check('overview attention card restores the human-action filter after sidebar navigation',await evaluate(`document.querySelector('.task-filter-tabs button[aria-pressed="true"]')?.innerText==='需你处理'`));
     await clickText('任务');
     await waitFor('document.querySelectorAll(".work-identity").length===5');
     const metrics=await evaluate(`Object.fromEntries([...document.querySelectorAll('.task-kpi')].map(item=>[item.querySelector('small').innerText,item.querySelector('strong').innerText]))`);

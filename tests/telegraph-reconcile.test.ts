@@ -238,14 +238,20 @@ test('managed Telegraph verification accepts exact current and historical pairs 
   const {context,mutations}=fixture();context.task.publicUrl='https://telegra.ph/original-article-09-27';context.task.checkpoint='telegraph_published';
   const escape=(text:string)=>text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
   const html=(nodes:TelegraphNode[]):string=>nodes.map(node=>typeof node==='string'?escape(node):`<${node.tag}${node.attrs?` href="${escape(node.attrs.href)}"`:''}>${html(node.children??[])}</${node.tag}>`).join('');
-  for(const historical of [false,true])for(const variant of ['valid','changed-api','changed-page','mixed-author','footer-only','noindex']){
+  for(const historical of [false,true])for(const variant of ['valid','platform-target','changed-target-value','target-on-paragraph','event-attribute','changed-api','changed-page','mixed-author','footer-only','noindex']){
     const nodes=historical?priorContent():expectedContent(),label=historical?'Example Product site owner':author;
     const content=html(nodes),page=`<article class="tl_article_content"><h1>${title}</h1><address>${label}<time>date</time></address>${variant==='changed-page'?content.replace('Durable guidance','Altered guidance'):variant==='footer-only'?'Missing article':content}</article>${variant==='footer-only'?`<footer>${content}</footer>`:''}`;
     const result=await verifyTelegraphPublication(context,{transport:async(url,init)=>{
       assert.equal(url,'https://api.telegra.ph/getPage/original-article-09-27');assert.equal(new URLSearchParams(String(init.body)).has('access_token'),false);
-      return apiJson(detail('original-article-09-27',variant==='changed-api'?[...nodes,{tag:'p',children:['changed']}]:nodes,{authorName:variant==='mixed-author'?(historical?author:'Example Product site owner'):label}));
+      type RemoteNode=string|{tag:string;attrs?:Record<string,string>;children?:RemoteNode[]};
+      const remoteNodes:RemoteNode[]=structuredClone(nodes);
+      const decorate=(items:RemoteNode[])=>{for(const node of items){if(typeof node==='string')continue;if(node.tag==='a'&&['platform-target','changed-target-value','event-attribute'].includes(variant))node.attrs={...node.attrs,...(variant==='event-attribute'?{onclick:'changed'}:{target:variant==='changed-target-value'?'other-window':'_blank'})};if(node.children)decorate(node.children)}};
+      decorate(remoteNodes);
+      if(variant==='target-on-paragraph'){const paragraph=remoteNodes.find(node=>typeof node!=='string'&&node.tag==='p');if(paragraph&&typeof paragraph!=='string')paragraph.attrs={target:'_blank'};}
+      return apiJson({...detail('original-article-09-27',nodes,{authorName:variant==='mixed-author'?(historical?author:'Example Product site owner'):label}),content:variant==='changed-api'?[...remoteNodes,{tag:'p',children:['changed']}]:remoteNodes});
     },publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html','x-robots-tag':variant==='noindex'?'noindex':''},body:Buffer.from(page)})}});
-    assert.equal(result.found,variant==='valid',`${historical}/${variant}: ${result.reason}`);if(variant!=='valid')assert.equal(result.outcome,'invalid');
+    const accepted=variant==='valid'||variant==='platform-target';
+    assert.equal(result.found,accepted,`${historical}/${variant}: ${result.reason}`);if(!accepted)assert.equal(result.outcome,'invalid');
   }
   assert.deepEqual(mutations,{checkpoints:0,accountWrites:0,secretWrites:0});
 });

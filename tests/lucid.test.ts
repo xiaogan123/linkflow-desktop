@@ -407,6 +407,24 @@ test('exact trailing Lucid chrome is excluded while title, body and arbitrary ex
   ]) assert.equal(lucidTesting.rendered(bad, expected, PAGE, new Headers()), undefined);
 });
 
+test('Lucid accepts only its exact visible table-wrap around one reviewed table', () => {
+  const f = fixture();
+  f.task.draft!.body = `${BODY}\n\n| Check | Record |\n| --- | --- |\n| Source | [Research](${TARGET}) |`;
+  const expected = lucidTesting.article(f.task, f.site.url, false);
+  const plain = publicHtml({ body: f.task.draft!.body });
+  const wrapped = plain.replace(/(<table>[\s\S]*?<\/table>)/, '<div class="table-wrap">$1</div>');
+  assert.notEqual(wrapped, plain);
+  assert.equal(lucidTesting.rendered(wrapped, expected, PAGE, new Headers()), 'follow');
+  for (const bad of [
+    wrapped.replace('class="table-wrap"', 'class="table-wrap extra"'),
+    wrapped.replace('class="table-wrap"', 'class="table-wrap" id="extra"'),
+    wrapped.replace('class="table-wrap"', 'class="table-wrap" hidden'),
+    wrapped.replace('<div class="table-wrap">', '<div class="table-wrap">Injected claim'),
+    wrapped.replace('</table></div>', '</table><table></table></div>'),
+    wrapped.replace('</table></div>', '</table><!--extra--></div>'),
+  ]) assert.equal(lucidTesting.rendered(bad, expected, PAGE, new Headers()), undefined);
+});
+
 test('legacy title-less Markdown never becomes a verified receipt and can only reconcile with GET', async () => {
   const f = fixture(), expected = lucidTesting.article(f.task, f.site.url, false);
   f.task.lucid = { contentHash: expected.contentHash, slug: SLUG, stage: 'submitting' };

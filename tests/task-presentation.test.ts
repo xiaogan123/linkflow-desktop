@@ -43,7 +43,7 @@ test('Docs MD unknown submission without a receipt is stopped without becoming a
   assert.equal(taskHasAutomaticFollowup(receipt),true);
   assert.equal(draftStatusLabel(receipt,'ai'),'已有公开地址 · 等待核验');
   const data:Snapshot={...emptyState(),sites:[site],tasks:[unknown],channels:[{...channel('docs-md','api',false),enabled:false}],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
-  const $=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
+  const $=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,status:'active',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
   const metrics=Object.fromEntries($('.task-kpi').map((_,el)=>[$(el).find('small').text()+'='+$(el).find('strong').text()]).get().map(value=>value.split('=')));
   assert.equal(metrics['系统推进'],'0');
   assert.equal(metrics['需要你处理'],'0');

@@ -6,10 +6,10 @@ import type {ArticleReviewMode,Channel,Site,Snapshot,Task} from '../../shared/ty
 import {Button,Empty} from '../components';
 import {articleReviewDetail,articleReviewTitle,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,dateLabel,draftStatusLabel,isUserActionTask,taskAutomaticFollowupAt,taskHasArticleReview,taskHasAutomaticFollowup,taskHasStoppedUnknownDocsMdSubmission,taskNeedsTelegraphReconciliation,taskPresentation,taskSortRank,taskWorkKind} from '../presentation';
 
-type Props={data:Snapshot|null;disabled:boolean;onAction:<T>(command:string,payload?:unknown,success?:string)=>Promise<T|undefined>;onEditDraft:(task:Task)=>void;onSetUrl:(task:Task)=>void;onSite:(id:string,taskId?:string)=>void};
+type Props={data:Snapshot|null;disabled:boolean;status:string;onStatusChange:(status:string)=>void;onAction:<T>(command:string,payload?:unknown,success?:string)=>Promise<T|undefined>;onEditDraft:(task:Task)=>void;onSetUrl:(task:Task)=>void;onSite:(id:string,taskId?:string)=>void};
 
-export function TaskCenter({data,disabled,onAction,onEditDraft,onSetUrl,onSite}:Props){
-  const [query,setQuery]=useState(''),[status,setStatus]=useState('active'),[siteId,setSiteId]=useState('all'),[expanded,setExpanded]=useState('');
+export function TaskCenter({data,disabled,status,onStatusChange,onAction,onEditDraft,onSetUrl,onSite}:Props){
+  const [query,setQuery]=useState(''),[siteId,setSiteId]=useState('all'),[expanded,setExpanded]=useState('');
   const rows=useMemo(()=>{
     const sites=new Map((data?.sites??[]).map(site=>[site.id,site]));
     const channels=new Map((data?.channels??[]).map(channel=>[channel.id,channel]));
@@ -32,7 +32,7 @@ export function TaskCenter({data,disabled,onAction,onEditDraft,onSetUrl,onSite}:
       <Metric label="当前有效" value={(data?.tasks??[]).filter(t=>t.status==='live'&&t.health==='healthy'&&t.linkCheck==='found').length} tone="green"/>
     </div>
     <section className="panel directory-panel task-directory">
-      <div className="directory-toolbar"><div className="search"><MagnifyingGlass size={17}/><input aria-label="搜索任务" placeholder="搜索网站、渠道或任务说明" value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="filter-select"><Funnel size={15}/><select aria-label="筛选网站" value={siteId} onChange={e=>setSiteId(e.target.value)}><option value="all">全部网站</option>{data?.sites.map(site=><option key={site.id} value={site.id}>{site.domain}</option>)}</select></div><div className="filter-tabs task-filter-tabs" role="group" aria-label="筛选任务状态">{[['active','系统推进'],['attention','需你处理'],['waiting','等待渠道'],['deferred','已搁置'],['results','有成果'],['all','全部']].map(([key,label])=><button key={key} className={status===key?'active':''} aria-pressed={status===key} onClick={()=>setStatus(key)}>{label}</button>)}</div></div>
+      <div className="directory-toolbar"><div className="search"><MagnifyingGlass size={17}/><input aria-label="搜索任务" placeholder="搜索网站、渠道或任务说明" value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="filter-select"><Funnel size={15}/><select aria-label="筛选网站" value={siteId} onChange={e=>setSiteId(e.target.value)}><option value="all">全部网站</option>{data?.sites.map(site=><option key={site.id} value={site.id}>{site.domain}</option>)}</select></div><div className="filter-tabs task-filter-tabs" role="group" aria-label="筛选任务状态">{[['active','系统推进'],['attention','需你处理'],['waiting','等待渠道'],['deferred','已搁置'],['results','有成果'],['all','全部']].map(([key,label])=><button key={key} className={status===key?'active':''} aria-pressed={status===key} onClick={()=>onStatusChange(key)}>{label}</button>)}</div></div>
       {rows.length?<div className="task-table-wrap"><table className="work-table"><thead><tr><th>网站 / 渠道</th><th>状态</th><th>公开结果</th><th>最新进展</th><th>操作</th></tr></thead><tbody>{rows.map(task=>{
         const site=siteFor(task),channel=channelFor(task),enabled=channel?.enabled===true,open=expanded===task.id,isArticleReview=taskHasArticleReview(task),review=isArticleReview?task.articleReview:undefined,reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',aiMode=reviewMode==='ai',presentation=taskPresentation(task,reviewMode,enabled);
         const canRestartReview=canRestartArticleReview(task,reviewMode,enabled),canRetry=canRetryTaskManually(task,reviewMode,enabled),canResume=canResumeDeferredTask(task),humanAuthoredOnly=isHumanAuthoredOnlyChannel(task.channelId);

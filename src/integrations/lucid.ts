@@ -281,6 +281,14 @@ function rendered(html: string, expected: Article, url: string, headers: Headers
     if (actualHeading.length !== 1 || normal(actualHeading.text()) !== normal(expected.title)) return;
     actualHeading.remove();
     if (root.find('*').toArray().some(node => concealed(actual, node))) return;
+    for (const node of root.children('div').toArray()) {
+      const wrapper = actual(node), children = wrapper.children();
+      if (wrapper.attr('class') !== 'table-wrap' || Object.keys(wrapper.attr() ?? {}).length !== 1
+        || children.length !== 1 || !children.first().is('table')
+        || wrapper.contents().toArray().some(item => item !== children[0]
+          && (item.type !== 'text' || !!normal(actual(item).text())))) return;
+      wrapper.replaceWith(children.first());
+    }
     const expectedHtml = String(marked.parse(expected.body, { async: false, gfm: true }));
     const wanted = load(`<body>${expectedHtml}</body>`);
     expectedSiteAutolinks(wanted, wanted('body'), expected.target);

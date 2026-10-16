@@ -1,5 +1,6 @@
 import { createHash, randomUUID as cryptoRandomUUID } from 'node:crypto';
 import { load } from 'cheerio';
+import { marked, type Token } from 'marked';
 import {
   finalizeEvent,
   generateSecretKey as nostrGenerateSecretKey,
@@ -12,6 +13,7 @@ import {
 } from 'nostr-tools';
 import type { Account, ExecutionContext, ExecutionResult, LinkResult, NostrReceipt, Task } from '../shared/types';
 import { articleSemanticsMatch, inspectRenderedArticle } from './article-rendering';
+import { applyDeclaredArticleVisibility, elementConcealed } from './article-visibility';
 import { fetchPublicText } from './web';
 
 const KIND = 30_023;
@@ -99,13 +101,40 @@ function normalizedHost(input: string): string {
 }
 
 function urlsInMarkdown(value: string): string[] {
-  const matches = value.match(/https:\/\/[^\s<>{}"']+/gi) ?? [];
-  return matches.map(raw => {
-    let candidate = raw;
-    while (/[),.;:!?\]}]$/.test(candidate)) candidate = candidate.slice(0, -1);
-    try { return canonicalHttps(candidate); }
-    catch { return ''; }
-  }).filter(Boolean);
+  const children = (token: Token): Token[] => {
+    const nested = token as Token & { tokens?: Token[]; items?: Array<{ tokens?: Token[] }> };
+    return [...(nested.tokens ?? []), ...(nested.items ?? []).flatMap(item => item.tokens ?? [])];
+  };
+  const hasVisibleLabel = (tokens: Token[]): boolean => tokens.some(token => {
+    if (token.type === 'text' || token.type === 'codespan') return token.text.trim().length > 0;
+    if (token.type === 'image' || token.type === 'html') return false;
+    return hasVisibleLabel(children(token));
+  });
+  try {
+    const tokens = marked.lexer(value, { gfm: true });
+    const rendered = marked.parse(value, { async: false, gfm: true });
+    if (typeof rendered !== 'string') return [];
+    const markdownLinks: string[] = [];
+    let rawAnchor = false;
+    marked.walkTokens(tokens, token => {
+      if (token.type === 'html' && /<\s*\/?\s*a\b/i.test(token.raw)) rawAnchor = true;
+      if (token.type !== 'link' || !hasVisibleLabel(children(token))) return;
+      try { markdownLinks.push(canonicalHttps(token.href)); }
+      catch { /* Invalid or non-HTTPS hrefs cannot satisfy the reviewed target. */ }
+    });
+    // Raw anchors cannot be paired reliably with Markdown link tokens.
+    if (rawAnchor) return [];
+    const $ = load(rendered, undefined, false);
+    applyDeclaredArticleVisibility($);
+    const visibleLinks = $('a[href]').toArray().flatMap(node => {
+      const anchor = $(node);
+      if (!anchor.text().trim() || anchor.add(anchor.parents()).toArray()
+        .some(element => elementConcealed($, element))) return [];
+      try { return [canonicalHttps(anchor.attr('href') ?? '')]; }
+      catch { return []; }
+    });
+    return markdownLinks.filter(url => visibleLinks.includes(url));
+  } catch { return []; }
 }
 
 function taskArticle(task: Task, siteUrl: string): ApprovedArticle {

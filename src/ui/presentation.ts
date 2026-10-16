@@ -1,5 +1,6 @@
 import type {Account,ArticleReviewMode,Category,Channel,Site,Snapshot,Task} from '../shared/types';
 import {reservesSlot,hasRecoverablePublisherDraftReceipt} from '../shared/publication';
+import {TASK_AI_BUDGET} from '../main/task-recovery';
 export const categoryText:Record<Category,string>={software:'软件工具',ai:'AI 产品',developer:'开发者',design:'设计作品',business:'商业服务',content:'内容创作',education:'教育学习',finance:'金融内容',general:'综合网站'};
 export const kindText:Record<Channel['kind'],string>={directory:'产品目录',profile:'品牌资料',article:'内容发布',community:'社区分享'};
 export const dateLabel=(value?:string)=>{if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':new Intl.DateTimeFormat('zh-CN',{month:'short',day:'numeric'}).format(date)};
@@ -15,7 +16,7 @@ const channelWaitReviewCodes=new Set(['policy_unknown','policy_not_found','input
 const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','blogger_insert_submitting','blogger_draft_created','blogger_publish_submitting','blogger_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','bluesky_create_submitting','bluesky_create_accepted','bluesky_published','paragraph_insert_submitting','paragraph_draft_created','paragraph_publish_submitting','paragraph_published','nostr_publish_submitting','nostr_published','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_publish_submitting','mataroa_published','verbose_publish_submitting','verbose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published','docs_md_share_submitting','docs_md_api_receipt','docs_md_published','katbin_create_submitting','katbin_opaque_response','katbin_api_receipt','katbin_published','mdshare_create_submitting','mdshare_opaque_response','mdshare_api_receipt','mdshare_published','pstrs_create_submitting','pstrs_opaque_response','pstrs_partial_response','pstrs_api_receipt','pstrs_published','slugpost_create_submitting','slugpost_opaque_response','slugpost_ui_receipt','slugpost_published','brewpage_owner_token_pending','brewpage_owner_token_opaque','brewpage_owner_ready','brewpage_create_submitting','brewpage_opaque_response','brewpage_api_receipt','brewpage_published','memorywiki_create_submitting','memorywiki_opaque_response','memorywiki_api_receipt','memorywiki_published','nextgenSlides_create_submitting','nextgenSlides_opaque_response','nextgenSlides_api_receipt','nextgenSlides_published','yourwebs_create_submitting','yourwebs_opaque_response','yourwebs_api_receipt','yourwebs_published','yourwebs_expired','totpage_create_submitting','totpage_opaque_response','totpage_api_receipt','totpage_published','mdview_create_submitting','mdview_opaque_response','mdview_api_receipt','mdview_published','txtsbs_create_submitting','txtsbs_opaque_response','txtsbs_api_receipt','txtsbs_published','pastyx_create_submitting','pastyx_opaque_response','pastyx_api_receipt','pastyx_published','agentdrop_create_submitting','agentdrop_opaque_response','agentdrop_api_receipt','agentdrop_published','listed_startups_submitting','listed_startups_opaque_response','listed_startups_api_receipt','listed_startups_published','product_index_submitting','product_index_opaque_response','product_index_issue_open','product_index_rejected','product_index_published','shippage_create_submitting','shippage_opaque_response','shippage_readback_only','shippage_api_receipt','shippage_published','pastemyst_create_submitting','pastemyst_opaque_response','pastemyst_api_receipt','pastemyst_published','markdownpaste_create_submitting','markdownpaste_opaque_response','markdownpaste_api_receipt','markdownpaste_published','html_app_create_submitting','html_app_api_receipt','html_app_published','deed_page_create_submitting','deed_page_opaque_response','deed_page_api_receipt','deed_page_published','shiply_submitting','shiply_create_unknown','shiply_opaque_response','shiply_staged','shiply_upload_unknown','shiply_uploaded','shiply_finalize_unknown','shiply_api_receipt','shiply_published']);
 const telegraphUncertainCheckpoints=new Set(['telegraph_publish_submitting','telegraph_publish_uncertain']);
 const bloggerUncertainCheckpoints=new Set(['blogger_insert_submitting','blogger_publish_submitting','blogger_draft_created']);
-const taskAiBudget=6,telegraphReconcileLimit=3;
+const telegraphReconcileLimit=3;
 const normalize=(value:string)=>value.trim().toLowerCase();
 
 export function taskHasArticleReview(task:Task){return (!task.submittedAt||hasRecoverablePublisherDraftReceipt(task))&&task.status!=='live'&&(task.checkpoint==='article_review'||!!task.articleReview)}
@@ -25,7 +26,7 @@ export function taskHasUnconfirmedSubmission(task:Task){const unresolvedUrl=!tas
 
 export function taskCanAutoRecover(task:Task,channelEnabled=true){
   const recoverableReason=task.recoveryEligible===true||transientReviewCodes.has(task.articleReview?.reasonCode??'');
-  return channelEnabled&&task.status==='failed'&&task.checkpoint==='system_wait'&&recoverableReason&&!!task.nextCheckAt&&(task.recoveryAttempts??0)<1&&(task.cost?.aiCalls??0)<taskAiBudget&&(!taskHasSubmissionEvidence(task)||hasRecoverablePublisherDraftReceipt(task))&&!task.deferredAt;
+  return channelEnabled&&task.status==='failed'&&task.checkpoint==='system_wait'&&recoverableReason&&!!task.nextCheckAt&&(task.recoveryAttempts??0)<1&&(task.cost?.aiCalls??0)<TASK_AI_BUDGET&&(!taskHasSubmissionEvidence(task)||hasRecoverablePublisherDraftReceipt(task))&&!task.deferredAt;
 }
 
 export function taskNeedsTelegraphReconciliation(task:Task,channelEnabled=true){
@@ -187,6 +188,7 @@ export function articleReviewDetail(task:Task,reviewMode:ArticleReviewMode='manu
   const review=task.articleReview,kind=taskWorkKind(task,reviewMode,channelEnabled);
   if(review?.reasonCode==='policy_unknown')return '现有内容政策证据的适用范围尚未确认，任务未发布；当前来源已停止，出现新证据后可重新评估。';
   if(review?.reasonCode==='policy_not_found')return '现有公开资料中尚未找到适用的内容政策，任务未发布；当前来源已停止，出现新证据后可重新评估。';
+  if(reviewMode==='ai'&&review?.status==='failed'&&(task.cost?.aiCalls??0)>=TASK_AI_BUDGET)return `${review.reason||'审核未通过。'} 当前任务 AI 调用预算已用完，无法重新 AI 核对；稿件和审核记录已保留。`;
   if(kind==='system_retry')return task.message||review?.reason||(taskNeedsTelegraphReconciliation(task,channelEnabled)?'已提交的结果正在自动查询，查询期间不会重复发布。':task.status==='queued'||taskCanAutoRecover(task,channelEnabled)?'公开证据或 AI 服务暂时不可用，系统会按已保存的计划再次检查。':'自动重试已停止，当前未安排再次检查；其他可执行渠道仍会继续。');
   if(kind==='channel_wait')return review?.reason||task.message||'当前来源等待新证据或渠道结果，其他可执行任务会继续。';
   if(review?.status==='running')return '系统正在独立核对稿件与任务要求。';
@@ -197,7 +199,7 @@ export function articleReviewDetail(task:Task,reviewMode:ArticleReviewMode='manu
 
 export const isUserActionTask=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>taskWorkKind(task,reviewMode,channelEnabled)==='user_action';
 export const canRetryTaskManually=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>isUserActionTask(task,reviewMode,channelEnabled)&&!taskHasArticleReview(task)&&!taskHasSubmissionEvidence(task)&&['needs_input','failed'].includes(task.status);
-export const canRestartArticleReview=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>reviewMode==='ai'&&isUserActionTask(task,reviewMode,channelEnabled)&&taskHasArticleReview(task)&&task.articleReview?.status!=='running';
+export const canRestartArticleReview=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>reviewMode==='ai'&&(task.cost?.aiCalls??0)<TASK_AI_BUDGET&&isUserActionTask(task,reviewMode,channelEnabled)&&taskHasArticleReview(task)&&task.articleReview?.status!=='running';
 
 export function taskHasAutomaticFollowup(task:Task,channelEnabled=true){
   return taskNeedsTelegraphReconciliation(task,channelEnabled)||taskCanAutoRecover(task,channelEnabled)||!!taskAutomaticFollowupAt(task,channelEnabled);

@@ -218,6 +218,52 @@ function signedFixture(current: Task = task()): { task: Task; event: NostrEvent;
   return { task: current, event, receipt, url: current.publicUrl };
 }
 
+test('approved Nostr draft accepts an exact rendered Markdown reader link', () => {
+  const current = task();
+  current.topicUrl = 'https://example.com/guides/cost-(audit)?source=research&scope=(full)';
+  current.draft!.body = `${BODY.replace(TARGET, 'the reviewed worksheet')}\n\n中文说明：[阅读全文](${current.topicUrl})。`;
+  assert.equal(nostrTesting.approvedArticle(current, site().url).target, current.topicUrl);
+
+  current.draft!.body = `${BODY.replace(TARGET, 'the reviewed worksheet')}\n\n[阅读全文][source]\n\n[source]: ${current.topicUrl}`;
+  assert.equal(nostrTesting.approvedArticle(current, site().url).target, current.topicUrl);
+
+  current.draft!.body = `${BODY.replace(TARGET, 'the reviewed worksheet')}\n\n| Source | Link |\n| --- | --- |\n| Guide | [阅读全文](${current.topicUrl}) |`;
+  assert.equal(nostrTesting.approvedArticle(current, site().url).target, current.topicUrl);
+
+  // The existing canonical URL policy ignores a fragment, including for the reviewed target.
+  current.draft!.body = `${BODY.replace(TARGET, 'the reviewed worksheet')}\n\n[阅读全文](${current.topicUrl}#method)`;
+  assert.equal(nostrTesting.approvedArticle(current, site().url).target, current.topicUrl);
+});
+
+test('approved Nostr draft requires a visible link to the exact reviewed HTTPS target', () => {
+  const cases = [
+    `[阅读全文](${TARGET}/extra)`,
+    `[阅读全文](https://example.com.evil/guides/cost-audit?source=research)`,
+    `[阅读全文](https://example.com/guides/cost-audit?source=other)`,
+    `[阅读全文](http://example.com/guides/cost-audit?source=research)`,
+    `[${TARGET}](https://example.com/other)`,
+    `![封面](${TARGET})`,
+    `[![封面](https://example.com/image.png)](${TARGET})`,
+    `\`[阅读全文](${TARGET})\``,
+    `\`\`\`md\n[阅读全文](${TARGET})\n\`\`\``,
+    `<pre>${TARGET}</pre>`,
+    `<a href="${TARGET}">阅读全文</a>`,
+    `<span hidden>[阅读全文](${TARGET})</span>`,
+    `<span aria-hidden="true">[阅读全文](${TARGET})</span>`,
+    `<span style="display: none">[阅读全文](${TARGET})</span>`,
+    `<span class="hidden">[阅读全文](${TARGET})</span>`,
+    `<span class="sr-only">[阅读全文](${TARGET})</span>`,
+    `<details>\n\n[阅读全文](${TARGET})\n\n</details>`,
+    `<style>.private-source {display:none}</style>\n\n<span class="private-source">[阅读全文](${TARGET})</span>`,
+    `<a href="${TARGET}">visible raw link</a><span hidden>[阅读全文](${TARGET})</span>`,
+  ];
+  for (const candidate of cases) {
+    const current = task();
+    current.draft!.body = `${BODY.replace(TARGET, 'the reviewed worksheet')}\n\n${candidate}`;
+    assert.throws(() => nostrTesting.approvedArticle(current, site().url), /真实 HTTPS 地址/, candidate);
+  }
+});
+
 test('stores the local author and immutable event identity before either fixed relay receives EVENT', async () => {
   const harness = new RelayHarness('accept-store');
   const data = fixture({ existing: null });

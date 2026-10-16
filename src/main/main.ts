@@ -307,7 +307,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       controller.patch(id,{status:'queued',scheduledAt:new Date().toISOString(),message:'准备继续执行'});void controller.tick();break;
     }
     case 'task:skip':{const id=getId(p);if(controller.runtime.activeTaskId===id)throw Error('请先暂停当前任务');controller.patch(id,{status:'skipped',message:'已跳过，保留记录避免重复提交'});controller.plan();break;}
-    case 'task:verify':await controller.verify(getId(p));break;
+    case 'task:verify':await controller.verify(getId(p),{manualRecovery:true});break;
     case 'task:set-url':{
       const input=z.object({id:z.string().uuid(),url:z.string().max(2048)}).parse(p),u=publicUrl(input.url);const t=store.read().tasks.find(t=>t.id===input.id);if(!t)throw Error('任务不存在');
       if(t.channelId==='github-gist'){forbidBusy();await controller.adoptGist(t.siteId,u.href);break;}

@@ -133,13 +133,16 @@ function canonicalTelegraphContent(value: unknown): string | undefined {
       if (!raw.attrs || typeof raw.attrs !== 'object' || Array.isArray(raw.attrs)) throw new Error('invalid_node');
       const attrs = raw.attrs as Record<string, unknown>;
       const keys = Object.keys(attrs).sort();
-      if (keys.some(key => !['href', 'src'].includes(key))) throw new Error('invalid_node');
+      if (keys.some(key => !['href', 'src'].includes(key)
+        && !(key === 'target' && raw.tag === 'a' && attrs.target === '_blank'))) throw new Error('invalid_node');
       const clean: Record<string, string> = {};
       for (const key of keys) {
         if (typeof attrs[key] !== 'string') throw new Error('invalid_node');
+        // Telegraph adds this presentation-only attribute to published links.
+        if (key === 'target') continue;
         clean[key] = attrs[key].normalize('NFC');
       }
-      if (keys.length) normalized.attrs = clean;
+      if (Object.keys(clean).length) normalized.attrs = clean;
     }
     if (raw.children !== undefined) {
       if (!Array.isArray(raw.children)) throw new Error('invalid_node');
