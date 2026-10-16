@@ -285,7 +285,7 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
   if(!state.settings.autoRun)return;
   const priority=(task:Task)=>{const channel=channels.find(item=>item.id===task.channelId);if(!channel)return 0;if(continuesPendingRegistration(state,task,channel,now))return 0;const kind=channelExecutionReadiness(state,task.siteId,channel,task.accountId).kind;return kind==='ready'?0:kind==='autocreate'?1:kind==='handoff_required'?2:3};
   const effective=new Map<string,number>();
-  return state.tasks.filter(t=>{
+  const due=state.tasks.filter(t=>{
     const site=state.sites.find(s=>s.id===t.siteId&&s.status==='ready');
     const planned=new Date(t.scheduledAt);
     const draftContinuation=hasRecoverablePublisherDraftReceipt(t);
@@ -299,8 +299,12 @@ if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper|
     }
     if(actual.getTime()>now.getTime())return false;
     effective.set(t.id,actual.getTime());
+    return true;
+  });
+  return due.filter(t=>{
+    const site=state.sites.find(s=>s.id===t.siteId)!;
     const room=site.monthlyTarget-liveThisMonth(t.siteId,state.tasks,now,state.settings.timezone);
-    const reserved=state.tasks.filter(x=>x.siteId===site.id&&reservesMonthlySlot(x,now,state.settings.timezone)).sort((a,b)=>Number(b.status!=='queued')-Number(a.status!=='queued')||priority(a)-priority(b)||a.scheduledAt.localeCompare(b.scheduledAt)||a.id.localeCompare(b.id));
+    const reserved=state.tasks.filter(x=>x.siteId===site.id&&reservesMonthlySlot(x,now,state.settings.timezone)).sort((a,b)=>Number(b.status!=='queued')-Number(a.status!=='queued')||Number(!effective.has(a.id))-Number(!effective.has(b.id))||priority(a)-priority(b)||a.scheduledAt.localeCompare(b.scheduledAt)||a.id.localeCompare(b.id));
     return reserved.slice(0,Math.max(0,room)).some(x=>x.id===t.id);
   }).sort((a,b)=>priority(a)-priority(b)||(effective.get(a.id)??Number.MAX_SAFE_INTEGER)-(effective.get(b.id)??Number.MAX_SAFE_INTEGER)||a.scheduledAt.localeCompare(b.scheduledAt))[0];
 }

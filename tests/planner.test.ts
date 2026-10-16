@@ -82,6 +82,44 @@ test('runner claims a ready account before an older self-provisioning task',()=>
   assert.equal(nextTask(s,now,[telegraph,gist])?.channelId,'github-gist');
 });
 
+test('future ready reservation does not starve an effectively due autocreate task',()=>{
+  const {s,site}=fixture();site.monthlyTarget=2;
+  const selfProvision=telegraph(),ready={id:'lucid-page',domain:'lucid.page',automation:'api',accountRequired:false,free:'yes',enabled:true} as Channel;
+  const past=new Date(now.getTime()-15*86400000).toISOString(),future=new Date(now.getTime()+3*86400000).toISOString();
+  const base={siteId:site.id,status:'queued' as const,createdAt:past,updatedAt:past,attempts:0,message:'queued'};
+  const live:Task={id:randomUUID(),...base,channelId:'prior',sourceDomain:'prior.example',status:'live',scheduledAt:past,submittedAt:past,firstLiveAt:past,publicUrl:'https://prior.example/page'};
+  const due:Task={id:randomUUID(),...base,channelId:'telegraph',sourceDomain:'telegra.ph',scheduledAt:now.toISOString(),checkpoint:'article_review',cost:{aiCalls:2}};
+  const later:Task={id:randomUUID(),...base,channelId:'lucid-page',sourceDomain:'lucid.page',scheduledAt:future};
+  s.tasks.push(live,due,later);
+  assert.equal(channelExecutionReadiness(s,site.id,selfProvision).kind,'autocreate');
+  assert.equal(channelExecutionReadiness(s,site.id,ready).kind,'ready');
+  assert.equal(nextTask(s,now,[selfProvision,ready])?.id,due.id);
+  assert.equal(due.attempts,0);assert.equal(due.cost?.aiCalls,2);assert.equal(due.scheduledAt,now.toISOString());
+  const other={...site,id:randomUUID(),domain:'other.example',url:'https://other.example'};s.sites.push(other);
+  s.tasks.push({...later,id:randomUUID(),siteId:other.id});
+  assert.equal(nextTask(s,now,[selfProvision,ready])?.id,due.id);
+  site.monthlyTarget=1;assert.equal(nextTask(s,now,[selfProvision,ready]),undefined);
+  site.monthlyTarget=2;due.attempts=s.settings.maxAttempts;assert.equal(nextTask(s,now,[selfProvision,ready]),undefined);
+  due.attempts=0;
+  const review:Task={...later,id:randomUUID(),status:'review',scheduledAt:now.toISOString()};s.tasks.push(review);
+  assert.equal(nextTask(s,now,[selfProvision,ready]),undefined);
+  s.tasks.pop();
+  s.tasks.splice(s.tasks.indexOf(due),1);assert.equal(nextTask(s,now,[selfProvision,ready]),undefined);
+});
+
+test('a scheduled-past ready task with a future effective publication time does not take a due slot',()=>{
+  const {s,site}=fixture();site.monthlyTarget=2;
+  const selfProvision=telegraph(),ready={id:'lucid-page',domain:'lucid.page',automation:'api',accountRequired:false,free:'yes',enabled:true} as Channel;
+  const past=new Date(now.getTime()-8*86400000).toISOString(),yesterday=new Date(now.getTime()-86400000).toISOString();
+  const base={siteId:site.id,createdAt:past,updatedAt:past,attempts:0,message:'queued'};
+  const live:Task={id:randomUUID(),...base,channelId:'lucid-page',sourceDomain:'lucid.page',status:'live',scheduledAt:past,submittedAt:past,firstLiveAt:past,publicUrl:'https://lucid.page/prior'};
+  const delayed:Task={id:randomUUID(),...base,channelId:'lucid-page',sourceDomain:'lucid.page',status:'queued',scheduledAt:yesterday};
+  const due:Task={id:randomUUID(),...base,channelId:'telegraph',sourceDomain:'telegra.ph',status:'queued',scheduledAt:now.toISOString()};
+  s.tasks.push(live,delayed,due);
+  assert.equal(nextTask(s,now,[selfProvision,ready])?.id,due.id);
+  s.tasks.pop();assert.equal(nextTask(s,now,[selfProvision,ready]),undefined);
+});
+
 test('account handoff and manual work release capacity while uncertain publication remains reserved',()=>{
   const {s,site,matches}=fixture();site.monthlyTarget=1;
   const handoff:Task={id:randomUUID(),siteId:site.id,channelId:'github-gist',sourceDomain:'gist.github.com',status:'needs_input',checkpoint:'account_handoff',createdAt:now.toISOString(),scheduledAt:now.toISOString(),updatedAt:now.toISOString(),attempts:0,message:'connect'};
