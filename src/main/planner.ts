@@ -6,6 +6,9 @@ import type { CapacityBlockReason,Channel, Site, SiteCapacity, Task, LinkResult 
 import type { State } from './store';
 import {accountForSiteChannel,boundAccount,channelExecutionReadiness} from './account-bindings';
 import {eligibilityFor} from '../integrations/eligibility';
+import {hasActiveSiteOriginRecoveryGrant,migrationAwareTopicKey} from './site-origin-migration';
+
+const originTopicContext=(state:State,siteId:string)=>({topicKey:(value:string|undefined)=>migrationAwareTopicKey(state,siteId,value)});
 
 export function dateKey(value:Date|string,timeZone:string):string{
   const p=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value));
@@ -20,7 +23,12 @@ export {reservesSlot,reservesMonthlySlot} from '../shared/publication';
 export function recoverInterrupted(state:State,now=new Date()){
   for(const t of state.tasks){
     if(state.sites.find(site=>site.id===t.siteId)?.status==='paused')continue;
-    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||!!t.supanote||!!t.docsMd||!!t.deedPage||!!t.memoryWiki||!!t.shipPage||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
+    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||!!t.supanote||!!t.docsMd||!!t.deedPage||!!t.memoryWiki||!!t.shipPage||!!t.nostr||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
+    const migrationRecovery=(state.siteOriginMigrations??[]).find(record=>record.siteId===t.siteId)?.recovery;
+    if(t.status==='running'&&!uncertain&&migrationRecovery?.consumedAt&&migrationRecovery.taskId===t.id&&t.attempts>migrationRecovery.before.attempts){
+      t.status='failed';t.checkpoint='site_origin_migration_recovery_consumed';t.updatedAt=now.toISOString();t.recoveryEligible=false;t.nextCheckAt=undefined;
+      t.message='一次性网站迁移恢复已领取但在完成前中断；累计记录保留，不会再次自动恢复或重置重试次数。';continue;
+    }
     const paidAiUncertain=t.status==='running'&&!uncertain&&((['article_review','article_repair_review'].includes(t.checkpoint??'')&&t.articleReview?.status==='running')||(!t.draft&&(t.cost?.aiCalls??0)>0));
     if(paidAiUncertain){
       const eligible=(t.cost?.aiCalls??0)<6&&(t.recoveryAttempts??0)<1;
@@ -226,7 +234,7 @@ export function rebalanceQueuedSources(state:State,site:Site,matches:Match[],now
       if(channel.id===task.channelId||candidateSource===sourceKey(task.sourceDomain)||!fullArticleChannel(channel)||channel.free==='paid'||channel.free==='unknown'||
         !['browser','api'].includes(channel.automation)||!channel.enabled||state.settings.channelOverrides[channel.id]===false||!eligibilityFor(site,channel).eligible||
         !['ready','autocreate'].includes(readiness.kind)||related.some(item=>sourceKey(item.sourceDomain)===candidateSource&&taskOccupiesSource(item)))continue;
-      const opportunity=publicationOpportunity(site,channel,withoutTask,now,timeZone,{officialApiConnected:readiness.kind==='ready'});
+      const opportunity=publicationOpportunity(site,channel,withoutTask,now,timeZone,{officialApiConnected:readiness.kind==='ready',...originTopicContext(state,site.id)});
       if(!opportunity.allowed||!opportunity.scheduledAt)continue;
       const requested=new Date(Math.max(originalAt.getTime(),new Date(opportunity.scheduledAt).getTime()));
       const policyAt=earliestPublicationAt(site.id,channel.id,withoutTask,requested);
@@ -262,7 +270,7 @@ export function makePlan(state:State,site:Site,matches:Match[],now=new Date()):T
     considered.add(channel.id);
     // Keep historical handoffs visible, but do not create fresh blocked work.
     if(readiness.kind==='handoff_required'||readiness.kind==='manual')continue;
-    const opportunity=publicationOpportunity(site,channel,state.tasks,now,state.settings.timezone,{officialApiConnected:readiness.kind==='ready'});
+    const opportunity=publicationOpportunity(site,channel,state.tasks,now,state.settings.timezone,{officialApiConnected:readiness.kind==='ready',...originTopicContext(state,site.id)});
     if(!opportunity.allowed||!opportunity.scheduledAt)continue;
     const policyAt=earliestPublicationAt(site.id,channel.id,state.tasks,new Date(opportunity.scheduledAt));
     const when=socialPublicationAt(state,site.id,channel.id,new Date(Math.max(nextPlanAt.getTime(),policyAt.getTime())));
@@ -289,7 +297,7 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
     const site=state.sites.find(s=>s.id===t.siteId&&s.status==='ready');
     const planned=new Date(t.scheduledAt);
     const draftContinuation=hasRecoverablePublisherDraftReceipt(t);
-if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml||t.supanote||t.docsMd||t.katbin||t.mdshare||t.pstrs||t.totpage||t.mdview||t.txtsbs||t.pastyx||t.yourwebs||t.nextgenSlides||t.agentdrop||t.shipPage||t.pastemyst||t.markdownPaste||t.htmlApp||t.memoryWiki)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts||(channels.length>0&&priority(t)>1))return false;
+if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml||t.supanote||t.docsMd||t.katbin||t.mdshare||t.pstrs||t.totpage||t.mdview||t.txtsbs||t.pastyx||t.yourwebs||t.nextgenSlides||t.agentdrop||t.shipPage||t.pastemyst||t.markdownPaste||t.htmlApp||t.memoryWiki)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts&&!hasActiveSiteOriginRecoveryGrant(state,t)||(channels.length>0&&priority(t)>1))return false;
     const requested=planned.getTime()<=now.getTime()&&monthKey(planned,state.settings.timezone)!==monthKey(now,state.settings.timezone)?now:planned;
     const actual=socialPublicationAt(state,site.id,t.channelId,earliestPublicationAt(site.id,t.channelId,state.tasks,requested,{excludeTaskId:t.id,includeReservations:false}),{excludeTaskId:t.id,includeReservations:false});
     const channel=channels.find(item=>item.id===t.channelId);
@@ -335,7 +343,7 @@ function fittingSchedule(site:Site,candidates:CapacityCandidate[],predicate:(can
   for(const [index,candidate] of candidates.entries()){
     if(scheduled.length>=limit)break;
     if(!predicate(candidate))continue;
-    const opportunity=publicationOpportunity(site,candidate.channel,simulated,now,timeZone,{officialApiConnected:candidate.readiness.kind==='ready'});
+    const opportunity=publicationOpportunity(site,candidate.channel,simulated,now,timeZone,{officialApiConnected:candidate.readiness.kind==='ready',...(state?originTopicContext(state,site.id):{})});
     if(!opportunity.allowed||!opportunity.scheduledAt)continue;
     const policyAt=earliestPublicationAt(site.id,candidate.channel.id,simulated,new Date(opportunity.scheduledAt));
     const base=new Date(Math.max(slot.getTime(),policyAt.getTime()));
@@ -359,7 +367,7 @@ export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Chan
   for(const {match:{channel},readiness} of ordered){
     if(seen.has(channel.id)||!channel.enabled||channel.free==='paid'||channel.free==='unknown'||state?.settings.channelOverrides[channel.id]===false)continue;
     seen.add(channel.id);
-    let opportunity=publicationOpportunity(site,channel,tasks,now,timeZone,{officialApiConnected:readiness.kind==='ready'});
+    let opportunity=publicationOpportunity(site,channel,tasks,now,timeZone,{officialApiConnected:readiness.kind==='ready',...(state?originTopicContext(state,site.id):{})});
     if(readiness.kind==='handoff_required'&&opportunity.allowed)opportunity={...opportunity,allowed:false,blockingReason:'account_required',reason:'渠道符合发布条件，但尚未连接可用账号。'};
     const eligible=readiness.kind!=='handoff_required';
     const automatic=eligible&&channel.automation!=='manual'&&(readiness.kind==='ready'||readiness.kind==='autocreate');

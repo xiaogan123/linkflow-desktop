@@ -233,7 +233,7 @@ function publicUrlFor(receipt: NostrReceipt): string {
   return `${READER_ORIGIN}/${naddrFor(receipt)}`;
 }
 
-function publicUrlMatches(value: string, receipt: NostrReceipt): boolean {
+export function nostrPublicUrlMatches(value: string, receipt: NostrReceipt): boolean {
   try {
     const url = new URL(value);
     if (url.origin !== READER_ORIGIN || url.username || url.password || url.search || url.hash) return false;
@@ -245,6 +245,21 @@ function publicUrlMatches(value: string, receipt: NostrReceipt): boolean {
       && decoded.data.pubkey === receipt.pubkey
       && decoded.data.identifier === receipt.identifier;
   } catch { return false; }
+}
+
+function readerPolicyPageUrl(html: string, pageUrl: string, receipt: NostrReceipt): string | undefined {
+  try {
+    const $ = load(html);
+    const canonicals = $('link[rel]').toArray()
+      .filter(element => ($(element).attr('rel') ?? '').toLowerCase().split(/\s+/).includes('canonical'));
+    if (canonicals.length > 1) return undefined;
+    if (!canonicals.length) return pageUrl;
+    const href = ($(canonicals[0]).attr('href') ?? '').trim();
+    const canonical = new URL(href);
+    if (canonical.protocol !== 'https:' || canonical.origin !== READER_ORIGIN || canonical.username || canonical.password
+      || canonical.search || canonical.hash || !nostrPublicUrlMatches(canonical.href, receipt)) return undefined;
+    return canonical.href;
+  } catch { return undefined; }
 }
 
 function socketFactory(dependencies: NostrDependencies): NostrWebSocketFactory {
@@ -425,7 +440,7 @@ export async function verifyNostrPublication(
   } catch {
     return unavailable(task.publicUrl ?? fallback, 'Nostr 任务回执、原稿或选题地址无效', 'invalid');
   }
-  if (task.publicUrl && !publicUrlMatches(task.publicUrl, receipt)) {
+  if (task.publicUrl && !nostrPublicUrlMatches(task.publicUrl, receipt)) {
     return unavailable(task.publicUrl, 'Nostr 公开网址与原作者及文章标识不一致', 'invalid');
   }
 
@@ -436,17 +451,19 @@ export async function verifyNostrPublication(
   let fetched: { url: string; html: string;robotsHeader?:string };
   try { fetched = await (dependencies.fetchHtml ?? defaultFetchHtml)(publicUrl, signal); }
   catch { return unavailable(publicUrl, 'njump 暂时无法确认文章的公开静态页面'); }
-  if (Buffer.byteLength(fetched.html, 'utf8') > MAX_READER_HTML_BYTES || !publicUrlMatches(fetched.url, receipt)) {
+  if (Buffer.byteLength(fetched.html, 'utf8') > MAX_READER_HTML_BYTES || !nostrPublicUrlMatches(fetched.url, receipt)) {
     return unavailable(fetched.url || publicUrl, 'njump 响应地址或大小不符合固定 reader 约束', 'invalid');
   }
 
   try {
+    const policyPageUrl = readerPolicyPageUrl(fetched.html, fetched.url, receipt);
+    if (!policyPageUrl) return unavailable(fetched.url, 'njump canonical 与原作者或文章标识不一致', 'invalid');
     const rendering = inspectRenderedArticle(
       fetched.html,
       article.content,
       article.target,
       '[itemprop="articleBody"]',
-      { title: article.title,pageUrl:fetched.url,robotsHeader:fetched.robotsHeader },
+      { title: article.title,pageUrl:policyPageUrl,robotsHeader:fetched.robotsHeader },
     );
     if (!rendering.found) {
       const reason = rendering.reason === 'body' ? 'njump 页面缺少唯一可呈现的 articleBody'
@@ -671,5 +688,5 @@ export const nostrTesting = {
   identifierFor,
   naddrFor,
   publicUrlFor,
-  publicUrlMatches,
+  publicUrlMatches: nostrPublicUrlMatches,
 };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { finalizeEvent, getPublicKey, verifyEvent, type Event as NostrEvent } from 'nostr-tools';
+import { finalizeEvent, getPublicKey, nip19, verifyEvent, type Event as NostrEvent } from 'nostr-tools';
 import {
   nostrTesting,
   reconcileNostrTask,
@@ -444,6 +444,45 @@ test('visible full Markdown accepts natural njump rendering while binding all se
   })));
   assert.equal(result.found, true);
   assert.equal(result.outcome, 'found');
+});
+
+test('njump may canonicalize an equivalent naddr without relay hints, but cannot change its identity or policy', async t => {
+  const base = signedFixture();
+  const harness = new RelayHarness();
+  harness.events.set(base.event.id, base.event);
+  const canonical = nip19.naddrEncode({ kind: 30_023, pubkey: base.event.pubkey, identifier: nostrTesting.identifierFor(base.task.id) });
+  const verify = (head: string) => verifyNostrPublication(base.task, site().url, undefined, dependencies(harness, async () => ({
+    url: base.url,
+    html: readerHtml(base.event).replace('<html>', `<html><head>${head}</head>`),
+  })));
+
+  await t.test('equivalent canonical without relay hints is accepted', async () => {
+    assert.equal((await verify(`<link rel="canonical" href="https://njump.me/${canonical}">`)).found, true);
+  });
+
+  const otherKey = Uint8Array.from([...new Uint8Array(31), 2]);
+  const wrong = [
+    ['author', nip19.naddrEncode({ kind: 30_023, pubkey: getPublicKey(otherKey), identifier: nostrTesting.identifierFor(base.task.id) })],
+    ['identifier', nip19.naddrEncode({ kind: 30_023, pubkey: base.event.pubkey, identifier: 'different-article' })],
+    ['kind', nip19.naddrEncode({ kind: 1, pubkey: base.event.pubkey, identifier: nostrTesting.identifierFor(base.task.id) })],
+  ] as const;
+  for (const [name, encoded] of wrong) await t.test(`wrong ${name} is rejected`, async () => {
+    const result = await verify(`<link rel="canonical" href="https://njump.me/${encoded}">`);
+    assert.equal(result.found, false);
+    assert.equal(result.outcome, 'invalid');
+  });
+  for (const [name, head] of [
+    ['multiple canonicals', `<link rel="canonical" href="https://njump.me/${canonical}"><link rel="canonical" href="https://njump.me/${canonical}">`],
+    ['cross-origin canonical', `<link rel="canonical" href="https://example.net/${canonical}">`],
+    ['canonical query', `<link rel="canonical" href="https://njump.me/${canonical}?view=1">`],
+    ['canonical fragment', `<link rel="canonical" href="https://njump.me/${canonical}#article">`],
+    ['refresh', '<meta http-equiv="refresh" content="0">'],
+    ['noindex', '<meta name="robots" content="noindex">'],
+  ] as const) await t.test(`${name} is rejected`, async () => {
+    const result = await verify(head);
+    assert.equal(result.found, false);
+    assert.equal(result.outcome, 'invalid');
+  });
 });
 
 test('public article semantics preserve signs, percentages, and comparison operators', async t => {

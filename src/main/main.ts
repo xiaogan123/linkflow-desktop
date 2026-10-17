@@ -59,6 +59,7 @@ import {applyChannelPolicyDecision,canConfirmMissingPolicy} from './channel-poli
 import {saveTaskDraft} from './task-draft';
 import {createDraftClipboardHandler} from './draft-clipboard';
 import {acceptHtmlAppPublicNotice} from './html-app-publication';
+import {activateSiteOriginRecoveryGrant,applySiteOriginMigration,migrationAwareTopicKey} from './site-origin-migration';
 import {validHtmlAppPublicNoticeAcknowledgement} from '../shared/html-app-notice';
 import {drainBrewPageLateResponses} from '../integrations/brewpage';
 import {renderMemoryWikiArticle} from './memorywiki-renderer';
@@ -163,7 +164,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       forbidBusy();const d=z.object({id:z.string().uuid(),channelId:z.string().max(100)}).parse(p);const s=store.read(),site=s.sites.find(x=>x.id===d.id),channel=controller.channels().find(c=>c.id===d.channelId);
       if(!site||!channel)throw Error('网站或渠道不存在');if(site.status!=='ready')throw Error('请先完成网站分析并恢复计划');
       const fit=eligibilityFor(site,channel),candidate=channelDiscoveryFor(site,channel);if(channel.automation==='manual'?!candidate.canQueue:!fit.eligible)throw Error(channel.automation==='manual'?candidate.nextStep:fit.reason);if(channel.automation!=='manual'&&(channel.free==='unknown'||channel.free==='paid'))throw Error('该渠道不符合自动免费计划条件');
-      const opportunity=publicationOpportunity(site,channel.automation==='manual'?{...channel,free:'yes'}:channel,s.tasks,new Date(),s.settings.timezone,{officialApiConnected:channelExecutionReadiness(s,site.id,channel).kind==='ready'});if(!opportunity.allowed)throw Error(opportunity.reason);
+      const opportunity=publicationOpportunity(site,channel.automation==='manual'?{...channel,free:'yes'}:channel,s.tasks,new Date(),s.settings.timezone,{officialApiConnected:channelExecutionReadiness(s,site.id,channel).kind==='ready',topicKey:value=>migrationAwareTopicKey(s,site.id,value)});if(!opportunity.allowed)throw Error(opportunity.reason);
       const instant=new Date(),scheduled=earliestPublicationAt(site.id,channel.id,s.tasks,new Date(opportunity.scheduledAt??instant.toISOString()));if(monthKey(scheduled,s.settings.timezone)!==monthKey(instant,s.settings.timezone))throw Error('本月发布间隔已排满，最早可于 '+scheduled.toLocaleDateString('zh-CN',{timeZone:s.settings.timezone})+' 安排；系统将按新月目标继续。');
       const now=instant.toISOString();store.update(x=>x.tasks.push({id:randomUUID(),siteId:site.id,channelId:channel.id,sourceDomain:channel.id==='blogger'&&site.blogger?new URL(site.blogger.url).hostname:channel.domain,status:channel.automation==='manual'?'needs_input':'queued',createdAt:now,scheduledAt:scheduled.toISOString(),...(opportunity.topicUrl?{topicUrl:opportunity.topicUrl}:{}),updatedAt:now,attempts:0,message:channel.automation==='manual'?(channel.free==='paid'?'付费渠道仅建立人工待办；软件不会付款或自动提交':'可生成材料，按平台规则人工提交'):'已加入计划',reason:channel.automation==='manual'?`${candidate.reason} ${candidate.nextStep}`:fit.reason,health:'pending',history:[],cost:{aiCalls:0}}));void controller.tick();break;
     }
@@ -295,8 +296,25 @@ async function command(name:string,p:unknown):Promise<unknown>{
     }
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
+    case 'site:migrate-origin':{
+      forbidBusy();const d=z.object({id:z.string().uuid(),expectedDomain:z.string().min(3).max(253),expectedUrl:z.url().max(2048),newUrl:z.string().trim().min(1).max(2048),recoveryTaskId:z.string().uuid().optional(),operatorAuthorized:z.literal(true)}).strict().parse(p),site=store.read().sites.find(value=>value.id===d.id);
+      if(!site||site.status!=='paused'||site.domain!==d.expectedDomain||site.url!==d.expectedUrl)throw Error('网站必须保持暂停且来源未改变，才能迁移');
+      const preview=structuredClone(store.read()),previewRecord=applySiteOriginMigration(preview,{siteId:d.id,expectedDomain:d.expectedDomain,expectedUrl:d.expectedUrl,newUrl:d.newUrl,operatorAuthorized:true,recoveryTaskId:d.recoveryTaskId,resumeStatus:'ready'},new Date());if(d.recoveryTaskId)activateSiteOriginRecoveryGrant(preview,d.id,d.recoveryTaskId,new Date());
+      const recovery=previewRecord.recovery?.before,channelName=recovery?controller.channels().find(value=>value.id===recovery.channelId)?.name??recovery.channelId:undefined;
+      const confirm=await dialog.showMessageBox(win!,{type:'warning',title:'迁移网站来源',message:`确认把 ${site.url} 迁移到 ${previewRecord.after.url}？`,detail:`迁移会保留同一网站记录、每月目标、历史成果、账号绑定和发布间隔。旧 Telegraph 成果继续按旧来源只读核验；当前搜索报告会归档并重新获取。${recovery?`将只恢复所选 ${channelName} 原任务一次；原尝试 ${recovery.attempts} 次、AI 调用 ${recovery.cost?.aiCalls??0} 次及换题记录全部保留。`:'不会自动恢复旧失败任务。'} 迁移成功后只恢复这个网站的计划，不改变全局自动执行或其他网站。`,buttons:['取消','确认迁移并恢复网站'],defaultId:0,cancelId:0});
+      if(confirm.response!==1)return {cancelled:true};
+      forbidBusy();const now=new Date();store.update(state=>{applySiteOriginMigration(state,{siteId:d.id,expectedDomain:d.expectedDomain,expectedUrl:d.expectedUrl,newUrl:d.newUrl,operatorAuthorized:true,recoveryTaskId:d.recoveryTaskId,resumeStatus:'ready'},now);if(d.recoveryTaskId)activateSiteOriginRecoveryGrant(state,d.id,d.recoveryTaskId,now)});controller.plan();void controller.tick();return {ok:true};
+    }
     case 'site:analyze':forbidBusy();void controller.analyze(getId(p));break;
     case 'task:approve':{forbidBusy();const id=getId(p),state=store.read(),task=state.tasks.find(t=>t.id===id),site=task?state.sites.find(item=>item.id===task.siteId):undefined;if(!task?.draft?.body||!site||((task.submittedAt||task.paper||task.hive||task.mataroa||task.verbose||task.prose||task.rentry||task.lucid||task.wordpress||task.leaflet||task.raindrop||task.supanote||task.docsMd||task.katbin||task.pstrs||task.agentdrop||task.listedStartups||task.productIndex||task.totpage||task.mdview||task.txtsbs||task.pastyx||task.nextgenSlides||task.yourwebs||task.pastemyst||task.markdownPaste||task.htmlApp||task.memoryWiki)&&!hasRecoverablePublisherDraftReceipt(task))||task.checkpoint!=='article_review')throw Error('当前没有待确认文章');const aiMode=getArticleReviewMode(site,state.settings)==='ai';controller.patch(id,{articleApprovedAt:new Date().toISOString(),articleReview:undefined,status:'queued',scheduledAt:new Date().toISOString(),message:aiMode?'人工已检查，仍需 AI 独立核对后才会发布':'文章已确认，等待发布'});void controller.tick();break;}
+    case 'task:review-once':{
+      forbidBusy();if(activeCommands.size>1)throw Error('另一个操作正在进行，请勿重复点击追加审核');
+      const id=getId(p),summary=controller.oneReviewRetrySummary(id);
+      const confirm=await dialog.showMessageBox(win!,{type:'warning',title:'追加一次独立 AI 审核',message:`确认给 ${summary.siteDomain} 的 ${summary.channelName} 稿件追加一次独立 AI 审核？`,detail:`原有 6 次 AI 调用记录会完整保留，不会清零、克隆任务或改成人工通过。最多新增 1 次可能产生费用的 AI 调用，只审核当前第 ${summary.draftRevision} 版稿件；不会生成、修稿、换题或直接发布。请求一旦开始即记为第 7 次，即使失败、中断或结果未知也不能再次追加。审核通过后只返回正常任务队列，仍须经过渠道资格、排期、月度目标、发布间隔及发布闸。`,buttons:['取消','确认追加 1 次审核'],defaultId:0,cancelId:0});
+      if(confirm.response!==1)return {cancelled:true};
+      forbidBusy();if(activeCommands.size>1)throw Error('另一个操作正在进行，本次确认未执行');
+      return controller.reviewArticleOnce(id);
+    }
     case 'task:retry':{
       const id=getId(p),t=store.read().tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');if(t.status==='running')throw Error('任务正在执行');
       if(t.firstLiveAt)throw Error('此渠道已获得过外链，可核验现有结果，无需重复提交');

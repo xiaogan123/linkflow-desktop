@@ -34,6 +34,8 @@ export interface PublicationOpportunity {
 export interface PublicationOpportunityContext {
   /** The current site/channel binding has a usable official API credential. */
   officialApiConnected?:boolean;
+  /** Optional site-history key used when one site keeps its id across an origin migration. */
+  topicKey?:(value:string|undefined)=>string|undefined;
 }
 
 export function sourceKey(value:string):string{
@@ -173,17 +175,17 @@ export function isPendingPublisherRegistration(task:Task):boolean{
     !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.raindrop&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.htmlApp&&!task.deedPage&&!task.markdrop&&!task.draftmark&&!task.memoryWiki&&!task.berrry&&!task.agentHow;
 }
 
-function topicCandidates(site:Site,tasks:Task[]):{known:boolean;available:string[];invalid:boolean}{
+function topicCandidates(site:Site,tasks:Task[],topicKey=canonicalPublicPageUrl):{known:boolean;available:string[];invalid:boolean}{
   const known=Array.isArray(site.topics);
   if(!known)return {known:false,available:[],invalid:false};
-  const used=new Set(tasks.filter(task=>task.siteId===site.id&&task.topicUrl&&taskReservesTopic(task)).map(task=>canonicalPublicPageUrl(task.topicUrl)).filter((value):value is string=>!!value));
-  for(const task of tasks.filter(task=>task.siteId===site.id))for(const attempt of task.articleAttempts??[]){const canonical=canonicalPublicPageUrl(attempt.topicUrl);if(canonical)used.add(canonical)}
+  const used=new Set(tasks.filter(task=>task.siteId===site.id&&task.topicUrl&&taskReservesTopic(task)).map(task=>topicKey(task.topicUrl)).filter((value):value is string=>!!value));
+  for(const task of tasks.filter(task=>task.siteId===site.id))for(const attempt of task.articleAttempts??[]){const key=topicKey(attempt.topicUrl);if(key)used.add(key)}
   const unique=new Map<string,{url:string;updated:number;index:number;language:number}>();
   let valid=0;
   for(const [index,topic] of (site.topics??[]).entries()){
-    const canonical=canonicalPublicPageUrl(topic.url);
+    const canonical=canonicalPublicPageUrl(topic.url),key=topicKey(topic.url);
     const modified=validDate(topic.lastModified)?.getTime()??validDate(topic.discoveredAt)?.getTime()??0;
-    if(canonical&&isArticleTopicUrl(canonical,site)){valid++;if(!used.has(canonical)&&!unique.has(canonical))unique.set(canonical,{url:canonical,updated:modified,index,language:articleTopicLanguageScore(topic,site.language)})}
+    if(canonical&&key&&isArticleTopicUrl(canonical,site)){valid++;if(!used.has(key)&&!unique.has(key))unique.set(key,{url:canonical,updated:modified,index,language:articleTopicLanguageScore(topic,site.language)})}
   }
   return {known:true,available:[...unique.values()].sort((a,b)=>b.language-a.language||b.updated-a.updated||a.index-b.index).map(topic=>topic.url),invalid:(site.topics?.length??0)>0&&valid===0};
 }
@@ -267,7 +269,7 @@ export function publicationOpportunity(site:Site,channel:Channel,tasks:Task[],no
 
   const repeat=events.length>0||sameChannel.some(task=>taskOccupiesSource(task));
   if(repeat&&context.officialApiConnected!==true)return {allowed:false,repeat:true,blockingReason:'account_required',reason:'同平台再次发布只允许使用当前已连接的官方文章接口账号。'};
-  const topics=topicCandidates(site,related);
+  const topics=topicCandidates(site,related,context.topicKey);
   let topicUrl:string|undefined;
   let topicBlock:PublicationOpportunity|undefined;
   if(topics.available.length)topicUrl=topics.available[0];

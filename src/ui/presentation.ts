@@ -102,9 +102,15 @@ export function taskHasStoppedUnknownDocsMdSubmission(task:Task,channelEnabled=t
   )&&!task.publicUrl&&!task.firstLiveAt&&!taskHasAutomaticFollowup(task,channelEnabled);
 }
 
+export function taskHasSkippedUnknownPublication(task:Task){
+  return task.status==='skipped'&&!!task.submittedAt&&Number.isFinite(Date.parse(task.submittedAt))
+    &&taskHasUnconfirmedSubmission(task)&&!task.firstLiveAt;
+}
+
 export function taskWorkKind(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true):TaskWorkKind{
   const failedReview=task.articleReview?.status==='failed',reasonCode=task.articleReview?.reasonCode;
   if(task.status==='live')return 'result';
+  if(taskHasSkippedUnknownPublication(task))return 'deferred';
   if(task.deferredAt&&!taskHasSubmissionEvidence(task))return 'deferred';
   if(taskNeedsTelegraphReconciliation(task,channelEnabled)||taskCanAutoRecover(task,channelEnabled))return 'system_retry';
   if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled))return 'channel_wait';
@@ -122,7 +128,7 @@ export function taskWorkKind(task:Task,reviewMode:ArticleReviewMode='manual',cha
 
 export function taskPresentation(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true):TaskPresentation{
   const kind=taskWorkKind(task,reviewMode,channelEnabled),review=task.articleReview,reasonCode=review?.reasonCode;
-  if(kind==='deferred')return {kind,label:'已搁置',tone:'muted'};
+  if(kind==='deferred')return {kind,label:taskHasSkippedUnknownPublication(task)?'已搁置 · 结果未知':'已搁置',tone:'muted'};
   if(kind==='channel_wait'){
     if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled))return {kind,label:'提交结果未知',tone:'amber'};
     if(task.checkpoint==='topic_recovery_budget')return {kind,label:'自动处理额度不足',tone:'muted'};
@@ -165,14 +171,23 @@ export function taskPresentation(task:Task,reviewMode:ArticleReviewMode='manual'
 // an old article review still authorizes another submission.
 export function draftStatusLabel(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true){
   if(task.status==='live'&&(task.publicUrl||task.firstLiveAt))return `已发布 · ${taskPresentation(task,reviewMode,channelEnabled).label}`;
+  if(taskHasSkippedUnknownPublication(task))return '已搁置 · 结果未知';
   if(task.firstLiveAt)return '曾发布 · 当前待复核';
   if(task.publicUrl)return '已有公开地址 · 等待核验';
   if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled))return '已提交 · 结果未知';
+  if(task.channelId==='nostr'&&task.submittedAt&&task.nostr&&['nostr_publish_submitting','nostr_published'].includes(task.checkpoint??''))return '已提交 · 结果待核验';
   const presentation=taskPresentation(task,reviewMode,channelEnabled);
   if(task.articleApprovedAt)return '已确认';
   if(presentation.kind==='channel_wait')return '等待新证据或渠道';
   if(presentation.kind==='system_retry')return presentation.label;
   return reviewMode==='ai'?'待独立 AI 审核':'待人工确认';
+}
+
+export function taskCanManuallyRecoverNostr(task:Task,channelEnabled=true,siteReady=true){
+  return channelEnabled&&siteReady&&task.channelId==='nostr'&&task.nostr?.stage==='submitting'
+    &&!!task.submittedAt&&Number.isFinite(Date.parse(task.submittedAt))&&task.checkpoint==='nostr_publish_submitting'
+    &&['needs_input','review','failed'].includes(task.status)&&!task.firstLiveAt&&!task.reconcileAfter
+    &&(task.reconcileAttempts??0)>=3;
 }
 
 export function articleReviewTitle(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true){
@@ -188,6 +203,7 @@ export function articleReviewDetail(task:Task,reviewMode:ArticleReviewMode='manu
   const review=task.articleReview,kind=taskWorkKind(task,reviewMode,channelEnabled);
   if(review?.reasonCode==='policy_unknown')return '现有内容政策证据的适用范围尚未确认，任务未发布；当前来源已停止，出现新证据后可重新评估。';
   if(review?.reasonCode==='policy_not_found')return '现有公开资料中尚未找到适用的内容政策，任务未发布；当前来源已停止，出现新证据后可重新评估。';
+  if(canUseOneReviewRetry(task,reviewMode,channelEnabled))return `${review?.reason||'审核未通过。'} AI 调用预算已用完，原 6 次调用记录已保留；可在明确确认后追加唯一一次独立审核，最多新增 1 次可能付费调用。`;
   if(reviewMode==='ai'&&review?.status==='failed'&&(task.cost?.aiCalls??0)>=TASK_AI_BUDGET)return `${review.reason||'审核未通过。'} 当前任务 AI 调用预算已用完，无法重新 AI 核对；稿件和审核记录已保留。`;
   if(kind==='system_retry')return task.message||review?.reason||(taskNeedsTelegraphReconciliation(task,channelEnabled)?'已提交的结果正在自动查询，查询期间不会重复发布。':task.status==='queued'||taskCanAutoRecover(task,channelEnabled)?'公开证据或 AI 服务暂时不可用，系统会按已保存的计划再次检查。':'自动重试已停止，当前未安排再次检查；其他可执行渠道仍会继续。');
   if(kind==='channel_wait')return review?.reason||task.message||'当前来源等待新证据或渠道结果，其他可执行任务会继续。';
@@ -200,6 +216,16 @@ export function articleReviewDetail(task:Task,reviewMode:ArticleReviewMode='manu
 export const isUserActionTask=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>taskWorkKind(task,reviewMode,channelEnabled)==='user_action';
 export const canRetryTaskManually=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>isUserActionTask(task,reviewMode,channelEnabled)&&!taskHasArticleReview(task)&&!taskHasSubmissionEvidence(task)&&['needs_input','failed'].includes(task.status);
 export const canRestartArticleReview=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>reviewMode==='ai'&&(task.cost?.aiCalls??0)<TASK_AI_BUDGET&&isUserActionTask(task,reviewMode,channelEnabled)&&taskHasArticleReview(task)&&task.articleReview?.status!=='running';
+export const canUseOneReviewRetry=(task:Task,reviewMode:ArticleReviewMode='manual',channelEnabled=true)=>channelEnabled&&reviewMode==='ai'&&['failed','needs_input'].includes(task.status)&&['article_review','system_wait','channel_wait'].includes(task.checkpoint??'')&&!!task.draft&&task.articleReview?.status==='failed'&&(task.cost?.aiCalls??0)===TASK_AI_BUDGET&&!task.oneReviewRetry&&!taskHasSubmissionEvidence(task);
+export function oneReviewRetryLabel(task:Task){const retry=task.oneReviewRetry;return !retry?undefined:retry.status==='granted'?'已授权，正在开始':retry.status==='consumed'?'已使用（第 7 次）':'已终结（未调用且不可复用）'}
+export function taskResultStatusLabel(task:Task,channelEnabled=true){
+  if(task.publicUrl)return '客户端任务产出';
+  if(task.checkpoint==='account_registration_submitted')return '等待发布';
+  if(task.channelId==='nostr'&&task.submittedAt&&task.nostr&&['nostr_publish_submitting','nostr_published'].includes(task.checkpoint??''))return '已提交 · 结果待核验';
+  if(taskHasStoppedUnknownDocsMdSubmission(task,channelEnabled)||taskHasUnconfirmedSubmission(task))return '已提交 · 结果未知';
+  if(task.submittedAt&&taskHasSubmissionEvidence(task))return '已提交 · 结果待核验';
+  return '等待发布';
+}
 
 export function taskHasAutomaticFollowup(task:Task,channelEnabled=true){
   return taskNeedsTelegraphReconciliation(task,channelEnabled)||taskCanAutoRecover(task,channelEnabled)||!!taskAutomaticFollowupAt(task,channelEnabled);

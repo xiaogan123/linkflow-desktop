@@ -1,7 +1,7 @@
 {
   "name": "linkflow",
   "productName": "外链助手",
-  "version": "1.2.32",
+  "version": "1.2.33",
   "description": "个人免费外链计划客户端",
   "private": true,
   "type": "module",
@@ -29,7 +29,8 @@
     "test:paragraph-ui": "node scripts/paragraph-ui-smoke.cjs",
     "test:update-reminder-ui": "node scripts/update-reminder-ui-smoke.cjs",
     "test:agentnotepad-native": "node scripts/agentnotepad-native-smoke.mjs",
-    "test:agentnotepad-registration": "node scripts/agentnotepad-registration-smoke.mjs"
+    "test:agentnotepad-registration": "node scripts/agentnotepad-registration-smoke.mjs",
+    "test:site-origin-migration-ui": "node scripts/site-origin-migration-ui-smoke.cjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

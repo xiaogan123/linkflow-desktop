@@ -87,8 +87,8 @@ test('deferred human work keeps a distinct label and only the unsubmitted origin
 
   const unsafe={...deferred,checkpoint:'telegraph_publish_uncertain',submittedAt:stamp,reconcileAttempts:3};
   assert.equal(canResumeDeferredTask(unsafe),false);
-  assert.equal(taskWorkKind(unsafe,'ai'),'user_action');
-  assert.equal(taskPresentation(unsafe,'ai').label,'需要确认发布结果');
+  assert.equal(taskWorkKind(unsafe,'ai'),'deferred');
+  assert.equal(taskPresentation(unsafe,'ai').label,'已搁置 · 结果未知');
   assert.equal(canRetryTaskManually(unsafe,'ai'),false);
 });
 

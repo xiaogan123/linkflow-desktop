@@ -74,6 +74,10 @@ jobs:
         run: npm run test:paragraph-ui
       - name: Per-site article review UI
         run: npm run test:site-review-ui
+      - name: One-time independent review UI
+        run: node scripts/one-review-retry-ui-smoke.cjs
+      - name: Same-site domain migration UI
+        run: node scripts/site-origin-migration-ui-smoke.cjs
       - name: Article connection and setup UI
         run: node scripts/article-connection-ui-smoke.cjs
       - name: WordPress connection UI
@@ -126,7 +130,7 @@ jobs:
             }
           }
 
-      - name: Validate published Windows v1.2.31 to candidate v1.2.32 native upgrade
+      - name: Validate published Windows v1.2.32 to candidate v1.2.33 native upgrade
         id: native_upgrade
         run: npm run test:update-native
 
@@ -188,6 +192,10 @@ jobs:
         run: npm run test:paragraph-ui
       - name: Per-site article review UI
         run: npm run test:site-review-ui
+      - name: One-time independent review UI
+        run: node scripts/one-review-retry-ui-smoke.cjs
+      - name: Same-site domain migration UI
+        run: node scripts/site-origin-migration-ui-smoke.cjs
       - name: Article connection and setup UI
         run: node scripts/article-connection-ui-smoke.cjs
       - name: WordPress connection UI

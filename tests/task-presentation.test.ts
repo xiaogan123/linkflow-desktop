@@ -6,7 +6,7 @@ import {load} from 'cheerio';
 import {emptyState} from '../src/main/store';
 import {TaskCenter} from '../src/ui/pages/TaskCenter';
 import type {ArticleReviewReasonCode,Channel,Site,Snapshot,Task} from '../src/shared/types';
-import {articleReviewDetail,canRestartArticleReview,canRetryTaskManually,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskHasAutomaticFollowup,taskPresentation,taskReservesPlanningSlot,taskSortRank,taskWorkKind} from '../src/ui/presentation';
+import {articleReviewDetail,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskCanManuallyRecoverNostr,taskHasAutomaticFollowup,taskPresentation,taskReservesPlanningSlot,taskResultStatusLabel,taskSortRank,taskWorkKind} from '../src/ui/presentation';
 
 const stamp='2026-10-03T00:00:00.000Z';
 const site:Site={id:'site-1',domain:'example.com',url:'https://example.com',email:'owner@example.com',publicEmail:'owner@example.com',name:'Example',description:'Example software',category:'software',language:'zh',monthlyTarget:2,articleReviewMode:'ai',status:'ready',createdAt:stamp};
@@ -23,6 +23,48 @@ test('draft caption reports saved publication result even after the AI channel i
   assert.equal(draftStatusLabel({...published,status:'review',firstLiveAt:undefined},'ai',false),'已有公开地址 · 等待核验');
   const awaiting={...task('queued'),draft:published.draft,articleReview:published.articleReview};
   assert.equal(draftStatusLabel(awaiting,'ai',false),'待独立 AI 审核');
+});
+
+test('a submitted Nostr event is shown as awaiting result rather than awaiting another AI review',()=>{
+  const submitted:Task={...task('needs_input'),channelId:'nostr',sourceDomain:'njump.me',submittedAt:stamp,checkpoint:'nostr_publish_submitting',reconcileAttempts:3,nostr:{pubkey:'1'.repeat(64),eventId:'2'.repeat(64),identifier:'linkflow-synthetic',contentHash:'3'.repeat(64),createdAt:1_797_120_000,stage:'submitting'},draft:{title:'Synthetic',description:'Synthetic',body:'Synthetic body'},articleReview:{status:'passed',reason:'fixture',reasonCode:'passed',reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+  assert.equal(draftStatusLabel(submitted,'ai'),'已提交 · 结果待核验');
+  assert.equal(taskResultStatusLabel(submitted),'已提交 · 结果待核验');
+  assert.equal(draftStatusLabel({...submitted,status:'live',firstLiveAt:stamp,publicUrl:'https://njump.me/naddr1synthetic',nostr:{...submitted.nostr!,stage:'published'}},'ai'),'已发布 · 当前有效');
+  const registrationOnly:Task={...task('needs_input'),channelId:'nostr',checkpoint:'account_registration_submitted',draft:submitted.draft,articleReview:submitted.articleReview};
+  assert.equal(draftStatusLabel(registrationOnly,'ai'),'待独立 AI 审核');
+  assert.equal(taskResultStatusLabel(registrationOnly),'等待发布');
+  assert.equal(taskCanManuallyRecoverNostr(submitted,true,true),true);
+  assert.equal(taskCanManuallyRecoverNostr(submitted,false,true),false);
+  assert.equal(taskCanManuallyRecoverNostr(submitted,true,false),false);
+  const data:Snapshot={...emptyState(),sites:[site],tasks:[submitted],channels:[channel('nostr','api')],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
+  const ready=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,status:'all',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
+  assert.equal(ready('[aria-label="只读核验原 Nostr 事件"]').attr('disabled'),undefined);
+  const paused=load(renderToStaticMarkup(React.createElement(TaskCenter,{data:{...data,sites:[{...site,status:'paused'}]},disabled:false,status:'all',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
+  assert.notEqual(paused('[aria-label="核验公开链接"]').attr('disabled'),undefined);
+});
+
+test('a skipped unknown publication remains deferred without hiding the unknown external result',()=>{
+  const unknown:Task={...task('skipped'),channelId:'betterthanhtml',sourceDomain:'betterthanhtml.com',submittedAt:stamp,checkpoint:'betterthanhtml_publish_submitting',reconcileAttempts:3,betterthanhtml:{contentHash:'a'.repeat(64),id:'synthetic-workshop',stage:'submitting'},publicUrl:'https://betterthanhtml.com/workshop/synthetic-workshop',deferredAt:stamp};
+  assert.equal(taskWorkKind(unknown,'ai'),'deferred');
+  assert.equal(taskPresentation(unknown,'ai').label,'已搁置 · 结果未知');
+  assert.equal(draftStatusLabel(unknown,'ai'),'已搁置 · 结果未知');
+  assert.equal(isUserActionTask(unknown,'ai'),false);
+  assert.equal(canRetryTaskManually(unknown,'ai'),false);
+  assert.equal(canResumeDeferredTask(unknown),false);
+  const registrationOnly:Task={...task('skipped'),checkpoint:'account_registration_submitted',submittedAt:undefined,deferredAt:stamp};
+  assert.equal(taskPresentation(registrationOnly,'ai').label,'已搁置');
+});
+
+test('the restored needs-input review exposes only the explicit one-shot action at call 6',()=>{
+  const retry:Task={...task('needs_input'),checkpoint:'article_review',draftRevision:3,draft:{title:'Synthetic retry',description:'Synthetic summary',body:'Synthetic article body.'},cost:{aiCalls:6},articleReview:{...failedReview('passed'),draftRevision:3}};
+  assert.equal(canUseOneReviewRetry(retry,'ai',true),true);
+  assert.equal(canRestartArticleReview(retry,'ai',true),false);
+  assert.match(articleReviewDetail(retry,'ai',true),/明确确认.*唯一一次/);
+  const data:Snapshot={...emptyState(),sites:[site],tasks:[retry],channels:[channel('telegraph','api',false)],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
+  const $=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,status:'all',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
+  assert.equal($('[aria-label="追加 1 次 AI 审核"]').length,1);
+  assert.equal($('button').filter((_,element)=>$(element).text().includes('重新 AI 核对')).length,0);
+  assert.equal(canUseOneReviewRetry({...retry,oneReviewRetry:{version:1,purpose:'independent_article_review',operationTokenHash:'a'.repeat(64),grantedAt:stamp,siteId:retry.siteId,channelId:retry.channelId,accountId:null,draftRevision:3,contentHash:'b'.repeat(64),contextHash:'c'.repeat(64),provider:'codex',model:'fixture',status:'invalidated',invalidatedAt:stamp,invalidationReason:'request_not_started'}},'ai',true),false);
 });
 
 test('Docs MD unknown submission without a receipt is stopped without becoming a human task',()=>{
