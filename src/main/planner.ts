@@ -59,9 +59,20 @@ export function continuesPendingRegistration(state:State,task:Task,channel:Chann
 }
 
 type RankedMatch={match:Match;index:number;readiness:ReturnType<typeof channelExecutionReadiness>;usedThisMonth:boolean;lastUsed:number;otherSitesThisMonth:number};
-function rankedMatches(state:State,site:Site,matches:Match[],tasks:Task[],now:Date,timeZone:string):RankedMatch[]{
-  const month=monthKey(now,timeZone),sitesBySource=new Map<string,Set<string>>();
+export interface CapacitySnapshotIndex {tasksBySite:ReadonlyMap<string,Task[]>;sourceSites:ReadonlyMap<string,ReadonlySet<string>>}
+/** Precomputed from the same scheduler state for read-only snapshot capacity views. */
+export function capacitySnapshotIndex(state:State,now:Date,timeZone:string):CapacitySnapshotIndex{
+  const tasksBySite=new Map<string,Task[]>(),sourceSites=new Map<string,Set<string>>(),month=monthKey(now,timeZone);
   for(const task of state.tasks){
+    const related=tasksBySite.get(task.siteId)??[];related.push(task);tasksBySite.set(task.siteId,related);
+    if(task.checkpoint==='existing_link'||(!reservesMonthlySlot(task,now,timeZone)&&!publicationDates([task]).some(date=>monthKey(date,timeZone)===month)))continue;
+    const source=sourceKey(task.sourceDomain),sites=sourceSites.get(source)??new Set<string>();sites.add(task.siteId);sourceSites.set(source,sites);
+  }
+  return {tasksBySite,sourceSites};
+}
+function rankedMatches(state:State,site:Site,matches:Match[],tasks:Task[],now:Date,timeZone:string,sourceSites?:ReadonlyMap<string,ReadonlySet<string>>):RankedMatch[]{
+  const month=monthKey(now,timeZone),sitesBySource=new Map<string,Set<string>>();
+  if(!sourceSites)for(const task of state.tasks){
     if(task.siteId===site.id||task.checkpoint==='existing_link')continue;
     if(!reservesMonthlySlot(task,now,timeZone)&&!publicationDates([task]).some(date=>monthKey(date,timeZone)===month))continue;
     const source=sourceKey(task.sourceDomain),sites=sitesBySource.get(source)??new Set<string>();
@@ -70,7 +81,7 @@ function rankedMatches(state:State,site:Site,matches:Match[],tasks:Task[],now:Da
   return matches.map((match,index)=>{
     const dates=publicationDates(tasks.filter(task=>task.channelId===match.channel.id));
     const readiness=channelExecutionReadiness(state,site.id,match.channel);
-    const otherSitesThisMonth=sitesBySource.get(sourceKey(channelSourceDomain(site,match.channel,readiness.account)))?.size??0;
+    const source=sourceKey(channelSourceDomain(site,match.channel,readiness.account)),sites=sourceSites?.get(source)??sitesBySource.get(source),otherSitesThisMonth=(sites?.size??0)-(sourceSites?.get(source)?.has(site.id)?1:0);
     return {match,index,readiness,otherSitesThisMonth,usedThisMonth:dates.some(date=>monthKey(date,timeZone)===month),lastUsed:dates.reduce((latest,date)=>Math.max(latest,date.getTime()),Number.NEGATIVE_INFINITY)};
   // Spread only otherwise equivalent candidates; relevance, readiness and this site's history still win.
   }).sort((a,b)=>readinessRank[a.readiness.kind]-readinessRank[b.readiness.kind]||Number(a.usedThisMonth)-Number(b.usedThisMonth)||a.lastUsed-b.lastUsed||readinessTieRank[a.readiness.kind]-readinessTieRank[b.readiness.kind]||b.match.score-a.match.score||a.otherSitesThisMonth-b.otherSitesThisMonth||a.index-b.index);
@@ -355,19 +366,19 @@ function fittingSchedule(site:Site,candidates:CapacityCandidate[],predicate:(can
   return {scheduled,...(deferredAt?{deferredAt}:{})};
 }
 
-export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Channel[],now=new Date(),timeZone='UTC',state?:State):SiteCapacity{
-  const related=tasks.filter(task=>task.siteId===site.id);
-  const remaining=unusedSources(site.id,tasks,matches.map(item=>item.channel));
+export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Channel[],now=new Date(),timeZone='UTC',state?:State,index?:CapacitySnapshotIndex):SiteCapacity{
+  const related=index?.tasksBySite.get(site.id)??tasks.filter(task=>task.siteId===site.id);
+  const remaining=unusedSources(site.id,related,matches.map(item=>item.channel));
   const automaticUnused=remaining.automatic,manualUnused=remaining.manual;
   const monthsAtTarget=site.monthlyTarget>0?Math.floor(remaining.total/site.monthlyTarget):null;
-  const counts=publicationCounts(site.id,tasks,now,timeZone),pending=related.filter(task=>reservesMonthlySlot(task,now,timeZone)).length,gap=Math.max(0,site.monthlyTarget-counts.monthlyPages-pending);
+  const counts=publicationCounts(site.id,related,now,timeZone),pending=related.filter(task=>reservesMonthlySlot(task,now,timeZone)).length,gap=Math.max(0,site.monthlyTarget-counts.monthlyPages-pending);
   void channels; // The matched channels are the site's qualified subset; `channels` remains for API compatibility.
-  const ordered=state?rankedMatches(state,site,matches,related,now,timeZone):matches.map((match,index)=>({match,index,readiness:fallbackReadiness(match.channel),usedThisMonth:false,lastUsed:Number.NEGATIVE_INFINITY}));
+  const ordered=state?rankedMatches(state,site,matches,related,now,timeZone,index?.sourceSites):matches.map((match,index)=>({match,index,readiness:fallbackReadiness(match.channel),usedThisMonth:false,lastUsed:Number.NEGATIVE_INFINITY}));
   const seen=new Set<string>(),candidates:CapacityCandidate[]=[];
   for(const {match:{channel},readiness} of ordered){
     if(seen.has(channel.id)||!channel.enabled||channel.free==='paid'||channel.free==='unknown'||state?.settings.channelOverrides[channel.id]===false)continue;
     seen.add(channel.id);
-    let opportunity=publicationOpportunity(site,channel,tasks,now,timeZone,{officialApiConnected:readiness.kind==='ready',...(state?originTopicContext(state,site.id):{})});
+    let opportunity=publicationOpportunity(site,channel,related,now,timeZone,{officialApiConnected:readiness.kind==='ready',...(state?originTopicContext(state,site.id):{})});
     if(readiness.kind==='handoff_required'&&opportunity.allowed)opportunity={...opportunity,allowed:false,blockingReason:'account_required',reason:'渠道符合发布条件，但尚未连接可用账号。'};
     const eligible=readiness.kind!=='handoff_required';
     const automatic=eligible&&channel.automation!=='manual'&&(readiness.kind==='ready'||readiness.kind==='autocreate');

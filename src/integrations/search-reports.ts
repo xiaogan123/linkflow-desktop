@@ -6,7 +6,7 @@ export function canonicalSource(value:string):string|undefined{
 }
 export function sourceReported(report:SearchReport|undefined,url:string|undefined):'reported'|'not_reported'|'unknown'{
  if(!report||report.error||!url)return 'unknown';
- const source=canonicalSource(url);return source&&report.sources.includes(source)?'reported':report.complete?'not_reported':'unknown';
+ const source=canonicalSource(url);return source&&(report.sources.includes(source)||Object.hasOwn(report.firstSeenAt??{},source))?'reported':report.complete?'not_reported':'unknown';
 }
 // CSV exports are snapshots, not a live Google API and not proof of indexing.
 export function parseGscLinksCsv(csv:string,now=new Date()):SearchReport{
@@ -24,10 +24,33 @@ export function parseGscLinksCsv(csv:string,now=new Date()):SearchReport{
  const column=headers.findIndex(h=>['linking page','linking pages','source url','source','链接页面','链接网页','引荐网页','最常见的引荐网页','链接页','来源网址'].includes(h));
  if(column<0)throw Error('请选择 GSC 导出的外部链接来源网页 CSV；目标网页或来源域名汇总不能核验具体外链');
  const values=rows.map(r=>r[column]?.trim()).filter(Boolean);
- const sources=[...new Set(values.map(canonicalSource).filter((s):s is string=>!!s))];
+ const normalized=values.map(canonicalSource);if(normalized.some(source=>source&&source.length>4096))throw Error('CSV 中的来源网页 URL 超过 4096 个字符');
+ const sources=[...new Set(normalized.filter((s):s is string=>!!s))];
  if(values.length&&!sources.length)throw Error('CSV 中没有完整的来源网页 URL');
  if(sources.length>20000)throw Error('来源记录超过 20000 条，请拆分导出');
  return {checkedAt:now.toISOString(),method:'csv',sources,complete:false,message:`导入 ${sources.length} 条 GSC 来源网页记录。报告仅为样本；未出现的链接不能认定不存在。`};
+}
+export function parseGscLinksCsvFiles(csvs:string[],now=new Date()):SearchReport{
+ if(!csvs.length||csvs.length>20)throw Error('请选择 1 至 20 个 GSC CSV 文件');
+ if(csvs.reduce((bytes,csv)=>bytes+Buffer.byteLength(csv,'utf8'),0)>2_000_000)throw Error('所选 CSV 文件合计超过 2 MB');
+ const sources=[...new Set(csvs.flatMap(csv=>parseGscLinksCsv(csv,now).sources))];
+ if(sources.length>20000)throw Error('来源记录超过 20000 条，请分次导入');
+ return {checkedAt:now.toISOString(),method:'csv',sources,complete:false,message:`导入 ${sources.length} 条 GSC 来源网页记录。报告仅为样本；未出现的链接不能认定不存在。`};
+}
+export function mergeGscImport(previous:SearchReport|undefined,incoming:SearchReport,publishedUrls:string[]):{report:SearchReport;newlyDiscovered:string[]}{
+ const published=new Set(publishedUrls.map(canonicalSource).filter((url):url is string=>!!url));
+ const firstSeenAt={...(previous?.firstSeenAt??{})};
+ // An older saved snapshot is an upgrade baseline, not a new discovery event.
+ if(!previous?.error)for(const source of previous?.sources??[])if(published.has(source)&&!Object.hasOwn(firstSeenAt,source))firstSeenAt[source]=previous!.checkedAt;
+ const newlyDiscovered:string[]=[];
+ for(const source of incoming.sources)if(published.has(source)&&!Object.hasOwn(firstSeenAt,source)){firstSeenAt[source]=incoming.checkedAt;newlyDiscovered.push(source)}
+ if(Object.keys(firstSeenAt).length>50000)throw Error('GSC 已发现历史超过 50000 条，无法继续导入');
+ const discovered=Object.keys(firstSeenAt).length;
+ return {report:{...incoming,firstSeenAt,message:`导入 ${incoming.sources.length} 条 GSC 来源网页记录。${discovered?`GSC 报告已发现 ${discovered} 个已发布页面；`:''}报告仅为样本，本次未出现不代表失效。`},newlyDiscovered};
+}
+export function gscDiscoveryNotice(enabled:boolean,siteDomain:string,newlyDiscovered:string[]):{title:string;body:string}|undefined{
+ if(!enabled||!newlyDiscovered.length)return;
+ return {title:'GSC 报告已发现',body:`${siteDomain} · 本次导入首次确认 ${newlyDiscovered.length} 个已发布页面`};
 }
 export type BingCall=(method:'GetUserSites'|'GetUrlLinks',params:Record<string,string|number>,key:string,signal?:AbortSignal)=>Promise<unknown>;
 export const callBing:BingCall=async(method,params,key,signal)=>{

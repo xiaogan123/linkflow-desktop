@@ -19,4 +19,4 @@ export class Vault implements SecretStore {
   }
   encryptSecrets(secrets:Record<string,string>){if(!this.available())throw new Error('系统钥匙串不可用');return Object.fromEntries(Object.entries(secrets).map(([k,v])=>[k,safeStorage.encryptString(v).toString('base64')]))}
 }
-export { encryptBackup, decryptBackup } from './backup';
+export {assertPortableBackupFits,decryptBackup,encryptBackup,MAX_PORTABLE_BACKUP_BYTES,portableBackupFileBytes} from './backup';

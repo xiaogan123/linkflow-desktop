@@ -44,7 +44,7 @@ export type SiteStatus = 'analyzing'|'ready'|'paused'|'attention';
 export type TaskStatus = 'queued'|'running'|'needs_input'|'review'|'live'|'failed'|'skipped'|'expired';
 export type Category = 'software'|'ai'|'developer'|'design'|'business'|'content'|'education'|'finance'|'general';
 export type Qualification = 'software'|'developer'|'portfolio'|'publication'|'business'|'localBusiness'|'techContent'|'wordpressPlugin'|'drupalProject'|'javascriptPackage'|'pythonPackage'|'dotnetPackage'|'rustCrate'|'phpPackage'|'dartPackage'|'rubyGem'|'containerImage'|'aiArtifact'|'firefoxExtension'|'vscodeExtension'|'jetbrainsPlugin'|'linuxApp'|'androidFoss'|'openSource'|'gameAsset';
-export interface SearchReport {checkedAt:string;method:'api'|'csv';sources:string[];complete:boolean;message:string;targetUrl?:string;error?:boolean}
+export interface SearchReport {checkedAt:string;method:'api'|'csv';sources:string[];complete:boolean;message:string;targetUrl?:string;error?:boolean;firstSeenAt?:Record<string,string>}
 export interface ChannelEvidenceSource {url:string;kind:'api'|'product_guidance'|'content_policy';appliesTo:string;applicability:'verified'|'unconfirmed'}
 export interface ChannelPolicyDecision {scopeHash:string;confirmedAt:string;decision:'use_without_confirmed_policy'}
 export interface SiteTopic {url:string;title?:string;lastModified?:string;discoveredAt:string}

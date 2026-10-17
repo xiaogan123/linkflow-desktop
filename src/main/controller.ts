@@ -8,9 +8,9 @@ import {socialDraftError} from '../shared/social-content';
 import {isArticleTopicUrl} from '../shared/topic-policy';
 import type { Site, Snapshot, ExecutionContext, ExecutionResult, Task, Runtime, Channel, Account, AiModelDiscovery, AiPort, ArticleReview, Settings, LinkResult, AgentHowApprovalBinding, SwarmMemoApprovalBinding } from '../shared/types';
 import {currentChannelPolicyDecision,supportsOfficialGuidanceReview} from './channel-policy';
-import { Store } from './store';
+import { Store, type State } from './store';
 import { Vault } from './vault';
-import { dateKey, liveThisMonth, reservesSlot, reservesMonthlySlot, makePlan, nextTask, recoverInterrupted, expireReviews, applyLinkResult, capacityFor, continuesPendingRegistration, reflowQueuedSchedules, earliestPublicationAt, socialPublicationAt } from './planner';
+import { dateKey, liveThisMonth, reservesSlot, reservesMonthlySlot, makePlan, nextTask, recoverInterrupted, expireReviews, applyLinkResult, capacityFor, capacitySnapshotIndex, continuesPendingRegistration, reflowQueuedSchedules, earliestPublicationAt, socialPublicationAt } from './planner';
 import {hasActiveSiteOriginRecoveryGrant,siteContextForTask} from './site-origin-migration';
 import { CHANNELS, matchChannels } from '../integrations/catalog';
 import { analyzeWebsite, verifyLink } from '../integrations/web';
@@ -787,11 +787,15 @@ export class Controller {
   private drafting=new Set<string>();
   private searchChecks=new Map<string,AbortController>();
   private pendingAnalyses:string[]=[];
+  private readonly queuedAnalyses=new Set<string>();
+  private readonly analysisResolvers=new Map<string,()=>void>();
+  private readonly maxConcurrentAnalyses=2;
   aiModels?:AiModelDiscovery;
   onNotice?:(title:string,body:string)=>void;
   constructor(readonly store:Store,readonly vault:Vault,dataPath:string,private readonly services:ControllerServices={}){
     this.runtime={busy:false,aiReady:false,mailReady:false,vaultReady:false,version:'1.0.0',platform:process.platform,dataPath,aiCallsToday:0};
     this.pendingAnalyses=store.read().sites.filter(s=>s.status==='analyzing').map(s=>s.id);
+    for(const id of this.pendingAnalyses)this.queuedAnalyses.add(id);
     store.update(s=>{
       recoverInterrupted(s);
       for(const task of s.tasks)if(task.oneReviewRetry?.status==='granted')invalidateOneReviewRetry(task,'restart');
@@ -806,24 +810,44 @@ export class Controller {
   }
   snapshot():Snapshot {
     const s=this.store.read();const today=dateKey(new Date(),s.settings.timezone);
-    const channels=this.channels(),now=new Date();
-    const capacity=s.sites.map(site=>capacityFor(site,s.tasks,matchChannels(site,channels),channels,now,s.settings.timezone,s));
+    const channels=this.channelsFor(s),now=new Date(),capacityIndex=capacitySnapshotIndex(s,now,s.settings.timezone);
+    const capacity=s.sites.map(site=>capacityFor(site,s.tasks,matchChannels(site,channels),channels,now,s.settings.timezone,s,capacityIndex));
     return {...s,channels,capacity,channelPolicyStatus:Object.fromEntries(s.sites.map(site=>[site.id,Object.fromEntries(channels.filter(channel=>channel.id==='telegraph').map(channel=>[channel.id,currentChannelPolicyDecision(site,channel,now)?'valid':site.channelPolicyDecisions?.[channel.id]?'expired_or_changed':'unconfirmed']))])),aiModels:this.aiModels,runtime:{...this.runtime,vaultReady:this.vault.ready,mailReady:this.runtime.mailReady&&s.mailboxes.some(mailbox=>mailbox.hasPassword),aiCallsToday:s.usage[today]||0}};
   }
-  channels():Channel[]{const state=this.store.read(),over=state.settings.channelOverrides;return composeChannels(this.services.channelCatalog??CHANNELS,state.customChannels??[],state.channelMetrics??{}).map(c=>({...c,enabled:c.enabled&&over[c.id]!==false}))}
-  start(){this.timer=setInterval(()=>void this.tick(),60000);this.timer.unref();for(const id of this.pendingAnalyses)void this.analyze(id);this.pendingAnalyses=[];void this.tick()}
-  hasPendingWork(){return this.runtime.busy||this.analyzing.size>0||this.verifying.size>0||this.searchChecks.size>0||this.drafting.size>0}
+  private channelsFor(state:State):Channel[]{const over=state.settings.channelOverrides;return composeChannels(this.services.channelCatalog??CHANNELS,state.customChannels??[],state.channelMetrics??{}).map(c=>({...c,enabled:c.enabled&&over[c.id]!==false}))}
+  channels():Channel[]{return this.channelsFor(this.store.read())}
+  start(){clearInterval(this.timer);this.timer=setInterval(()=>void this.tick(),60000);this.timer.unref();this.drainAnalyses();void this.tick()}
+  hasPendingWork(){return this.runtime.busy||this.analyzing.size>0||this.pendingAnalyses.length>0||this.verifying.size>0||this.searchChecks.size>0||this.drafting.size>0}
   assertSettingsWritable(){if(this.hasPendingWork())throw Error('请先暂停执行，等待当前操作结束后再修改。')}
   closeTaskBrowsers(){closeAllTaskBrowsers()}
-  stop(){clearInterval(this.timer);this.active?.abort();for(const abort of this.shareVerifications.values())abort.abort();if(this.runtime.activeTaskId)closeTaskBrowser(this.runtime.activeTaskId);for(const abort of this.analyzing.values())abort.abort();for(const abort of this.searchChecks.values())abort.abort()}
+  stop(){clearInterval(this.timer);this.active?.abort();for(const abort of this.shareVerifications.values())abort.abort();if(this.runtime.activeTaskId)closeTaskBrowser(this.runtime.activeTaskId);for(const abort of this.analyzing.values())abort.abort();for(const id of [...this.pendingAnalyses])this.cancelQueuedAnalysis(id);for(const abort of this.searchChecks.values())abort.abort()}
   pause(){this.active?.abort();for(const abort of this.shareVerifications.values())abort.abort();if(this.runtime.activeTaskId)closeTaskBrowser(this.runtime.activeTaskId);this.store.update(s=>{s.settings.autoRun=false});}
-  sitePause(id:string,paused:boolean){if(paused)for(const [taskId,abort] of this.shareVerifications)if(this.store.read().tasks.find(task=>task.id===taskId)?.siteId===id)abort.abort();if(paused&&this.runtime.activeTaskId&&this.store.read().tasks.find(t=>t.id===this.runtime.activeTaskId)?.siteId===id){this.active?.abort();closeTaskBrowser(this.runtime.activeTaskId)}this.store.update(s=>{const site=s.sites.find(x=>x.id===id);if(!site)throw Error('网站不存在');site.status=paused?'paused':site.analyzedAt?'ready':'attention';if(!paused)recoverInterrupted({...s,tasks:s.tasks.filter(task=>task.siteId===id&&task.id!==this.runtime.activeTaskId)})});if(!paused)void this.tick()}
-  deleteSite(id:string){const before=this.store.read();if(before.tasks.some(task=>task.siteId===id&&(task.swarmMemo||task.brewPage||task.shareYourHtml||task.raindrop||task.htmlApp||task.deedPage||task.markdrop||task.katbin||task.mdshare||task.pastemyst||task.markdownPaste||task.slugPost||task.draftmark||task.memoryWiki||task.hereNow||task.shiply||task.notebin||task.notebinJournal)))throw Error('该网站有必须保留的永久提交意图或对账回执，不能删除；可先暂停网站并保留原记录。');if(this.runtime.activeTaskId&&before.tasks.find(t=>t.id===this.runtime.activeTaskId)?.siteId===id){this.active?.abort();closeTaskBrowser(this.runtime.activeTaskId)}this.analyzing.get(id)?.abort();this.searchChecks.get(id)?.abort();const publicationKeys=before.tasks.filter(task=>task.siteId===id).map(task=>'publication:'+task.id);this.store.updateWithCiphers(s=>{s.sites=s.sites.filter(x=>x.id!==id);s.tasks=s.tasks.filter(x=>x.siteId!==id);s.accountBindings=s.accountBindings.filter(x=>x.siteId!==id);for(const account of s.accounts){if(account.mataroaExcludedSiteIds)account.mataroaExcludedSiteIds=account.mataroaExcludedSiteIds.filter(siteId=>siteId!==id);if(account.verboseExcludedSiteIds)account.verboseExcludedSiteIds=account.verboseExcludedSiteIds.filter(siteId=>siteId!==id);if(account.rentryExcludedSiteIds)account.rentryExcludedSiteIds=account.rentryExcludedSiteIds.filter(siteId=>siteId!==id)}s.events=s.events.filter(x=>x.siteId!==id)},{},publicationKeys);}
-  async analyze(id:string){
-    if(this.analyzing.has(id))return;
-    const site=this.store.read().sites.find(s=>s.id===id);if(!site)return;
+  sitePause(id:string,paused:boolean){if(paused){this.cancelQueuedAnalysis(id);for(const [taskId,abort] of this.shareVerifications)if(this.store.read().tasks.find(task=>task.id===taskId)?.siteId===id)abort.abort()}if(paused&&this.runtime.activeTaskId&&this.store.read().tasks.find(t=>t.id===this.runtime.activeTaskId)?.siteId===id){this.active?.abort();closeTaskBrowser(this.runtime.activeTaskId)}this.store.update(s=>{const site=s.sites.find(x=>x.id===id);if(!site)throw Error('网站不存在');site.status=paused?'paused':site.analyzedAt?'ready':'attention';if(!paused)recoverInterrupted({...s,tasks:s.tasks.filter(task=>task.siteId===id&&task.id!==this.runtime.activeTaskId)})});if(!paused)void this.tick()}
+  deleteSite(id:string){const before=this.store.read();if(before.tasks.some(task=>task.siteId===id&&(task.swarmMemo||task.brewPage||task.shareYourHtml||task.raindrop||task.htmlApp||task.deedPage||task.markdrop||task.katbin||task.mdshare||task.pastemyst||task.markdownPaste||task.slugPost||task.draftmark||task.memoryWiki||task.hereNow||task.shiply||task.notebin||task.notebinJournal)))throw Error('该网站有必须保留的永久提交意图或对账回执，不能删除；可先暂停网站并保留原记录。');if(this.runtime.activeTaskId&&before.tasks.find(t=>t.id===this.runtime.activeTaskId)?.siteId===id){this.active?.abort();closeTaskBrowser(this.runtime.activeTaskId)}this.cancelQueuedAnalysis(id);this.analyzing.get(id)?.abort();this.searchChecks.get(id)?.abort();const publicationKeys=before.tasks.filter(task=>task.siteId===id).map(task=>'publication:'+task.id);this.store.updateWithCiphers(s=>{s.sites=s.sites.filter(x=>x.id!==id);s.tasks=s.tasks.filter(x=>x.siteId!==id);s.accountBindings=s.accountBindings.filter(x=>x.siteId!==id);for(const account of s.accounts){if(account.mataroaExcludedSiteIds)account.mataroaExcludedSiteIds=account.mataroaExcludedSiteIds.filter(siteId=>siteId!==id);if(account.verboseExcludedSiteIds)account.verboseExcludedSiteIds=account.verboseExcludedSiteIds.filter(siteId=>siteId!==id);if(account.rentryExcludedSiteIds)account.rentryExcludedSiteIds=account.rentryExcludedSiteIds.filter(siteId=>siteId!==id)}s.events=s.events.filter(x=>x.siteId!==id)},{},publicationKeys);}
+  analyze(id:string):Promise<void>{
+    if(this.analyzing.has(id)||this.queuedAnalyses.has(id))return Promise.resolve();
+    const site=this.store.read().sites.find(s=>s.id===id);if(!site)return Promise.resolve();
+    let resolve!:()=>void;const done=new Promise<void>(value=>{resolve=value});
+    this.queuedAnalyses.add(id);this.analysisResolvers.set(id,resolve);this.pendingAnalyses.push(id);
+    this.store.update(s=>{const current=s.sites.find(item=>item.id===id);if(current){current.status='analyzing';current.error=undefined}});
+    this.drainAnalyses();return done;
+  }
+  private cancelQueuedAnalysis(id:string){
+    this.queuedAnalyses.delete(id);
+    this.pendingAnalyses=this.pendingAnalyses.filter(value=>value!==id);
+    if(!this.analyzing.has(id)){this.analysisResolvers.get(id)?.();this.analysisResolvers.delete(id);}
+  }
+  private drainAnalyses(){
+    while(this.analyzing.size<this.maxConcurrentAnalyses&&this.pendingAnalyses.length){
+      const id=this.pendingAnalyses.shift()!;this.queuedAnalyses.delete(id);
+      const site=this.store.read().sites.find(item=>item.id===id);
+      if(!site||site.status==='paused'){this.analysisResolvers.get(id)?.();this.analysisResolvers.delete(id);continue;}
+      void this.runAnalysis(id);
+    }
+  }
+  private async runAnalysis(id:string){
+    const site=this.store.read().sites.find(s=>s.id===id);if(!site){this.analysisResolvers.get(id)?.();this.analysisResolvers.delete(id);this.drainAnalyses();return;}
     const abort=new AbortController();this.analyzing.set(id,abort);
-    this.store.update(s=>{const x=s.sites.find(x=>x.id===id);if(x){x.status='analyzing';x.error=undefined}});
     try{
       let facts=await (this.services.analyzeWebsite??analyzeWebsite)(site.domain,abort.signal);
       await this.refreshTopics(site,abort.signal);
@@ -841,7 +865,7 @@ export class Controller {
       this.store.update(s=>{const x=s.sites.find(x=>x.id===id);if(x){Object.assign(x,facts,{status:x.status==='paused'?'paused':'ready',analyzedAt:new Date().toISOString()});}});
       this.plan();this.store.log('网站分析完成，已匹配免费渠道。',{siteId:id});void this.tick();
     }catch(e){if(!abort.signal.aborted){this.store.update(s=>{const x=s.sites.find(x=>x.id===id);if(x){x.status=x.status==='paused'?'paused':'attention';x.error='网站暂时无法读取，请检查域名和网络后重新分析：'+safeMessage(e)+'。'}});this.store.log(safeMessage(e),{siteId:id,level:'warning'})}}
-    finally{this.analyzing.delete(id)}
+    finally{this.analyzing.delete(id);this.analysisResolvers.get(id)?.();this.analysisResolvers.delete(id);this.drainAnalyses()}
   }
   private async refreshTopics(site:Site,signal?:AbortSignal){
     const stamp=new Date().toISOString();

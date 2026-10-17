@@ -63,6 +63,7 @@ export default function App(){
   const [draftTitle,setDraftTitle]=useState(''),[draftDescription,setDraftDescription]=useState(''),[draftBody,setDraftBody]=useState(''),[url,setUrl]=useState(''),[migrationDomain,setMigrationDomain]=useState(''),[migrationTaskId,setMigrationTaskId]=useState(''),[passphrase,setPassphrase]=useState('');
   const [settings,setSettings]=useState<Settings|null>(null),[apiKey,setApiKey]=useState(''),[mailPassword,setMailPassword]=useState('');
   const settingsDirty=useRef(false);
+  const mounted=useRef(true),refreshPromise=useRef<Promise<void>|null>(null),refreshQueued=useRef(false);
   const api=window.linkflow;
   const updateState=useUpdateStatus(!demo),updateNotice=updateReminder(updateState);
   useEffect(()=>{
@@ -74,7 +75,13 @@ export default function App(){
     document.addEventListener('keydown',trap);sync();return()=>{observer.disconnect();document.removeEventListener('keydown',trap)};
   },[]);
 
-  const refresh=useCallback(async()=>{if(!window.linkflow){setSnapshot(null);setLoading(false);return}try{const next=await window.linkflow.invoke<Snapshot>('snapshot');setSnapshot(next)}catch(e){setError(errorText(e))}finally{setLoading(false)}},[]);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false}},[]);
+  const refresh=useCallback(()=>{
+    if(!api){if(mounted.current){setSnapshot(null);setLoading(false)}return Promise.resolve();}
+    if(refreshPromise.current){refreshQueued.current=true;return refreshPromise.current;}
+    const promise=(async()=>{do{refreshQueued.current=false;try{const next=await api.invoke<Snapshot>('snapshot');if(mounted.current)setSnapshot(next)}catch(e){if(mounted.current)setError(errorText(e))}}while(refreshQueued.current&&mounted.current);if(mounted.current)setLoading(false)})();
+    refreshPromise.current=promise;void promise.finally(()=>{if(refreshPromise.current===promise)refreshPromise.current=null});return promise;
+  },[]);
   useEffect(()=>{void refresh();const unsub=window.linkflow?.onChange(()=>{void refresh()});return()=>unsub?.()},[refresh]);
   useEffect(()=>{settingsDirty.current=false;setSettings(demo?demoSnapshot.settings:snapshot?.settings??null)},[demo]);
   useEffect(()=>{if(!demo&&!settingsDirty.current)setSettings(snapshot?.settings??null)},[snapshot,demo]);

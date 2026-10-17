@@ -10,26 +10,31 @@ type Props={data:Snapshot|null;disabled:boolean;status:string;onStatusChange:(st
 
 export function TaskCenter({data,disabled,status,onStatusChange,onAction,onEditDraft,onSetUrl,onSite}:Props){
   const [query,setQuery]=useState(''),[siteId,setSiteId]=useState('all'),[expanded,setExpanded]=useState('');
-  const rows=useMemo(()=>{
+  const taskView=useMemo(()=>{
     const sites=new Map((data?.sites??[]).map(site=>[site.id,site]));
     const channels=new Map((data?.channels??[]).map(channel=>[channel.id,channel]));
-    return (data?.tasks??[]).filter(task=>{
+    let progressing=0,attention=0,waiting=0,current=0;
+    const tasks=data?.tasks??[];
+    for(const task of tasks){const site=sites.get(task.siteId),reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',enabled=channels.get(task.channelId)?.enabled===true,kind=taskWorkKind(task,reviewMode,enabled);if(kind==='progress'||kind==='system_retry')progressing++;if(isUserActionTask(task,reviewMode,enabled))attention++;if(kind==='channel_wait')waiting++;if(task.status==='live'&&task.health==='healthy'&&task.linkCheck==='found')current++;}
+    const rows=tasks.filter(task=>{
       const haystack=`${sites.get(task.siteId)?.domain??''} ${channels.get(task.channelId)?.name??''} ${task.sourceDomain} ${task.message}`.toLowerCase();
-      const site=sites.get(task.siteId),reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',kind=taskWorkKind(task,reviewMode,channels.get(task.channelId)?.enabled===true);
+      const site=sites.get(task.siteId),reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',enabled=channels.get(task.channelId)?.enabled===true,kind=taskWorkKind(task,reviewMode,enabled);
       const statusMatch=status==='all'||status==='active'&&(kind==='progress'||kind==='system_retry')||status==='attention'&&kind==='user_action'||status==='waiting'&&kind==='channel_wait'||status==='deferred'&&kind==='deferred'||status==='results'&&!!task.publicUrl;
       return haystack.includes(query.toLowerCase())&&(siteId==='all'||task.siteId===siteId)&&statusMatch;
     }).sort((a,b)=>{const aSite=sites.get(a.siteId),bSite=sites.get(b.siteId),aMode=aSite&&data?getArticleReviewMode(aSite,data.settings):'manual',bMode=bSite&&data?getArticleReviewMode(bSite,data.settings):'manual';return taskSortRank(a,aMode,channels.get(a.channelId)?.enabled===true)-taskSortRank(b,bMode,channels.get(b.channelId)?.enabled===true)||b.updatedAt.localeCompare(a.updatedAt)});
+    return {sites,channels,rows,progressing,attention,waiting,current};
   },[data,query,status,siteId]);
-  const channelFor=(task:Task):Channel|undefined=>data?.channels.find(channel=>channel.id===task.channelId);
-  const siteFor=(task:Task):Site|undefined=>data?.sites.find(site=>site.id===task.siteId);
+  const {sites,channels,rows}=taskView;
+  const channelFor=(task:Task):Channel|undefined=>channels.get(task.channelId);
+  const siteFor=(task:Task):Site|undefined=>sites.get(task.siteId);
   const channelEnabled=(task:Task)=>channelFor(task)?.enabled===true;
   return <div className="page task-center-page">
     <div className="page-heading compact-heading"><div><div className="eyebrow">WORK QUEUE / 任务中心</div><h1>从待办到公开成果。</h1><p>跨网站查看执行、审核、恢复和已核验结果。</p></div><div className="heading-seal"><Clock size={17}/>{data?.runtime.busy?'正在执行任务':'当前队列已同步'}</div></div>
     <div className="task-kpis">
-      <Metric label="系统推进" value={(data?.tasks??[]).filter(task=>{const site=siteFor(task),mode=site&&data?getArticleReviewMode(site,data.settings):'manual',kind=taskWorkKind(task,mode,channelEnabled(task));return kind==='progress'||kind==='system_retry'}).length} tone="blue"/>
-      <Metric label="需要你处理" value={(data?.tasks??[]).filter(task=>{const site=siteFor(task),mode=site&&data?getArticleReviewMode(site,data.settings):'manual';return isUserActionTask(task,mode,channelEnabled(task))}).length} tone="amber"/>
-      <Metric label="等待渠道" value={(data?.tasks??[]).filter(task=>{const site=siteFor(task),mode=site&&data?getArticleReviewMode(site,data.settings):'manual';return taskWorkKind(task,mode,channelEnabled(task))==='channel_wait'}).length}/>
-      <Metric label="当前有效" value={(data?.tasks??[]).filter(t=>t.status==='live'&&t.health==='healthy'&&t.linkCheck==='found').length} tone="green"/>
+      <Metric label="系统推进" value={taskView.progressing} tone="blue"/>
+      <Metric label="需要你处理" value={taskView.attention} tone="amber"/>
+      <Metric label="等待渠道" value={taskView.waiting}/>
+      <Metric label="当前有效" value={taskView.current} tone="green"/>
     </div>
     <section className="panel directory-panel task-directory">
       <div className="directory-toolbar"><div className="search"><MagnifyingGlass size={17}/><input aria-label="搜索任务" placeholder="搜索网站、渠道或任务说明" value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="filter-select"><Funnel size={15}/><select aria-label="筛选网站" value={siteId} onChange={e=>setSiteId(e.target.value)}><option value="all">全部网站</option>{data?.sites.map(site=><option key={site.id} value={site.id}>{site.domain}</option>)}</select></div><div className="filter-tabs task-filter-tabs" role="group" aria-label="筛选任务状态">{[['active','系统推进'],['attention','需你处理'],['waiting','等待渠道'],['deferred','已搁置'],['results','有成果'],['all','全部']].map(([key,label])=><button key={key} className={status===key?'active':''} aria-pressed={status===key} onClick={()=>onStatusChange(key)}>{label}</button>)}</div></div>

@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { Store, defaultSettings } from './store';
-import { Vault, encryptBackup, decryptBackup } from './vault';
+import {assertPortableBackupFits,Vault,encryptBackup,decryptBackup} from './vault';
 import {connectBlogger,reconnectBlogger,listBloggerBlogs,bindBloggerBlog,bindBloggerBlogs,disconnectBlogger} from './blogger-management';
 import {WordPressConnections} from './wordpress-management';
 import {connectMarkest,MarkestConnectionInput} from './markest-management';
@@ -33,7 +33,7 @@ import { HERE_NOW_IPC_COMMANDS, IPC_COMMANDS, PLOPINO_IPC_COMMANDS, SHIPLY_IPC_C
 import {CHANNELS} from '../integrations/catalog';
 import {belongsToSource} from '../integrations/web';
 import {eligibilityFor} from '../integrations/eligibility';
-import {parseGscLinksCsv} from '../integrations/search-reports';
+import {gscDiscoveryNotice,mergeGscImport,parseGscLinksCsvFiles} from '../integrations/search-reports';
 import { discoverModels, normalizeApiBase, scopedApiSecrets, testAi } from '../integrations/ai';
 import { codexEnvironment, resolveCodexLaunch } from '../integrations/codex-process';
 import { testMail, testMailbox } from '../integrations/mail';
@@ -289,10 +289,14 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'search:save-key':{forbidBusy();const {key,enabled}=z.object({key:z.string().min(1).max(1024),enabled:z.boolean()}).parse(p);await vault.set('bingKey',key.trim());store.update(s=>{s.settings.hasBingKey=true;s.settings.monitorSearch=enabled});break;}
     case 'search:bing':await controller.checkSearch(getId(p));break;
     case 'search:import-gsc':{
-      const id=getId(p),site=store.read().sites.find(s=>s.id===id);if(!site)throw Error('网站不存在');const file=await dialog.showOpenDialog(win!,{title:'选择 '+site.domain+' 的 GSC 外部链接来源 CSV',properties:['openFile'],filters:[{name:'GSC CSV',extensions:['csv']}]});if(file.canceled)return;
-      const report=parseGscLinksCsv(await readFile(file.filePaths[0],'utf8'));
+      const id=getId(p),site=store.read().sites.find(s=>s.id===id);if(!site)throw Error('网站不存在');const expected={domain:site.domain,url:site.url,createdAt:site.createdAt};const file=await dialog.showOpenDialog(win!,{title:'选择 '+site.domain+' 的 GSC 外部链接来源 CSV',properties:['openFile','multiSelections'],filters:[{name:'GSC CSV',extensions:['csv']}]});if(file.canceled)return;
+      if(!file.filePaths.length||file.filePaths.length>20)throw Error('请选择 1 至 20 个 GSC CSV 文件');
+      const fileStats=await Promise.all(file.filePaths.map(path=>stat(path)));if(fileStats.some(value=>!value.isFile())||fileStats.reduce((bytes,value)=>bytes+value.size,0)>2_000_000)throw Error('所选 CSV 文件合计超过 2 MB');
+      const csvs=await Promise.all(file.filePaths.map(path=>readFile(path,'utf8'))),report=parseGscLinksCsvFiles(csvs);
       const confirm=await dialog.showMessageBox(win!,{type:'question',message:'确认这是 '+site.domain+' 的 GSC 外部链接报告？',detail:'CSV 本身不包含可校验的网站归属。仅导入来源网页，不提交索引。',buttons:['取消','导入'],defaultId:0,cancelId:0});if(confirm.response!==1)return;
-      store.update(s=>{const x=s.sites.find(s=>s.id===id);if(x)x.searchReports={...x.searchReports,gsc:report}});break;
+      let newlyDiscovered:string[]=[];const backupSecrets=vault.exportSecrets();
+      try{store.update(s=>{const x=s.sites.find(s=>s.id===id);if(!x||x.domain!==expected.domain||x.url!==expected.url||x.createdAt!==expected.createdAt)throw Error('网站资料已变化，请重新选择对应资源并导入');const merged=mergeGscImport(x.searchReports?.gsc,report,s.tasks.filter(task=>task.siteId===id&&task.publicUrl).map(task=>task.publicUrl!));newlyDiscovered=merged.newlyDiscovered;x.searchReports={...x.searchReports,gsc:merged.report};assertPortableBackupFits({state:s,secrets:backupSecrets})})}finally{for(const key of Object.keys(backupSecrets))backupSecrets[key]=''}
+      const notice=gscDiscoveryNotice(store.read().settings.notify,expected.domain,newlyDiscovered);if(notice)try{controller.onNotice?.(notice.title,notice.body)}catch{/* Notification failure must not roll back a committed import. */}break;
     }
     case 'site:delete':controller.deleteSite(getId(p));break;
     case 'site:pause':{const d=z.object({id:z.string().uuid(),paused:z.boolean()}).parse(p);controller.sitePause(d.id,d.paused);break;}
