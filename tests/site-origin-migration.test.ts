@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store,emptyState} from '../src/main/store';
+import {Controller} from '../src/main/controller';
 import {validateBackup} from '../src/main/backup-validation';
 import {activateSiteOriginRecoveryGrant,applySiteOriginMigration,consumeSiteOriginRecoveryGrant,hasActiveSiteOriginRecoveryGrant,migrationAwareTopicKey,siteContextForTask} from '../src/main/site-origin-migration';
 import {nextTask,recoverInterrupted} from '../src/main/planner';
@@ -84,6 +85,20 @@ test('a claimed migration recovery cannot be resurrected or reset after interrup
     assert.equal(interrupted.status,'failed');assert.equal(interrupted.attempts,4);assert.equal(interrupted.checkpoint,'site_origin_migration_recovery_consumed');assert.equal(interrupted.recoveryEligible,false);assert.equal(interrupted.nextCheckAt,undefined);
     store.update(state=>maintainWaitingTasks(state.tasks,state.sites,[automaticChannel('nostr')],state.settings,new Date('2026-10-19T05:00:00.000Z')));
     const later=store.read().tasks.find(value=>value.id===recoveryId)!;assert.equal(later.status,'failed');assert.equal(later.attempts,4);assert.equal(later.recoveryEligible,false);assert.equal(nextTask(store.read(),new Date('2026-10-19T05:01:00.000Z'),[automaticChannel('nostr')]),undefined);
+  }finally{store.close()}
+});
+
+test('a consumed migration recovery replaces a queued repair promise with its terminal status once',()=>{
+  const store=fixture();try{
+    store.update(state=>{applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true,recoveryTaskId:recoveryId,resumeStatus:'ready'},new Date(at));activateSiteOriginRecoveryGrant(state,siteId,recoveryId,new Date('2026-10-17T04:01:00.000Z'));state.tasks.find(value=>value.id===recoveryId)!.attempts=4});
+    const controller=new Controller(store,{ready:true,available:()=>true} as never,'fixture');
+    controller.patch(recoveryId,{status:'failed',attempts:4,message:'独立审核发现可修订内容，AI 将自动修稿一次并重新审核。'});
+    const saved=store.read().tasks.find(value=>value.id===recoveryId)!;
+    assert.equal(saved.checkpoint,'site_origin_migration_recovery_consumed');
+    assert.match(saved.message,/自动修稿已停止/);
+    assert.doesNotMatch(saved.message,/AI 将自动修稿一次并重新审核/);
+    assert.equal((saved.message.match(/一次性网站迁移恢复已结束/g)??[]).length,1);
+    controller.stop();
   }finally{store.close()}
 });
 

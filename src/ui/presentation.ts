@@ -18,6 +18,13 @@ const telegraphUncertainCheckpoints=new Set(['telegraph_publish_submitting','tel
 const bloggerUncertainCheckpoints=new Set(['blogger_insert_submitting','blogger_publish_submitting','blogger_draft_created']);
 const telegraphReconcileLimit=3;
 const normalize=(value:string)=>value.trim().toLowerCase();
+const consumedMigrationRecoveryMessage='一次性网站迁移恢复已结束；累计记录保留，不会再次自动恢复或重置重试次数。';
+
+export function taskMessageForDisplay(task:Task){
+  if(task.checkpoint!=='site_origin_migration_recovery_consumed')return task.message;
+  const reason=task.message.replace('独立审核发现可修订内容，AI 将自动修稿一次并重新审核。','独立审核发现可修订内容；自动修稿已停止。').replaceAll(consumedMigrationRecoveryMessage,'').trim();
+  return [reason,consumedMigrationRecoveryMessage].filter(Boolean).join(' ');
+}
 
 export function taskHasArticleReview(task:Task){return (!task.submittedAt||hasRecoverablePublisherDraftReceipt(task))&&task.status!=='live'&&(task.checkpoint==='article_review'||!!task.articleReview)}
 
@@ -162,6 +169,7 @@ export function taskPresentation(task:Task,reviewMode:ArticleReviewMode='manual'
   if(review?.status==='passed'&&task.status==='running')return {kind,label:'审核通过，发布中',tone:'blue'};
   if(task.status==='review')return {kind,label:'等待平台结果',tone:'blue'};
   if(task.status==='running')return {kind,label:'执行中',tone:'blue'};
+  if(review?.status==='passed'&&task.status==='queued'&&channelEnabled)return {kind,label:'已审核，等待计划复核',tone:'blue'};
   if(task.status==='queued'&&task.checkpoint==='article_review')return {kind,label:'等待 AI 审核',tone:'blue'};
   if(task.status==='queued')return {kind,label:'等待执行',tone:'muted'};
   return {kind,label:'继续推进',tone:'blue'};
@@ -180,6 +188,7 @@ export function draftStatusLabel(task:Task,reviewMode:ArticleReviewMode='manual'
   if(task.articleApprovedAt)return '已确认';
   if(presentation.kind==='channel_wait')return '等待新证据或渠道';
   if(presentation.kind==='system_retry')return presentation.label;
+  if(task.articleReview?.status==='passed'&&task.status==='queued'&&channelEnabled)return '已审核 · 等待计划复核';
   return reviewMode==='ai'?'待独立 AI 审核':'待人工确认';
 }
 
@@ -194,6 +203,7 @@ export function articleReviewTitle(task:Task,reviewMode:ArticleReviewMode='manua
   const review=task.articleReview,presentation=taskPresentation(task,reviewMode,channelEnabled);
   if(presentation.kind==='channel_wait'||presentation.kind==='system_retry')return presentation.label;
   if(review?.status==='running')return 'AI 正在独立审核稿件';
+  if(review?.status==='passed'&&task.status==='queued'&&channelEnabled)return '已有 AI 审核记录，等待计划复核';
   if(review?.status==='passed')return review.reasonCode==='user_policy_decision'?'AI 内容审核通过 · 已有渠道使用确认':'AI 审核通过，正在继续发布';
   if(review?.status==='failed')return 'AI 审核未通过';
   return reviewMode==='ai'?'稿件等待独立 AI 审核':'稿件等待人工审核';
@@ -208,6 +218,7 @@ export function articleReviewDetail(task:Task,reviewMode:ArticleReviewMode='manu
   if(kind==='system_retry')return task.message||review?.reason||(taskNeedsTelegraphReconciliation(task,channelEnabled)?'已提交的结果正在自动查询，查询期间不会重复发布。':task.status==='queued'||taskCanAutoRecover(task,channelEnabled)?'公开证据或 AI 服务暂时不可用，系统会按已保存的计划再次检查。':'自动重试已停止，当前未安排再次检查；其他可执行渠道仍会继续。');
   if(kind==='channel_wait')return review?.reason||task.message||'当前来源等待新证据或渠道结果，其他可执行任务会继续。';
   if(review?.status==='running')return '系统正在独立核对稿件与任务要求。';
+  if(review?.status==='passed'&&task.status==='queued'&&channelEnabled)return '已有一次审核通过记录。计划执行时会重新检查稿件与渠道等条件是否仍一致；必要时重新审核，满足发布条件后才会提交。';
   if(review?.status==='passed')return review.reasonCode==='user_policy_decision'?review.reason:'审核通过后才进入发布流程，公开结果仍需另行核验。';
   if(review?.status==='failed')return review.reason||'证据不足或审核未通过。';
   return reviewMode==='ai'?'保存的稿件将由独立 AI 审核；通过后才继续发布。':'请核对稿件并确认，确认前不会发布。';

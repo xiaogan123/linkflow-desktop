@@ -6,13 +6,31 @@ import {load} from 'cheerio';
 import {emptyState} from '../src/main/store';
 import {TaskCenter} from '../src/ui/pages/TaskCenter';
 import type {ArticleReviewReasonCode,Channel,Site,Snapshot,Task} from '../src/shared/types';
-import {articleReviewDetail,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskCanManuallyRecoverNostr,taskHasAutomaticFollowup,taskPresentation,taskReservesPlanningSlot,taskResultStatusLabel,taskSortRank,taskWorkKind} from '../src/ui/presentation';
+import {articleReviewDetail,articleReviewTitle,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskCanManuallyRecoverNostr,taskHasAutomaticFollowup,taskMessageForDisplay,taskPresentation,taskReservesPlanningSlot,taskResultStatusLabel,taskSortRank,taskWorkKind} from '../src/ui/presentation';
 
 const stamp='2026-10-03T00:00:00.000Z';
 const site:Site={id:'site-1',domain:'example.com',url:'https://example.com',email:'owner@example.com',publicEmail:'owner@example.com',name:'Example',description:'Example software',category:'software',language:'zh',monthlyTarget:2,articleReviewMode:'ai',status:'ready',createdAt:stamp};
 const channel=(id:string,automation:Channel['automation'],accountRequired=true):Channel=>({id,name:id,domain:`${id}.example`,url:`https://${id}.example`,submitUrl:`https://${id}.example/new`,categories:['general'],languages:['zh'],kind:'profile',emailRequired:true,accountRequired,articleRequired:false,free:'yes',freeNote:'fixture',automation,quality:'A',qualityReason:'fixture',rulesUrl:`https://${id}.example/rules`,checkedAt:'2026-10-03',notes:'',allowedHosts:[`${id}.example`],enabled:true});
 const task=(status:Task['status']='queued'):Task=>({id:'task-1',siteId:site.id,channelId:'telegraph',sourceDomain:'telegra.ph',status,createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'fixture'});
 const failedReview=(reasonCode:ArticleReviewReasonCode)=>({status:'failed' as const,reason:'fixture failure',reasonCode,reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)});
+
+test('passed AI review waits for its future schedule without resembling a fresh review or active publication',()=>{
+  const passed:Task={...task('queued'),checkpoint:'article_review',scheduledAt:'2026-10-04T00:00:00.000Z',draftRevision:1,draft:{title:'Scheduled article',description:'Fixture',body:'Fixture body'},articleReview:{status:'passed',reason:'fixture approval',reasonCode:'passed',reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+  assert.equal(taskPresentation(passed,'ai').label,'已审核，等待计划复核');
+  assert.equal(articleReviewTitle(passed,'ai'),'已有 AI 审核记录，等待计划复核');
+  assert.equal(draftStatusLabel(passed,'ai'),'已审核 · 等待计划复核');
+  const publishing={...passed,status:'running' as const};
+  assert.equal(taskPresentation(publishing,'ai').label,'审核通过，发布中');
+  assert.equal(articleReviewTitle(publishing,'ai'),'AI 审核通过，正在继续发布');
+  const needsReview={...passed,articleReview:undefined};
+  assert.equal(taskPresentation(needsReview,'ai').label,'等待 AI 审核');
+  assert.equal(articleReviewTitle(needsReview,'ai'),'稿件等待独立 AI 审核');
+});
+
+test('a consumed migration recovery does not display its stale automatic-repair promise',()=>{
+  const consumed:Task={...task('failed'),checkpoint:'site_origin_migration_recovery_consumed',message:'独立审核发现可修订内容，AI 将自动修稿一次并重新审核。 一次性网站迁移恢复已结束；累计记录保留，不会再次自动恢复或重置重试次数。'};
+  assert.equal(taskMessageForDisplay(consumed),'独立审核发现可修订内容；自动修稿已停止。 一次性网站迁移恢复已结束；累计记录保留，不会再次自动恢复或重置重试次数。');
+});
 
 test('draft caption reports saved publication result even after the AI channel is disabled',()=>{
   const published:Task={...task('live'),draft:{title:'Published article',description:'Description',body:'Body'},publicUrl:'https://author.mataroa.blog/blog/post/',firstLiveAt:stamp,health:'healthy',linkCheck:'found',articleReview:{status:'passed',reason:'fixture',reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
@@ -182,4 +200,15 @@ test('slot presentation matches submitted and non-submitted handoff behavior',()
   const uncertain={...task('needs_input'),checkpoint:'submission_uncertain'};
   assert.equal(taskReservesPlanningSlot(handoff),false);
   assert.equal(taskReservesPlanningSlot(uncertain),true);
+});
+
+test('historical approval and terminated generation do not imply current authorization or an existing draft',()=>{
+  const oldPassed:Task={...task('queued'),checkpoint:'article_review',draftRevision:2,articleReview:{...failedReview('passed'),status:'passed',draftRevision:1}};
+  assert.equal(taskPresentation(oldPassed,'ai').label,'已审核，等待计划复核');
+  assert.match(articleReviewDetail(oldPassed,'ai'),/必要时重新审核/);
+  assert.doesNotMatch(articleReviewDetail(oldPassed,'ai'),/将在计划时间进入发布/);
+  const noDraft:Task={...task('failed'),checkpoint:'site_origin_migration_recovery_consumed',message:'来源抓取失败；没有生成新稿。'};
+  assert.match(taskMessageForDisplay(noDraft),/来源抓取失败；没有生成新稿/);
+  assert.doesNotMatch(taskMessageForDisplay(noDraft),/原稿和审核原因/);
+  assert.equal(taskMessageForDisplay({...noDraft,message:taskMessageForDisplay(noDraft)}),taskMessageForDisplay(noDraft));
 });

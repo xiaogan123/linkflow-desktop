@@ -23,7 +23,7 @@ import {UpdateReminder,updateReminder,useUpdateStatus} from './update-reminder';
 import {DraftCopyActions} from './pages/DraftCopyActions';
 import {monthlyPageProgress,monthlyReset,planningStatus} from './planning-status';
 import {needsDedicatedConnection} from './account-guidance';
-import {articleReviewDetail,articleReviewTitle,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,isUserActionTask,oneReviewRetryLabel,taskAutomaticFollowupAt,taskCanManuallyRecoverNostr,taskHasArticleReview,taskHasSubmissionEvidence,taskNeedsTelegraphReconciliation,taskPresentation,taskSortRank} from './presentation';
+import {articleReviewDetail,articleReviewTitle,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,isUserActionTask,oneReviewRetryLabel,taskAutomaticFollowupAt,taskCanManuallyRecoverNostr,taskHasArticleReview,taskHasSubmissionEvidence,taskMessageForDisplay,taskNeedsTelegraphReconciliation,taskPresentation,taskSortRank} from './presentation';
 import {HTML_APP_PUBLIC_NOTICE_ACKNOWLEDGEMENT,HTML_APP_TERMS_URL,htmlAppPublicNoticeAccepted} from '../shared/html-app-notice';
 
 type Page = 'overview'|'tasks'|'channels'|'accounts'|'settings'|'updates'|'site';
@@ -180,6 +180,7 @@ export default function App(){
 function NavButton({icon:Icon,active,onClick,children}:{icon:IconType;active:boolean;onClick:()=>void;children:ReactNode}){return <button className={`nav-item ${active?'active':''}`} onClick={onClick} aria-label={typeof children==='string'?children:undefined} aria-current={active?'page':undefined}><Icon size={23} weight={active?'fill':'regular'}/><span>{children}</span></button>}
 function Stat({label,value,icon:Icon}:{label:string;value:string;icon:IconType}){return <div className="stat panel"><div><Icon size={20}/><span>{label}</span></div><strong>{value}</strong></div>}
 function TaskCard({task,channel,selected,onSelect,onAction,onDraft,onUrl,demo,reviewMode='manual',siteReady=true,htmlAppNoticeAccepted=false}:{task:Task;channel?:Channel;selected:boolean;onSelect:()=>void;onAction:(command:string,payload:unknown,success?:string)=>Promise<void>;onDraft:()=>void;onUrl:()=>void;demo:boolean;reviewMode?:'manual'|'ai';siteReady?:boolean;htmlAppNoticeAccepted?:boolean}){
+  task={...task,message:taskMessageForDisplay(task)};
   const isArticleReview=taskHasArticleReview(task),articleReview=isArticleReview?task.articleReview:undefined,presentation=taskPresentation(task,reviewMode,channel?.enabled===true);
   const humanAuthoredOnly=isHumanAuthoredOnlyChannel(task.channelId);
   const allowManualApproval=isArticleReview&&task.checkpoint==='article_review'&&task.draft&&reviewMode==='manual'&&isUserActionTask(task,reviewMode,channel?.enabled===true);
