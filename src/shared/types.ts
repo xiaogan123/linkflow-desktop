@@ -32,6 +32,8 @@ import type {NotebinPublisherDependencies} from '../integrations/notebin-publish
 import type {NotebinIdentityJournal,NotebinPublicationJournal} from '../main/notebin-publication';
 import type {HtmlAppPublicNoticeAcceptance} from './html-app-notice';
 import type {OpenAgentChatDependencies,OpenAgentChatMutationIdentity} from '../integrations/openagentchat';
+import type {ShellbookDependencies,ShellbookMutationIdentity} from '../integrations/shellbook';
+import type {AgentRiotDependencies,AgentRiotMutationIdentity,AgentRiotPersistence,AgentRiotSignalType} from '../integrations/agentriot';
 import type {AgentNotepadDependencies,AgentNotepadPublicationPersistence} from '../integrations/agentnotepad';
 import type {ColonyDependencies,ColonyMutationIdentity} from '../integrations/colony';
 import type {AgentHowDependencies,AgentHowMutationIdentity,AgentHowPublicationPersistence,AgentHowSource} from '../integrations/agenthow';
@@ -39,6 +41,13 @@ import type {BerrryDependencies,BerrryMutationIdentity,BerrryPublicationPersiste
 import type {LargeLanguageDependencies,LargeLanguageMutationIdentity} from '../integrations/large-language';
 import type {SwarmMemoDependencies,SwarmMemoMutationIdentity,SwarmMemoPublicationPersistence} from '../integrations/swarmmemo';
 import type {TantiveDependencies,TantivePersistence} from '../integrations/tantive';
+import type {CarcinusDependencies,CarcinusPersistence} from '../integrations/carcinus';
+import type {SynthfolkProfileDraft,SynthfolkRegistrationPersistence} from '../integrations/synthfolk';
+import type {AgentsWikiArticleReceipt,AgentsWikiDependencies,AgentsWikiDraft,AgentsWikiPublicationPersistence,AgentsWikiRegistrationPersistence} from '../integrations/agentswiki';
+import type {AgentboardDiscussionPersistence,AgentboardFirstPersistence,AgentboardAgentDraft} from '../integrations/agentboard';
+import type {OpenAgentChatDependencies as AgentboardDependencies} from '../integrations/openagentchat';
+import type {AgentsGatherDependencies} from '../integrations/agentsgather';
+import type {AgentsGatherManagedPersistence} from '../main/agentsgather-publication';
 
 export type SiteStatus = 'analyzing'|'ready'|'paused'|'attention';
 export type TaskStatus = 'queued'|'running'|'needs_input'|'review'|'live'|'failed'|'skipped'|'expired';
@@ -66,6 +75,11 @@ export type OneReviewRetry=OneReviewRetryBase&(
   |{status:'invalidated';invalidatedAt:string;invalidationReason:'cancelled'|'restart'|'backup_import'|'request_not_started'|'binding_changed'}
 );
 export interface Task {oneReviewRetry?:OneReviewRetry}
+export interface TheThingsTaskReceipt extends importTheThingsIntent {stage:'submitting'|'opaque_response'|'api_receipt'|'published';slug?:string}
+type importTheThingsIntent=import('../integrations/thethings').TheThingsIntent;
+export interface Task {theThings?:TheThingsTaskReceipt}
+export interface ExecutionResult {theThings?:TheThingsTaskReceipt}
+export interface ExecutionContext {theThingsPersistence?:import('../integrations/thethings').TheThingsPersistence;theThingsDependencies?:OpenAgentChatDependencies}
 export interface ArticleAttemptEvidence {topicUrl?:string;recordedAt:string;reason:string;draft?:{title:string;description:string;body:string};draftRevision?:number;articleRepairAttempts?:number;articleReview?:ArticleReview}
 export interface ParagraphReceipt {publicationId:string;slug:string;contentHash:string;stage:'inserting'|'draft'|'publishing'|'published';postId?:string}
 export interface NostrReceipt {pubkey:string;eventId:string;identifier:string;contentHash:string;createdAt:number;stage:'submitting'|'published'}
@@ -85,6 +99,17 @@ export interface ExecutionResult {tantive?:TantiveTaskReceipt}
 export interface DocsMdTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'api_receipt'|'published';id?:string}
 export interface HtmlAppTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'api_receipt'|'published';siteId?:string}
 export interface DeedPageTaskReceipt {operationId:string;ownerAccountId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';version?:string}
+export interface CarcinusApprovalBinding {method:'ai';reviewedAt:string;contentHash:string;contextHash:string}
+export interface CarcinusReviewedInput {version:2;identity:string;purpose:string;htmlTemplate:string;targetUrl:string;siteId:string;siteIdentitySha256:string;draftRevision:number;titleSha256:string;draftSha256:string;mainSha256:string;payloadSha256:string;approval?:CarcinusApprovalBinding}
+export interface CarcinusPublicAcceptance {checkedAt:string;httpStatus:200;publicHtmlSha256:string;reviewedMainSha256:string;reviewedMainMatches:true;title:string|null;titlePresent:boolean;canonical:string|null;canonicalPresent:boolean;targetUrl:string;nativeAnchorCount:1;rel:string[];robotsStatus:200;robotsAllowed:true;metaNoindex:false;xRobotsNoindex:false;restoreStatus:200|404;identityBinding:'restore_and_reviewed_main'|'reviewed_main';retention:typeof import('../integrations/carcinus').CARCINUS_RETENTION}
+export interface CarcinusTaskReceipt {operationId:string;identity:string;sourceHash:string;requestHash:string;createdAt:string;preflightCheckedAt:string;preflightStatus:404;stage:'preflight'|'submitting'|'create_unknown'|'opaque_response'|'api_receipt'|'published'|'live_unmanaged';publicUrl?:string;restoreUrl?:string;tokenFingerprint?:string;acceptance?:CarcinusPublicAcceptance}
+export interface CarcinusExistingPageReceipt {version:1;kind:'existing_page';identity:string;operationId:string;sourceHash:string;requestHash:string;createdAt:string;preflightCheckedAt:string;preflightStatus:404;publicUrl:string;restoreUrl:string;tokenFingerprint:string;targetUrlSha256:string;mainSha256:string;payloadSha256:string;provenanceSha256:string;secretSha256:string;stage:'verified';acceptance:CarcinusPublicAcceptance}
+export interface CarcinusManagedAccountProof {version:2;identity:string;siteId:string;siteIdentitySha256:string;purposeSha256:string;targetUrlSha256:string;payloadSha256:string;publicUrl:string;restoreUrl:string;stage:'managed';tokenFingerprint:string;checkedAt:string}
+export interface CarcinusExistingAccountProof {version:3;identity:string;siteId:string;siteIdentitySha256:string;targetUrlSha256:string;payloadSha256:string;provenanceSha256:string;secretSha256:string;publicUrl:string;restoreUrl:string;stage:'existing_managed';tokenFingerprint:string;checkedAt:string}
+export interface Task {carcinus?:CarcinusTaskReceipt;carcinusInput?:CarcinusReviewedInput;carcinusExisting?:CarcinusExistingPageReceipt}
+export interface Account {carcinus?:CarcinusManagedAccountProof|CarcinusExistingAccountProof}
+export interface ExecutionContext {carcinusPersistence?:CarcinusPersistence;carcinusDependencies?:CarcinusDependencies}
+export interface ExecutionResult {carcinus?:CarcinusTaskReceipt}
 export interface BrewPageTaskReceipt {operationId:string;ownerAccountId:string;filename:string;sourceHash:string;requestHash:string;createdAt:string;stage:'owner_token_pending'|'owner_token_opaque'|'ready'|'submitting'|'opaque_response'|'api_receipt'|'published';ownerId?:string;id?:string;publicUrl?:string;expiresAt?:string;sizeBytes?:number;hostingVersion?:number;recoveryGets?:number}
 export interface Task {brewPage?:BrewPageTaskReceipt}
 export interface ExecutionContext {brewPagePersistence?:BrewPagePersistence}
@@ -122,6 +147,30 @@ export interface Task {openAgentChat?:OpenAgentChatTaskReceipt}
 export interface Account {openAgentChat?:{version:1;stage:'intent'|'opaque_response'|'ready';operationId:string;requestHash:string;agentId?:number;agentName:string;displayName:string;bio:string;tokenFingerprint?:string;checkedAt?:string}}
 export interface ExecutionContext {openAgentChatDependencies?:OpenAgentChatDependencies;authorizeOpenAgentChatMutation?:(identity:OpenAgentChatMutationIdentity)=>true}
 export interface ExecutionResult {openAgentChat?:OpenAgentChatTaskReceipt}
+export interface ShellbookTaskReceipt {operationId:string;accountId:string;agentId:string;agentName:string;subshell:string;targetUrl:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';postId?:string;remoteCreatedAt?:string;publicUrl?:string;targetRel?:string}
+export interface Task {shellbook?:ShellbookTaskReceipt}
+export interface Account {shellbook?:{version:1;stage:'intent'|'opaque_response'|'ready';operationId:string;requestHash:string;agentId?:string;agentName:string;description:string;tokenFingerprint?:string;checkedAt?:string}}
+export interface ExecutionContext {shellbookDependencies?:ShellbookDependencies;authorizeShellbookMutation?:(identity:ShellbookMutationIdentity)=>true}
+export interface ExecutionResult {shellbook?:ShellbookTaskReceipt}
+export interface AgentRiotTaskReceipt {operationId:string;accountId:string;agentId:string;agentSlug:string;agentName:string;targetUrl:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';updateId?:string;updateSlug?:string;remoteCreatedAt?:string;publicUrl?:string;targetRel?:string}
+export type AgentRiotApprovalBinding={method:'manual';approvedAt:string}|{method:'ai';reviewedAt:string;contentHash:string;contextHash:string}
+export interface AgentRiotAcceptanceInput {version:1;signalType:AgentRiotSignalType;skillsTools?:string[];payloadSha256:string;reviewReportSha256:string;reviewVerdict:'PASS'}
+export interface AgentRiotReviewedInput {version:2;signalType:AgentRiotSignalType;skillsTools?:string[];payloadSha256:string;targetUrl:string;titleSha256:string;summarySha256:string;whatChangedSha256:string;draftRevision:number;approval:AgentRiotApprovalBinding}
+export type AgentRiotInput=AgentRiotAcceptanceInput|AgentRiotReviewedInput
+export interface Task {agentriot?:AgentRiotTaskReceipt;agentriotInput?:AgentRiotInput}
+export interface Account {agentriot?:{version:1;stage:'intent'|'opaque_response'|'ready';operationId:string;requestHash:string;agentId?:string;agentSlug?:string;agentName:string;tagline:string;description:string;installationIdHash:string;tokenFingerprint?:string;checkedAt?:string}}
+export interface ExecutionContext {agentriotDependencies?:AgentRiotDependencies;agentriotPersistence?:AgentRiotPersistence;authorizeAgentRiotMutation?:(identity:AgentRiotMutationIdentity)=>true}
+export interface ExecutionResult {agentriot?:AgentRiotTaskReceipt}
+export interface SynthfolkReviewedInput {
+  version:1;accountId:string;profile:SynthfolkProfileDraft;targetUrl:string;sourceHash:string;draftRevision:number;
+  disclosure:{humanOperated:true;relationship:'human_operator';operator:string};
+  approval?:{method:'ai';reviewedAt:string;contentHash:string;contextHash:string};
+}
+export interface SynthfolkTaskReceipt {operationId:string;accountId:string;handle:string;sourceHash:string;requestHash:string;targetUrl:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published'|'unmanaged';publicUrl?:string;claimed?:boolean;acceptanceCheckedAt?:string;linkRel?:string}
+export interface Task {synthfolk?:SynthfolkTaskReceipt;synthfolkInput?:SynthfolkReviewedInput}
+export interface Account {synthfolk?:{version:1;stage:'intent'|'opaque_response'|'ready'|'unmanaged';operationId:string;requestHash:string;sourceHash:string;handle:string;name:string;headline:string;about:string;operator:string;website:string;availability:'closed';skills:string[];keyFingerprint?:string;claimed?:boolean;checkedAt?:string}}
+export interface ExecutionContext {synthfolkDependencies?:OpenAgentChatDependencies;synthfolkPersistence?:SynthfolkRegistrationPersistence}
+export interface ExecutionResult {synthfolk?:SynthfolkTaskReceipt}
 export interface AgentNotepadTaskReceipt {operationId:string;accountId:string;agentId:string;idempotencyKey:string;sourceHash:string;citationsHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';resourceId?:string;revisionId?:string;canonicalUrl?:string;revisionUrl?:string}
 export interface Task {agentNotepad?:AgentNotepadTaskReceipt}
 export interface Account {agentNotepad?:{version:1;stage:'intent'|'opaque_response'|'ready';operationId:string;requestHash:string;agentId?:string;agentName?:string;agentSlug?:string;keyFingerprint?:string;checkedAt?:string}}
@@ -141,6 +190,14 @@ export interface Task {agentHow?:AgentHowTaskReceipt;agentHowInput?:AgentHowInpu
 export interface Account {agentHow?:{version:1;stage:'intent'|'opaque_response'|'ready';operationId:string;requestHash:string;actorId?:string;label:string;keyFingerprint?:string;checkedAt?:string}}
 export interface ExecutionContext {agentHowDependencies?:AgentHowDependencies;agentHowPersistence?:AgentHowPublicationPersistence;authorizeAgentHowMutation?:(identity:AgentHowMutationIdentity)=>true}
 export interface ExecutionResult {agentHow?:AgentHowTaskReceipt}
+
+export interface AgentsWikiIdentityBinding {localAccountId:string;remoteAccountId:string;remoteCreatedAt:string;name:string;publicDisclosure:string;role:'agent'|'editor';ruleVersion:'2026-10-13';publicationRights:true;license:'CC-BY-4.0';keyFingerprint:string}
+export interface AgentsWikiReviewedInput {version:2;draft:AgentsWikiDraft;targetUrl:string;sourceHash:string;identity:AgentsWikiIdentityBinding;draftRevision:number;approval:{method:'ai';reviewedAt:string;contentHash:string;contextHash:string}}
+export interface AgentsWikiTaskReceipt {operationId:string;accountId:string;remoteAccountId:string;idempotencyKey:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';articleId?:string;etag?:string;revision?:number;publicUrl?:string;acceptanceCheckedAt?:string;linkRel?:string}
+export interface Task {agentsWiki?:AgentsWikiTaskReceipt;agentsWikiInput?:AgentsWikiReviewedInput}
+export interface Account {agentsWiki?:{version:1;stage:'intent'|'opaque_response'|'ready';operationId:string;requestHash:string;ruleVersion:'2026-10-13';publicationRights:true;remoteAccountId?:string;remoteCreatedAt?:string;name:string;publicDisclosure:string;role?:'agent'|'editor';keyPrefix?:string|null;keyFingerprint?:string;checkedAt?:string}}
+export interface ExecutionContext {agentsWikiDependencies?:AgentsWikiDependencies;agentsWikiRegistrationPersistence?:AgentsWikiRegistrationPersistence;agentsWikiPublicationPersistence?:AgentsWikiPublicationPersistence}
+export interface ExecutionResult {agentsWiki?:AgentsWikiTaskReceipt}
 export interface BerrryTaskReceipt {operationId:string;accountId:string;username:string;subdomain:string;title:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';version?:number;remoteCreatedAt?:string;publicUrl?:string}
 export interface BerrryInput {version:2;htmlSha256:string;targetUrl:string}
 export interface Task {berrry?:BerrryTaskReceipt;berrryInput?:BerrryInput}
@@ -159,6 +216,20 @@ export interface Task {swarmMemo?:SwarmMemoTaskReceipt;swarmMemoInput?:SwarmMemo
 export interface Account {swarmMemo?:{version:1;stage:'ready';fingerprint:string;publicKey:string;checkedAt:string}}
 export interface ExecutionContext {swarmMemoDependencies?:SwarmMemoDependencies;swarmMemoPersistence?:SwarmMemoPublicationPersistence;authorizeSwarmMemoMutation?:(identity:SwarmMemoMutationIdentity)=>true|Promise<true>}
 export interface ExecutionResult {swarmMemo?:SwarmMemoTaskReceipt}
+export type AgentboardApprovalBinding={method:'manual';approvedAt:string}|{method:'ai';reviewedAt:string;contentHash:string;contextHash:string}
+export interface AgentboardSubmissionSubject {version:1;mode:'introduction'|'discussion';board:string;boardId:string;agent:AgentboardAgentDraft}
+export interface AgentboardReviewedInput extends AgentboardSubmissionSubject {targetUrl:string;titleSha256:string;bodySha256:string;draftRevision:number;approval:AgentboardApprovalBinding}
+export interface AgentboardTaskReceipt {operationId:string;mode:'introduction'|'discussion';accountId:string;requestKey:string;targetUrl:string;board:string;boardId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';agentId?:string;handle?:string;threadId?:string;remoteCreatedAt?:string;publicUrl?:string}
+export interface Task {agentboardSubject?:AgentboardSubmissionSubject;agentboardInput?:AgentboardReviewedInput;agentboard?:AgentboardTaskReceipt}
+export interface Account {agentboard?:{version:1;stage:'intent'|'receipt'|'ready';operationId:string;requestHash:string;name:string;description:string;homepage:string;operatorName:string;introductionTaskId:string;agentId?:string;handle?:string;agentUrl?:string;credentialFingerprint?:string;introductionThreadId?:string;checkedAt?:string}}
+export interface ExecutionContext {agentboardDependencies?:AgentboardDependencies;agentboardFirstPersistence?:AgentboardFirstPersistence;agentboardDiscussionPersistence?:AgentboardDiscussionPersistence}
+export interface ExecutionResult {agentboard?:AgentboardTaskReceipt}
+export type AgentsGatherApprovalBinding={method:'ai';reviewedAt:string;contentHash:string;contextHash:string};
+export interface AgentsGatherReviewedInput {version:1;targetUrl:string;titleSha256:string;bodySha256:string;sourceHash:string;draftRevision:number;approval:AgentsGatherApprovalBinding}
+export interface AgentsGatherTaskReceipt {requestId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';postId?:number;publicUrl?:string;remoteCreatedAt?:string;remoteUpdatedAt?:string;acceptedAt?:string;linkRel?:string}
+export interface Task {agentsGatherInput?:AgentsGatherReviewedInput;agentsGather?:AgentsGatherTaskReceipt}
+export interface ExecutionContext {agentsGatherDependencies?:AgentsGatherDependencies;agentsGatherPersistence?:AgentsGatherManagedPersistence}
+export interface ExecutionResult {agentsGather?:AgentsGatherTaskReceipt}
 export interface ShareYourHtmlTaskReceipt {operationId:string;slug:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'api_receipt';requestedExpiry:'never';publicVerification:'pending';reviewedDraftRevision:number;reviewedDraftHash:string;siteId:string;siteIdentityHash:string}
 export interface ShareYourHtmlReadbackEvidence {checkedAt:string;status:'visible_match'|'unreachable'|'invalid_response'|'content_mismatch'|'content_hidden'|'visibility_unknown';content:'visible'|'mismatch'|'hidden'|'unknown';targetLinks:Array<{href:string;rel:string[]}>;indexing:{page:'not_restricted'|'restricted'|'unknown';directives:string[];robots:'allowed'|'disallowed'|'unknown'}}
 export interface WordPressReceipt {blogId:string;authorId:string;slug:string;contentHash:string;stage:'submitting'|'published';postId?:string;url?:string}
@@ -203,7 +274,7 @@ export interface ExecutionContext {hereNowPersistence?:HereNowPersistence}
 export interface ExecutionContext {shiplyPersistence?:ShiplyPersistence}
 export interface ExecutionContext {site:Site;channel:Channel;task:Task;settings:Settings;mailbox?:Mailbox;secrets:SecretStore;ai:AiPort;signal:AbortSignal;supanotePersistence?:SupanotePersistence;docsMdPersistence?:DocsMdPersistence;htmlAppPersistence?:HtmlAppPersistence;deedPagePersistence?:DeedPagePersistence;markdropPersistence?:MarkdropPersistence;katbinPersistence?:KatbinPersistence;pastemystPersistence?:PasteMystPersistence;markdownPastePersistence?:MarkdownPastePersistence;draftmarkPersistence?:DraftmarkPersistence;getAccount:()=>Account|undefined;saveAccount:(account:Account,password?:string)=>Promise<void>;checkpoint:(partial:Partial<Task>)=>void;log:(message:string)=>void}
 export interface ExecutionContext {slugPostPersistence?:SlugPostPersistence}
-export interface ExecutionResult {status:TaskStatus;message:string;publicUrl?:string;linkRel?:string;checkpoint?:string;submittedAt?:string;raindrop?:RaindropReceipt;leaflet?:LeafletReceipt;wordpress?:WordPressReceipt;verbose?:VerboseReceipt;prose?:ProseReceipt;rentry?:RentryReceipt;lucid?:LucidReceipt;betterthanhtml?:BetterThanHtmlReceipt;supanote?:SupanoteTaskReceipt;docsMd?:DocsMdTaskReceipt;htmlApp?:HtmlAppTaskReceipt;deedPage?:DeedPageTaskReceipt;markdrop?:MarkdropTaskReceipt;katbin?:KatbinTaskReceipt;pastemyst?:PasteMystTaskReceipt;markdownPaste?:MarkdownPasteTaskReceipt;draftmark?:DraftmarkTaskReceipt}
+export interface ExecutionResult {status:TaskStatus;message:string;publicUrl?:string;linkRel?:string;checkpoint?:string;submittedAt?:string;scheduledAt?:string;nextCheckAt?:string;raindrop?:RaindropReceipt;leaflet?:LeafletReceipt;wordpress?:WordPressReceipt;verbose?:VerboseReceipt;prose?:ProseReceipt;rentry?:RentryReceipt;lucid?:LucidReceipt;betterthanhtml?:BetterThanHtmlReceipt;supanote?:SupanoteTaskReceipt;docsMd?:DocsMdTaskReceipt;htmlApp?:HtmlAppTaskReceipt;deedPage?:DeedPageTaskReceipt;markdrop?:MarkdropTaskReceipt;katbin?:KatbinTaskReceipt;pastemyst?:PasteMystTaskReceipt;markdownPaste?:MarkdownPasteTaskReceipt;draftmark?:DraftmarkTaskReceipt}
 export interface ExecutionResult {hereNow?:HereNowTaskReceipt}
 export interface ExecutionResult {shiply?:ShiplyTaskReceipt}
 export interface Task {plopino?:PlopinoTaskReceipt}
@@ -219,8 +290,8 @@ export interface Task {notebin?:NotebinTaskReceipt;notebinJournal?:NotebinPublic
 export interface ExecutionContext {notebinPersistence?:NotebinPublicationPersistence;notebinDependencies?:NotebinPublisherDependencies;notebinAccess?:{load():Promise<{rootAccountId:string;noteApiKey:string;binding:NotebinIdentityBinding}>}}
 export interface ExecutionResult {notebin?:NotebinTaskReceipt}
 export interface LinkResult {outcome?:'found'|'absent'|'unreachable'|'invalid';found:boolean;url:string;rel:string;reason:string}
-export const PLOPINO_IPC_COMMANDS=['account:connect-openagentchat','account:connect-agentnotepad','account:connect-colony','account:connect-large-language','account:connect-plopino'] as const;
-export const IPC_COMMANDS=['snapshot','site:add','site:update','site:delete','site:analyze','site:pause','site:migrate-origin','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:save-key','task:retry','task:review-once','task:skip','task:verify','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-product-index','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit'] as const;
+export const PLOPINO_IPC_COMMANDS=['account:connect-agentswiki','account:connect-openagentchat','account:connect-agentnotepad','account:connect-colony','account:connect-large-language','account:connect-plopino','account:connect-synthfolk'] as const;
+export const IPC_COMMANDS=['snapshot','site:add','site:update','site:delete','site:analyze','site:pause','site:migrate-origin','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:save-key','task:retry','task:review-once','task:skip','task:verify','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-product-index','account:connect-carcinus-existing','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit'] as const;
 export const HERE_NOW_IPC_COMMANDS=['account:connect-here-now','account:cancel-here-now'] as const;
 export const SHIPLY_IPC_COMMANDS=['account:request-shiply-code','account:resend-shiply-code','account:verify-shiply-code','account:recover-shiply-verify'] as const;
 

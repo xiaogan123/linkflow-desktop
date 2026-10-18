@@ -4,13 +4,14 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {CHANNELS} from '../src/integrations/catalog';
-import {createShiplySite,finalizeShiplySite,parseShiplyCreateResponse,shiplyRequest,shiplySha256,uploadShiplySite,SHIPLY_CREATE_URL,SHIPLY_ORIGIN,type ShiplyIntent,type ShiplyOpaqueResponse,type ShiplyPersistence} from '../src/integrations/shiply';
+import {createShiplySite,finalizeShiplySite,parseShiplyCreateResponse,shiplyRequest,shiplySha256,uploadShiplySite,SHIPLY_CREATE_URL,SHIPLY_ORIGIN,type ShiplyCreateReceipt,type ShiplyIntent,type ShiplyOpaqueResponse,type ShiplyPersistence} from '../src/integrations/shiply';
 import {parseShiplyVerifyOpaque,parseShiplyVerifySecret,requestShiplyCode,verifyShiplyCode} from '../src/main/shiply-management';
 import {shiplyPublisherTesting,runShiplyTask} from '../src/integrations/shiply-publisher';
 import {Store,emptyState} from '../src/main/store';
 import {Controller} from '../src/main/controller';
 import {shiplyTaskIdentity} from '../src/main/shiply-publication';
 import {validateBackup} from '../src/main/backup-validation';
+import {decryptBackup,encryptBackup} from '../src/main/backup';
 import type {Vault} from '../src/main/vault';
 import type {Account,ExecutionContext,Site,Task} from '../src/shared/types';
 
@@ -18,8 +19,20 @@ const at='2026-10-14T00:00:00.000Z',accountId='11111111-2222-4333-8444-555555555
 function response(url:string,body:string,status=200,contentType='application/json'){const value=new Response(body,{status,headers:{'content-type':contentType}});Object.defineProperty(value,'url',{value:url});Object.defineProperty(value,'redirected',{value:false});return value}
 function body(overrides:Record<string,unknown>={}){return {slug,siteUrl:page,expiresAt:null,toUpdate:'POST the exact existing site update endpoint',upload:{versionId:'version-1',uploads:[{path:'index.html',method:'PUT',url:uploadUrl,headers:{'content-type':'text/html'}}],skipped:[],finalizeUrl:`${SHIPLY_ORIGIN}/api/v1/publish/${slug}/finalize`,expiresInSeconds:900},...overrides}}
 function intent():ShiplyIntent{const request=shiplyRequest(html,'Guide','Original guide');return {operationId:'shiply_11111111111141118111111111111111',accountId,emailHash,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:at}}
+function ownerReceipt():ShiplyCreateReceipt{return {...intent(),slug,siteUrl:page,versionId:'version-1',finalizeUrl:`${SHIPLY_ORIGIN}/api/v1/publish/${slug}/finalize`,expiresAt:'2026-10-14T01:00:00.000Z',upload:{path:'index.html',method:'PUT',url:uploadUrl,headers:{'content-type':'text/html'}}}}
+function ownerDetail(overrides:Record<string,unknown>={}){return {id:'site-fixture',slug,title:'Guide',status:'live',accessMode:'private',addedToProfile:false,clientId:'client-fixture',currentVersionId:'version-1',handoffPending:false,handoffToEmail:null,showInGallery:false,spaMode:false,thumbnailR2Key:null,versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:Buffer.byteLength(html),finalizedAt:'2026-10-14T00:01:00.000Z'}],...overrides}}
 function opaque(value:unknown,overrides:Partial<ShiplyOpaqueResponse>={}):ShiplyOpaqueResponse{const bytes=Buffer.from(JSON.stringify(value));return {...intent(),kind:'shiply_create_response',version:1,status:200,contentType:'application/json',responseUrl:SHIPLY_CREATE_URL,redirected:false,bodyBase64:bytes.toString('base64'),bodySha256:shiplySha256(bytes),...overrides}}
 function memory(){let savedIntent:ShiplyIntent|undefined,savedOpaque:ShiplyOpaqueResponse|undefined;const stages:string[]=[];const persistence:ShiplyPersistence={async persistIntent(next){if(savedIntent)throw Error('replay');savedIntent=next},assertWriteAuthorized(){assert.ok(savedIntent);return true},async persistOpaque(value){savedOpaque=value},async loadOpaque(){return savedOpaque},async markStage(_value,stage){stages.push(stage)},async markCreateUnknown(){stages.push('create_unknown')}};return {persistence,stages,opaque:()=>savedOpaque}}
+function lifecycleFixture(){
+  const siteId='22222222-2222-4222-8222-222222222222',taskId='11111111-1111-4111-8111-111111111111';
+  const site:Site={id:siteId,domain:'example.com',url:'https://example.com/',email,category:'software',language:'en',name:'Example',description:'Software',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.com/product',developer:'https://example.com/releases'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.com/releases',discoveredAt:at}]};
+  const task:Task={id:taskId,siteId,channelId:'shiply',sourceDomain:'shiply.now',accountId,status:'queued',createdAt:at,scheduledAt:'2026-10-13T12:00:00.000Z',updatedAt:at,attempts:0,message:'fixture',topicUrl:'https://example.com/releases',draft:{title:'Safe publication recovery',description:'A practical guide',body:'# Safe publication recovery\n\nCheck the [release record](https://example.com/releases) before retrying.'},draftRevision:1,articleApprovedAt:at,health:'pending'};
+  const account:Account={id:accountId,channelId:'shiply',email,username:email,credentialKind:'api_token',status:'registered',hasPassword:true,source:'generated',createdAt:at,verifiedAt:at,registeredAt:at,shiply:{version:1,emailHash,requestedAt:at,stage:'ready',keyFingerprint:shiplySha256(key)}};
+  const state=emptyState(),catalog=CHANNELS.map(value=>({...value,enabled:value.id==='shiply'}));state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='manual';state.settings.timezone='UTC';state.settings.channelOverrides=Object.fromEntries(catalog.map(value=>[value.id,value.id==='shiply']));state.sites=[site];state.accounts=[account];state.accountBindings=[{id:'44444444-4444-4444-8444-444444444444',siteId,channelId:'shiply',accountId,createdAt:at,updatedAt:at}];state.tasks=[task];
+  const verifyBytes=Buffer.from(JSON.stringify({apiKey:key,email})),verifySecret=JSON.stringify({version:1,status:200,responseUrl:`${SHIPLY_ORIGIN}/api/auth/agent/verify-code`,redirected:false,contentType:'application/json',bodyBase64:verifyBytes.toString('base64'),bodyHash:shiplySha256(verifyBytes),emailHash});
+  return {siteId,taskId,site,task,account,state,catalog,verifySecret};
+}
+function testVault(plaintext:Map<string,string>):Vault{return {ready:true,available:()=>true,get:async(name:string)=>plaintext.get(name),encryptSecrets:(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>{plaintext.set(name,value);return [name,'cipher:'+Buffer.from(value).toString('base64url')]}))} as unknown as Vault}
 
 test('first create uses one exact file and viewer; no chosen slug or anonymous fields',()=>{const prepared=shiplyRequest(html,'Guide','Original guide'),value=JSON.parse(prepared.body);assert.deepEqual(value,{files:[{path:'index.html',size:Buffer.byteLength(html),contentType:'text/html',hash:shiplySha256(html)}],viewer:{title:'Guide',description:'Original guide'}});assert.ok(!('slug' in value)&&!('ttlSeconds' in value)&&!('claimToken' in value))});
 
@@ -34,6 +47,41 @@ test('unknown create cannot create twice with same durable intent',async()=>{con
 test('robots checks Googlebot group even when wildcard allows',()=>{const robots='User-agent: *\nAllow: /\n\nUser-agent: Googlebot\nDisallow: /';assert.equal(shiplyPublisherTesting.robotsAllows(robots,'/','*'),true);assert.equal(shiplyPublisherTesting.robotsAllows(robots,'/','googlebot'),false)});
 
 test('public HTML permits safe metadata but rejects head styling that hides the exact article',()=>{const safe=html.replace('</head>','<meta property="og:title" content="Guide"></head>'),inline=html.replace('</head>','<style>article{display:none}</style></head>'),linked=html.replace('</head>','<link rel="stylesheet" href="data:text/css,article%7Bdisplay%3Anone%7D"></head>');assert.equal(shiplyPublisherTesting.exactPublicHtmlWithShiplyHead(safe,html),true);assert.equal(shiplyPublisherTesting.exactPublicHtmlWithShiplyHead(inline,html),false);assert.equal(shiplyPublisherTesting.exactPublicHtmlWithShiplyHead(linked,html),false)});
+
+test('owner summary binds the exact finalized version and source byte count without inventing manifest or expiry fields',()=>{
+  const receipt=ownerReceipt(),sourceBytes=Buffer.byteLength(html);
+  assert.equal(shiplyPublisherTesting.finalizedOwnerSummary(ownerDetail(),receipt,sourceBytes),true);
+  assert.equal(Object.hasOwn(ownerDetail(),'manifest'),false);
+  assert.equal(Object.hasOwn(ownerDetail(),'expiresAt'),false);
+  for(const invalid of [
+    ownerDetail({slug:'other-page'}),
+    ownerDetail({status:'active'}),
+    ownerDetail({currentVersionId:'version-2'}),
+    ownerDetail({versions:[{id:'version-2',status:'finalized',fileCount:1,totalBytes:sourceBytes,finalizedAt:'2026-10-14T00:01:00.000Z'}]}),
+    ownerDetail({versions:[{id:'version-1',status:'pending',fileCount:1,totalBytes:sourceBytes,finalizedAt:'2026-10-14T00:01:00.000Z'}]}),
+    ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:2,totalBytes:sourceBytes,finalizedAt:'2026-10-14T00:01:00.000Z'}]}),
+    ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:sourceBytes+1,finalizedAt:'2026-10-14T00:01:00.000Z'}]}),
+    ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:sourceBytes,finalizedAt:'invalid'}]}),
+    ownerDetail({versions:[...(ownerDetail().versions as object[]),{id:'version-2',status:'finalized',fileCount:1,totalBytes:sourceBytes,finalizedAt:'2026-10-14T00:01:00.000Z'}]})
+  ])assert.equal(shiplyPublisherTesting.finalizedOwnerSummary(invalid,receipt,sourceBytes),false);
+});
+
+test('expired upload credentials do not invalidate finalized GET-only recovery',async()=>{
+  const afterExpiry=new Date(Date.parse(ownerReceipt().expiresAt)+1),freshnessOnly=parseShiplyCreateResponse(opaque(body()),intent(),afterExpiry,true),historical=parseShiplyCreateResponse(opaque(body()),intent(),afterExpiry,false);
+  assert.deepEqual(freshnessOnly,{diagnostic:'expired'});assert.equal('diagnostic' in historical,false);
+  const fixture=lifecycleFixture(),identity=shiplyTaskIdentity(fixture.task,fixture.site)!;
+  fixture.task.shiply={operationId:intent().operationId,accountId,emailHash,sourceHash:identity.sourceHash,requestHash:identity.requestHash,createdAt:at,slug,versionId:'version-1',stage:'api_receipt'};
+  fixture.task.submittedAt=at;fixture.task.publicUrl=page;fixture.task.checkpoint='shiply_api_receipt';fixture.task.status='review';fixture.task.health='pending';
+  const methods:string[]=[],result=await shiplyPublisherTesting.accepted(fixture.task,{site:fixture.site},fixture.task.topicUrl!,key,{now:()=>afterExpiry,fetch:async(url,init)=>{
+    methods.push(String(init.method));assert.equal(init.method,'GET');
+    if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug,siteUrl:page}]}));
+    if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify(ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:Buffer.byteLength(identity.html),finalizedAt:'2026-10-14T00:01:00.000Z'}]})));
+    if(url===`${page}robots.txt`)return response(url,'',404,'text/html');
+    if(url===page)return response(url,identity.html,200,'text/html');
+    throw Error('unexpected '+url);
+  }});
+  assert.equal(result.status,'found');assert.deepEqual(methods,['GET','GET','GET','GET']);
+});
 
 test('OTP request and verification persist one email identity and encrypted key, with no duplicate request',async()=>{const store=new Store(':memory:'),secrets=new Map<string,string>(),vault={get:async(name:string)=>secrets.get(name),encryptSecrets:(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>{secrets.set(name,value);return [name,'cipher:'+Buffer.from(value).toString('base64url')]}))} as unknown as Vault,calls:string[]=[];const fetch=async(url:string,init:RequestInit)=>{calls.push(url);if(url.endsWith('/request-code'))return response(url,'{}');assert.equal(JSON.parse(String(init.body)).code,'123456');return response(url,JSON.stringify({apiKey:key,email}))};const account=await requestShiplyCode(store,email,{now:()=>new Date(at),fetch});assert.equal(account.shiply?.stage,'code_sent');await assert.rejects(()=>requestShiplyCode(store,email,{now:()=>new Date(at),fetch}),/已有身份意图/);const ready=await verifyShiplyCode(store,vault,{accountId:account.id,code:'123456',siteIds:[]},{now:()=>new Date(at),fetch});assert.equal(ready.shiply?.stage,'ready');assert.equal(ready.shiply?.keyFingerprint,shiplySha256(key));assert.equal(secrets.get('account:'+account.id),key);assert.equal(store.getCipher('account:'+account.id)?.startsWith('cipher:'),true);const raw=secrets.get(`shiply:identity:${account.id}:verify`)!;assert.deepEqual(parseShiplyVerifySecret(raw,emailHash),{apiKey:key,email});assert.deepEqual(calls.map(url=>new URL(url).pathname),['/api/auth/agent/request-code','/api/auth/agent/verify-code']);await assert.rejects(()=>verifyShiplyCode(store,vault,{accountId:account.id,code:'123456',siteIds:[]},{now:()=>new Date(at),fetch}),/状态无效/);const backup={state:store.read(),secrets:Object.fromEntries(secrets)};assert.equal(validateBackup(backup).state.accounts.find(item=>item.id===account.id)?.shiply?.stage,'ready');assert.throws(()=>validateBackup({...backup,secrets:{...backup.secrets,['account:'+account.id]:'shp_'+ 'B'.repeat(32)}}),/Shiply/);store.close()});
 
@@ -55,8 +103,58 @@ test('opaque persistence failure preserves submitting without a cipher or retry'
 test('normal Controller synthetic lifecycle writes once and verifies same-owner public article',async()=>{
   const store=new Store(':memory:'),siteId='22222222-2222-4222-8222-222222222222',taskId='11111111-1111-4111-8111-111111111111',site:Site={id:siteId,domain:'example.com',url:'https://example.com/',email,category:'software',language:'en',name:'Example',description:'Software',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.com/product',developer:'https://example.com/releases'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.com/releases',discoveredAt:at}]},task:Task={id:taskId,siteId,channelId:'shiply',sourceDomain:'shiply.now',accountId,status:'queued',createdAt:at,scheduledAt:'2026-10-13T12:00:00.000Z',updatedAt:at,attempts:0,message:'fixture',topicUrl:'https://example.com/releases',draft:{title:'Safe publication recovery',description:'A practical guide',body:'# Safe publication recovery\n\nCheck the [release record](https://example.com/releases) before retrying.'},draftRevision:1,articleApprovedAt:at,health:'pending'},account:Account={id:accountId,channelId:'shiply',email,username:email,credentialKind:'api_token',status:'registered',hasPassword:true,source:'generated',createdAt:at,verifiedAt:at,registeredAt:at,shiply:{version:1,emailHash,requestedAt:at,stage:'ready',keyFingerprint:shiplySha256(key)}};
   const verifyBytes=Buffer.from(JSON.stringify({apiKey:key,email})),verifySecret=JSON.stringify({version:1,status:200,responseUrl:`${SHIPLY_ORIGIN}/api/auth/agent/verify-code`,redirected:false,contentType:'application/json',bodyBase64:verifyBytes.toString('base64'),bodyHash:shiplySha256(verifyBytes),emailHash});const state=emptyState(),plaintext=new Map([[`account:${accountId}`,key],[`shiply:identity:${accountId}:verify`,verifySecret]]),vault={ready:true,available:()=>true,get:async(name:string)=>plaintext.get(name),encryptSecrets:(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>{plaintext.set(name,value);return [name,'cipher:'+Buffer.from(value).toString('base64url')]}))} as unknown as Vault,catalog=CHANNELS.map(value=>({...value,enabled:value.id==='shiply'}));state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='manual';state.settings.timezone='UTC';state.settings.channelOverrides=Object.fromEntries(catalog.map(value=>[value.id,value.id==='shiply']));state.sites=[site];state.accounts=[account];state.accountBindings=[{id:'44444444-4444-4444-8444-444444444444',siteId,channelId:'shiply',accountId,createdAt:at,updatedAt:at}];state.tasks=[task];store.updateWithCiphers(current=>Object.assign(current,state),{[`account:${accountId}`]:'cipher:key',[`shiply:identity:${accountId}:verify`]:'cipher:verify'});
-  const identity=shiplyTaskIdentity(task,site)!;assert.ok(identity);const methods:string[]=[];const controller=new Controller(store,vault,'isolated',{channelCatalog:catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{methods.push(String(init.method)+' '+url);if(url===SHIPLY_CREATE_URL)return response(url,JSON.stringify(body()));if(url===uploadUrl){assert.equal(init.body,identity.html);return response(url,'',200,'text/plain')}if(url.endsWith('/finalize'))return response(url,JSON.stringify({success:true,slug,currentVersionId:'version-1'}));if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug,siteUrl:page}]}));if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify({slug,siteUrl:page,expiresAt:null,status:'active',currentVersionId:'version-1',manifest:[{path:'index.html',hash:identity.sourceHash}]}));if(url===`${page}robots.txt`)return response(url,'',404,'text/html');if(url===page)return response(url,identity.html,200,'text/html');throw Error('unexpected '+url)}}});controller.runtime.aiReady=true;
+  const identity=shiplyTaskIdentity(task,site)!;assert.ok(identity);const methods:string[]=[];const controller=new Controller(store,vault,'isolated',{channelCatalog:catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{methods.push(String(init.method)+' '+url);if(url===SHIPLY_CREATE_URL)return response(url,JSON.stringify(body()));if(url===uploadUrl){assert.equal(init.body,identity.html);return response(url,'',200,'text/plain')}if(url.endsWith('/finalize'))return response(url,JSON.stringify({success:true,slug,currentVersionId:'version-1'}));if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug,siteUrl:page}]}));if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify(ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:Buffer.byteLength(identity.html),finalizedAt:'2026-10-14T00:01:00.000Z'}]})));if(url===`${page}robots.txt`)return response(url,'',404,'text/html');if(url===page)return response(url,identity.html,200,'text/html');throw Error('unexpected '+url)}}});controller.runtime.aiReady=true;
   try{await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.status,'live',JSON.stringify(saved));assert.equal(saved.shiply?.stage,'published');assert.equal(saved.publicUrl,page);assert.doesNotThrow(()=>validateBackup({state:store.read(),secrets:Object.fromEntries(plaintext)}));assert.equal(methods.filter(value=>value.startsWith('POST ')).length,2);assert.equal(methods.filter(value=>value.startsWith('PUT ')).length,1)}finally{store.close()}
+});
+
+test('failed public verification survives encrypted backup and restore, then recovers with GET only and no repost',async()=>{
+  const directory=mkdtempSync(join(tmpdir(),'shiply-backup-recovery-')),firstPath=join(directory,'first.sqlite'),restoredPath=join(directory,'restored.sqlite'),fixture=lifecycleFixture();
+  const plaintext=new Map<string,string>([[`account:${accountId}`,key],[`shiply:identity:${accountId}:verify`,fixture.verifySecret]]),firstStore=new Store(firstPath),firstVault=testVault(plaintext),identity=shiplyTaskIdentity(fixture.task,fixture.site)!;
+  firstStore.updateWithCiphers(current=>Object.assign(current,fixture.state),{[`account:${accountId}`]:'cipher:key',[`shiply:identity:${accountId}:verify`]:'cipher:verify'});
+  const firstMethods:string[]=[],firstController=new Controller(firstStore,firstVault,'isolated',{channelCatalog:fixture.catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{
+    const method=String(init.method);firstMethods.push(method);
+    if(url===SHIPLY_CREATE_URL)return response(url,JSON.stringify(body()));
+    if(url===uploadUrl)return response(url,'',200,'text/plain');
+    if(url.endsWith('/finalize'))return response(url,JSON.stringify({success:true,slug,currentVersionId:'version-1'}));
+    if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug}]}));
+    if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify(ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:Buffer.byteLength(identity.html),finalizedAt:'2026-10-14T00:01:00.000Z'}]})));
+    if(url===`${page}robots.txt`)return response(url,'',404,'text/html');
+    if(url===page)return response(url,identity.html.replace('Safe publication recovery','Altered public copy'),200,'text/html');
+    throw Error('unexpected '+url);
+  }}});firstController.runtime.aiReady=true;
+  let restoredStore:Store|undefined,restoredController:Controller|undefined;
+  try{
+    await firstController.tick();
+    const failed=firstStore.read().tasks[0];
+    assert.deepEqual(firstMethods.slice(0,3),['POST','PUT','POST']);
+    assert.equal(failed.shiply?.stage,'api_receipt');
+    assert.equal(failed.checkpoint,'shiply_api_receipt');
+    assert.equal(failed.status,'review');
+    assert.equal(failed.health,'unknown');
+    assert.equal(failed.linkCheck,'invalid');
+    assert.equal(failed.linkRel,undefined);
+    assert.ok(failed.lastCheckedAt&&failed.nextCheckAt);
+    const portable=validateBackup({state:firstStore.read(),secrets:Object.fromEntries(plaintext)});
+    const missingCheck=structuredClone(portable);delete missingCheck.state.tasks[0].lastCheckedAt;assert.throws(()=>validateBackup(missingCheck),/回执阶段无效/);
+    const falseLive=structuredClone(portable);falseLive.state.tasks[0].status='live';assert.throws(()=>validateBackup(falseLive),/回执阶段无效/);
+    const inventedRel=structuredClone(portable);inventedRel.state.tasks[0].linkRel='unknown';assert.throws(()=>validateBackup(inventedRel),/回执阶段无效/);
+    const encrypted=encryptBackup(portable,'shiply-recovery-passphrase'),restored=validateBackup(decryptBackup(encrypted,'shiply-recovery-passphrase')),restoredPlaintext=new Map(Object.entries(restored.secrets));
+    restoredStore=new Store(restoredPath);restoredStore.restore(restored.state,Object.fromEntries(Object.keys(restored.secrets).map(name=>[name,'cipher:'+Buffer.from(restored.secrets[name]).toString('base64url')])));
+    const recoveredMethods:string[]=[];restoredController=new Controller(restoredStore,testVault(restoredPlaintext),'isolated',{channelCatalog:fixture.catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{
+      const method=String(init.method);recoveredMethods.push(method);assert.equal(method,'GET');
+      if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug}]}));
+      if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify(ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:Buffer.byteLength(identity.html),finalizedAt:'2026-10-14T00:01:00.000Z'}]})));
+      if(url===`${page}robots.txt`)return response(url,'',404,'text/html');
+      if(url===page)return response(url,identity.html,200,'text/html');
+      throw Error('unexpected '+url);
+    }}});restoredController.runtime.aiReady=true;await restoredController.tick();
+    const recovered=restoredStore.read().tasks[0];
+    assert.ok(recoveredMethods.length>=6);
+    assert.ok(recoveredMethods.every(method=>method==='GET'));
+    assert.equal(recovered.status,'live',JSON.stringify(recovered));
+    assert.equal(recovered.shiply?.stage,'published');
+    assert.doesNotThrow(()=>validateBackup({state:restoredStore!.read(),secrets:Object.fromEntries(restoredPlaintext)}));
+  }finally{firstController.stop();restoredController?.stop();firstStore.close();restoredStore?.close();rmSync(directory,{recursive:true,force:true})}
 });
 
 test('SQLite restart recovers an unknown finalize using GET only and keeps the encrypted original receipt',async()=>{
@@ -72,7 +170,7 @@ test('SQLite restart recovers an unknown finalize using GET only and keeps the e
     first=new Store(db);first.updateWithCiphers(current=>Object.assign(current,state),{[`account:${accountId}`]:'cipher:key',[`shiply:identity:${accountId}:verify`]:'cipher:verify'});const identity=shiplyTaskIdentity(task,site)!;assert.ok(identity);const firstMethods:string[]=[];
     controller=new Controller(first,vault,'isolated',{channelCatalog:catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{firstMethods.push(String(init.method));if(url===SHIPLY_CREATE_URL)return response(url,JSON.stringify(body()));if(url===uploadUrl)return response(url,'',200,'text/plain');if(url.endsWith('/finalize'))return response(url,'{}',503);throw Error('unexpected '+url)}}});controller.runtime.aiReady=true;await controller.tick();
     const uncertain=first.read().tasks[0],cipher=first.getCipher(`publication:${taskId}`);assert.equal(uncertain.shiply?.stage,'finalize_unknown',JSON.stringify(uncertain));assert.equal(uncertain.reconcileAttempts,undefined);assert.deepEqual(firstMethods,['POST','PUT','POST']);assert.ok(cipher);controller.stop();controller=undefined;first.close();first=undefined;
-    second=new Store(db);const recoveredMethods:string[]=[];controller=new Controller(second,vault,'isolated',{channelCatalog:catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{const method=String(init.method);recoveredMethods.push(method);assert.equal(method,'GET');if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug,siteUrl:page}]}));if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify({slug,siteUrl:page,expiresAt:null,status:'active',currentVersionId:'version-1',manifest:[{path:'index.html',hash:identity.sourceHash}]}));if(url===`${page}robots.txt`)return response(url,'',404,'text/html');if(url===page)return response(url,identity.html,200,'text/html');throw Error('unexpected '+url)}}});controller.runtime.aiReady=true;await controller.tick();
+    second=new Store(db);const recoveredMethods:string[]=[];controller=new Controller(second,vault,'isolated',{channelCatalog:catalog,shiplyDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{const method=String(init.method);recoveredMethods.push(method);assert.equal(method,'GET');if(url===`${SHIPLY_ORIGIN}/api/v1/publishes`)return response(url,JSON.stringify({sites:[{slug,siteUrl:page}]}));if(url===`${SHIPLY_ORIGIN}/api/v1/publish/${slug}`)return response(url,JSON.stringify(ownerDetail({versions:[{id:'version-1',status:'finalized',fileCount:1,totalBytes:Buffer.byteLength(identity.html),finalizedAt:'2026-10-14T00:01:00.000Z'}]})));if(url===`${page}robots.txt`)return response(url,'',404,'text/html');if(url===page)return response(url,identity.html,200,'text/html');throw Error('unexpected '+url)}}});controller.runtime.aiReady=true;await controller.tick();
     const saved=second.read().tasks[0];assert.ok(recoveredMethods.length>=6);assert.ok(recoveredMethods.every(method=>method==='GET'));assert.equal(saved.reconcileAttempts,1);assert.equal(saved.status,'live',JSON.stringify(saved));assert.equal(saved.shiply?.stage,'published');assert.equal(saved.publicUrl,page);assert.equal(second.getCipher(`publication:${taskId}`),cipher);assert.doesNotThrow(()=>validateBackup({state:second!.read(),secrets:Object.fromEntries(plaintext)}));
   }finally{controller?.stop();first?.close();second?.close();rmSync(dir,{recursive:true,force:true})}
 });

@@ -52,7 +52,7 @@ function measure(siteCount:number,tasksPerSite:number,iterations:number,legacy=f
   return {sites:siteCount,tasksPerSite,draftsPerSite:Math.ceil(tasksPerSite/4),draftBodyChars:taskText.length,repeatRefreshes:timings.length,coldSnapshotMs:Number(coldSnapshotMs.toFixed(3)),medianRefreshMs:Number(percentile(timings,0.5).toFixed(3)),p95RefreshMs:Number(percentile(timings,0.95).toFixed(3)),snapshotBytes,heapDeltaBytes:process.memoryUsage().heapUsed-heapBefore};
 }
 
-const legacy=process.argv.includes('--legacy'),output=process.argv.find(value=>!value.startsWith('--')&&value!==process.argv[0]&&value!==process.argv[1])??resolve('.evidence/release-1.2.35/performance/snapshot-benchmark.json');
+const legacy=process.argv.includes('--legacy'),output=process.argv.find(value=>!value.startsWith('--')&&value!==process.argv[0]&&value!==process.argv[1])??resolve('.evidence/release-1.2.36/performance/snapshot-benchmark.json');
 const report={generatedAt:new Date().toISOString(),runtime:{platform:process.platform,arch:process.arch,node:process.version},mode:legacy?'unindexed comparison path':'indexed snapshot path',fixture:'Synthetic local state only; no real accounts, drafts, credentials, or sites.',samples:legacy?[measure(50,12,2,true)]:[measure(50,12,4),measure(100,12,2)]};
 mkdirSync(dirname(output),{recursive:true});writeFileSync(output,JSON.stringify(report,null,2)+'\n',{mode:0o600});
 process.stdout.write(JSON.stringify(report,null,2)+'\n');

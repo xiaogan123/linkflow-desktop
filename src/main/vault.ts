@@ -17,6 +17,18 @@ export class Vault implements SecretStore {
     // pair an old account state with credentials from a later database update.
     return Object.fromEntries(Object.entries(ciphers).map(([key,cipher])=>[key,safeStorage.decryptString(Buffer.from(cipher,'base64'))]));
   }
+  prepareRestoredSecrets(secrets:Record<string,string>){
+    if(!this.available())throw new Error('系统钥匙串不可用');
+    const existing=this.store.allCiphers();
+    // Preserve the exact durable receipt when validated backup plaintext is
+    // unchanged. Randomized keychain encryption must not look like a token swap.
+    // Keep this synchronous through Store.restore so no later write can be mixed in.
+    return Object.fromEntries(Object.entries(secrets).map(([key,value])=>{
+      const cipher=existing[key];
+      return [key,cipher!==undefined&&safeStorage.decryptString(Buffer.from(cipher,'base64'))===value
+        ?cipher:safeStorage.encryptString(value).toString('base64')];
+    }));
+  }
   encryptSecrets(secrets:Record<string,string>){if(!this.available())throw new Error('系统钥匙串不可用');return Object.fromEntries(Object.entries(secrets).map(([k,v])=>[k,safeStorage.encryptString(v).toString('base64')]))}
 }
 export {assertPortableBackupFits,decryptBackup,encryptBackup,MAX_PORTABLE_BACKUP_BYTES,portableBackupFileBytes} from './backup';

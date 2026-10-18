@@ -10,8 +10,8 @@ import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import assert from 'node:assert/strict';
 
-const windowsUpgrade={sourceVersion:'1.2.34',candidateVersion:'1.2.35',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.34/Linkflow-1.2.34-windows-x64-setup.exe',sha256:'1a456f66a3ac638cca13b97d70583ec0b790c72426a391697b9964d29e6df4b5'};
-const macPublishedUpgrade={sourceVersion:'1.2.34',candidateVersion:'1.2.35',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.34/Linkflow-1.2.34-mac-arm64.zip',sha256:'7dda3bbb7adb06e6f737ae11f9c75b0f0d001dd8f8696f11e0fcb96e561df489'};
+const windowsUpgrade={sourceVersion:'1.2.35',candidateVersion:'1.2.36',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.35/Linkflow-1.2.35-windows-x64-setup.exe',sha256:'58d17c19e46c1d6bbb1b382bf463018e705ba72e2ddcd85e010b7710e3b55f76'};
+const macPublishedUpgrade={sourceVersion:'1.2.35',candidateVersion:'1.2.36',url:'https://github.com/xiaogan123/linkflow-desktop/releases/download/v1.2.35/Linkflow-1.2.35-mac-arm64.zip',sha256:'e658ae0974d8eb58440a318422ced70b9f3cccdbcecaec2a8f4aba4c53d36202'};
 const usage=`Usage:
   node scripts/update-native-smoke.mjs
   node scripts/update-native-smoke.mjs --mac-published-source [archive]
@@ -53,7 +53,7 @@ const bridgeIndex=process.argv.indexOf('--mac-bridge');
 const publishedSourceIndex=process.argv.indexOf('--mac-published-source');
 if(bridgeIndex>=0&&publishedSourceIndex>=0)throw Error('Choose either --mac-published-source or --mac-bridge');
 if(publishedSourceIndex>=0){
- if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.34-zip]');
+ if(process.platform!=='darwin'||(process.argv.length!==publishedSourceIndex+1&&process.argv.length!==publishedSourceIndex+2))throw Error('Usage: --mac-published-source [official-v1.2.35-zip]');
  Object.assign(plan,probePlan(process.platform,process.arch,version,'published-source'));
  const [path]=process.argv.slice(publishedSourceIndex+1);if(path)plan.sourcePath=resolve(path);
 }

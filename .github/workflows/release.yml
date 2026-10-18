@@ -55,6 +55,15 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: AgentBoard native public-page checks
+        run: node scripts/agentboard-native-smoke.mjs
+      - name: Agents Wiki native public-page checks
+        run: node scripts/agentswiki-native-smoke.mjs
+      - name: AgentsGather native public-page checks
+        run: node scripts/agentsgather-native-smoke.mjs
+      - name: Synthfolk native public-profile checks
+        run: node scripts/synthfolk-native-smoke.mjs
+
       - name: Run desktop smoke test
         run: npm run test:desktop
 
@@ -64,6 +73,8 @@ jobs:
         run: npm run test:update-reminder-ui
       - name: Planning and handoff UI
         run: npm run test:planning-ui
+      - name: Search tracking UI and large-report paging
+        run: node scripts/search-tracking-ui-smoke.cjs
       - name: Account import UI
         run: npm run test:account-ui
       - name: Draft copy UI
@@ -134,7 +145,7 @@ jobs:
             }
           }
 
-      - name: Validate published Windows v1.2.34 to candidate v1.2.35 native upgrade
+      - name: Validate published Windows v1.2.35 to candidate v1.2.36 native upgrade
         id: native_upgrade
         run: npm run test:update-native
 
@@ -177,6 +188,15 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: AgentBoard native public-page checks
+        run: node scripts/agentboard-native-smoke.mjs
+      - name: Agents Wiki native public-page checks
+        run: node scripts/agentswiki-native-smoke.mjs
+      - name: AgentsGather native public-page checks
+        run: node scripts/agentsgather-native-smoke.mjs
+      - name: Synthfolk native public-profile checks
+        run: node scripts/synthfolk-native-smoke.mjs
+
       - name: Run desktop smoke test
         run: npm run test:desktop
 
@@ -186,6 +206,8 @@ jobs:
         run: npm run test:update-reminder-ui
       - name: Planning and handoff UI
         run: npm run test:planning-ui
+      - name: Search tracking UI and large-report paging
+        run: node scripts/search-tracking-ui-smoke.cjs
       - name: Account import UI
         run: npm run test:account-ui
       - name: Blogger connection UI

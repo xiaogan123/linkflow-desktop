@@ -55,7 +55,13 @@ export function isArticleTopicUrl(input: string, site: { url: string; domain: st
 
   const segments = decodedPath.split('/').filter(Boolean);
   if (!segments.length || (segments.length === 1 && isLocaleOnlySegment(segments[0]))) return false;
-  if (segments.some((segment) => ADMINISTRATIVE_SEGMENT.test(segment.replace(ROUTE_EXTENSION, '')))) return false;
+  // GitHub's public release URL uses a literal /releases/tag/ route. Only that
+  // position is content routing; ordinary tag indexes remain excluded. Fetching
+  // and reviewing the actual public page is still required by the caller.
+  const githubRelease = expectedHost === 'github.com' && candidate.protocol === 'https:' && segments.length === 5
+    && /^[a-z\d][a-z\d-]{0,38}$/i.test(segments[0]) && /^[a-z\d_.-]{1,100}$/i.test(segments[1])
+    && segments[2] === 'releases' && segments[3] === 'tag' && /^[a-z\d][a-z\d._+-]{0,199}$/i.test(segments[4]);
+  if (segments.some((segment, index) => !(githubRelease && index === 3) && ADMINISTRATIVE_SEGMENT.test(segment.replace(ROUTE_EXTENSION, '')))) return false;
   for (const key of candidate.searchParams.keys()) {
     if (/^(?:page|paged)$/i.test(key)) return false;
   }

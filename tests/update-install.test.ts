@@ -76,7 +76,7 @@ test('canonical application tree binds content and rejects external links on eac
 
 test('Mac bundle tree binds exact POSIX executable permissions',{skip:process.platform==='win32'?'Windows does not implement POSIX execute bits; covered on native Mac':false},async()=>{
  const directory=await mkdtemp(join(tmpdir(),'linkflow-tree-mode-'));try{
-  const executable=join(directory,'candidate');await writeFile(executable,'candidate',{mode:0o755});const first=await hashUpdateTree(directory);await chmod(executable,0o744);assert.notEqual(await hashUpdateTree(directory),first);
+  const executable=join(directory,'candidate');await writeFile(executable,'candidate',{mode:0o755});await chmod(executable,0o755);const first=await hashUpdateTree(directory);await chmod(executable,0o744);assert.notEqual(await hashUpdateTree(directory),first);
  }finally{await rm(directory,{recursive:true,force:true})}
 });
 

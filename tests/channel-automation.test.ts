@@ -33,8 +33,8 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agenthow','agentnotepad','betterthanhtml','brewpage','deed-page','draftmark','katbin','large-language','listed-startups','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','shippage','slugpost','supanote','swarmmemo','tantive','telegraph','totpage','txtsbs','verbose','vibedrop','wordcell','yourwebs']);
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph','product-index']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentsgather','agentswiki','betterthanhtml','brewpage','carcinus','deed-page','draftmark','html-app','katbin','large-language','listed-startups','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','shellbook','shippage','slugpost','supanote','swarmmemo','synthfolk','tantive','telegraph','thethings','totpage','txtsbs','verbose','vibedrop','wordcell','yourwebs']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph','product-index','shiply']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
   assert.match(channelAutomationView(channel('paper-wf')).setup,/人机验证/);

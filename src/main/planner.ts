@@ -10,8 +10,11 @@ import {hasActiveSiteOriginRecoveryGrant,migrationAwareTopicKey} from './site-or
 
 const originTopicContext=(state:State,siteId:string)=>({topicKey:(value:string|undefined)=>migrationAwareTopicKey(state,siteId,value)});
 
+// Keep only the current zone's formatter; dates and scheduling results are never cached.
+let dayFormatter:{timeZone:string;format:Intl.DateTimeFormat}|undefined;
 export function dateKey(value:Date|string,timeZone:string):string{
-  const p=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(value));
+  if(dayFormatter?.timeZone!==timeZone)dayFormatter={timeZone,format:new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'})};
+  const p=dayFormatter.format.formatToParts(new Date(value));
   const part=(t:string)=>p.find(x=>x.type===t)!.value;return `${part('year')}-${part('month')}-${part('day')}`;
 }
 export function monthKey(value:Date|string,timeZone:string){return dateKey(value,timeZone).slice(0,7)}
@@ -23,7 +26,7 @@ export {reservesSlot,reservesMonthlySlot} from '../shared/publication';
 export function recoverInterrupted(state:State,now=new Date()){
   for(const t of state.tasks){
     if(state.sites.find(site=>site.id===t.siteId)?.status==='paused')continue;
-    const uncertain=!!t.submittedAt||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||!!t.supanote||!!t.docsMd||!!t.deedPage||!!t.memoryWiki||!!t.shipPage||!!t.nostr||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
+    const uncertain=!!t.submittedAt||!!t.agentsGather||!!t.synthfolk||!!t.leaflet||!!t.wordpress||!!t.paper||!!t.hive||!!t.mataroa||!!t.verbose||!!t.prose||!!t.rentry||!!t.lucid||!!t.betterthanhtml||!!t.supanote||!!t.docsMd||!!t.deedPage||!!t.memoryWiki||!!t.shipPage||!!t.nostr||['submitting','submitted','submission_uncertain','paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending'].includes(t.checkpoint||'');
     const migrationRecovery=(state.siteOriginMigrations??[]).find(record=>record.siteId===t.siteId)?.recovery;
     if(t.status==='running'&&!uncertain&&migrationRecovery?.consumedAt&&migrationRecovery.taskId===t.id&&t.attempts>migrationRecovery.before.attempts){
       t.status='failed';t.checkpoint='site_origin_migration_recovery_consumed';t.updatedAt=now.toISOString();t.recoveryEligible=false;t.nextCheckAt=undefined;
@@ -114,6 +117,11 @@ export function earliestPublicationAt(siteId:string,channelId:string,tasks:Task[
 
 function sharedDestinationKey(state:State,siteId:string,channelId:string,accountId?:string,receipt?:Task):string|undefined{
 if(channelId==='rentry'||channelId==='lucid-page'||channelId==='betterthanhtml'||channelId==='supanote'||channelId==='docs-md'||channelId==='katbin'||channelId==='mdshare'||channelId==='pstrs'||channelId==='yourwebs'||channelId==='nextgen-slides'||channelId==='totpage'||channelId==='mdview'||channelId==='txtsbs'||channelId==='pastyx'||channelId==='agentdrop'||channelId==='pastemyst'||channelId==='markdownpaste'||channelId==='slugpost'||channelId==='html-app'||channelId==='memorywiki')return `${channelId}:workspace`;
+  if(channelId==='agentboard'){
+    const accounts=state.accounts.filter(item=>item.channelId==='agentboard');
+    const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId??(accounts.length===1?accounts[0].id:undefined);
+    return id?`agentboard:${id}`:'agentboard:pending-profile';
+  }
   if(channelId==='blogger'){const blogId=receipt?.blogger?.blogId??state.sites.find(item=>item.id===siteId)?.blogger?.blogId;return blogId?`blogger:${blogId}`:undefined;}
   if(channelId==='wordpress-com'){
     const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channelId)?.accountId;
@@ -213,7 +221,7 @@ function channelSourceDomain(site:Site,channel:Channel,account?:{publicationUrl?
 function untouchedAutomaticTask(task:Task):boolean{
   const cost=task.cost,spent=!!cost&&[cost.aiCalls,cost.durationMs,cost.inputTokens,cost.outputTokens,cost.amount].some(value=>(value??0)>0);
   return task.status==='queued'&&task.attempts===0&&!task.draft&&!spent&&!task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.verifiedAt&&
-!task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.katbin&&!task.mdshare&&!task.pstrs&&!task.yourwebs&&!task.nextgenSlides&&!task.totpage&&!task.mdview&&!task.txtsbs&&!task.pastyx&&!task.agentdrop&&!task.pastemyst&&!task.markdownPaste&&!task.htmlApp&&!task.memoryWiki&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
+!task.blogger&&!task.leaflet&&!task.wordpress&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.katbin&&!task.mdshare&&!task.pstrs&&!task.yourwebs&&!task.nextgenSlides&&!task.totpage&&!task.mdview&&!task.txtsbs&&!task.pastyx&&!task.agentdrop&&!task.agentsGather&&!task.agentsGatherInput&&!task.pastemyst&&!task.markdownPaste&&!task.htmlApp&&!task.memoryWiki&&!task.checkpoint&&!task.publicationMethod&&!task.articleApprovedAt&&!task.articleReview&&
     task.draftRevision===undefined&&!task.draftUpdatedAt&&!task.topicContentHash&&!task.articleAutomationVersion&&!task.articleRepairAttempts&&
     !task.articleAttempts?.length&&!task.topicSwitchAttempts&&!task.recoveryAttempts&&!task.recoveryEligible&&!task.reconcileAttempts&&!task.reconcileAfter&&
     !task.waitingSince&&!task.deferredAt&&!task.reviewUntil&&!task.reviewKind&&!task.lastCheckedAt&&!task.nextCheckAt&&!task.lostAt&&!task.linkRel&&!task.linkCheck&&
@@ -308,7 +316,7 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
     const site=state.sites.find(s=>s.id===t.siteId&&s.status==='ready');
     const planned=new Date(t.scheduledAt);
     const draftContinuation=hasRecoverablePublisherDraftReceipt(t);
-if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml||t.supanote||t.docsMd||t.katbin||t.mdshare||t.pstrs||t.totpage||t.mdview||t.txtsbs||t.pastyx||t.yourwebs||t.nextgenSlides||t.agentdrop||t.shipPage||t.pastemyst||t.markdownPaste||t.htmlApp||t.memoryWiki)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts&&!hasActiveSiteOriginRecoveryGrant(state,t)||(channels.length>0&&priority(t)>1))return false;
+if(!site||t.status!=='queued'||((t.submittedAt||t.agentboard||t.leaflet||t.wordpress||t.paper||t.hive||t.mataroa||t.verbose||t.prose||t.rentry||t.lucid||t.betterthanhtml||t.supanote||t.docsMd||t.katbin||t.mdshare||t.pstrs||t.totpage||t.mdview||t.txtsbs||t.pastyx||t.yourwebs||t.nextgenSlides||t.agentdrop||t.shipPage||t.pastemyst||t.markdownPaste||t.htmlApp||t.memoryWiki)&&!draftContinuation)||t.publicUrl||t.firstLiveAt||!Number.isFinite(planned.getTime())||t.attempts>=state.settings.maxAttempts&&!hasActiveSiteOriginRecoveryGrant(state,t)||(channels.length>0&&priority(t)>1))return false;
     const requested=planned.getTime()<=now.getTime()&&monthKey(planned,state.settings.timezone)!==monthKey(now,state.settings.timezone)?now:planned;
     const actual=socialPublicationAt(state,site.id,t.channelId,earliestPublicationAt(site.id,t.channelId,state.tasks,requested,{excludeTaskId:t.id,includeReservations:false}),{excludeTaskId:t.id,includeReservations:false});
     const channel=channels.find(item=>item.id===t.channelId);
@@ -327,7 +335,7 @@ if(!site||t.status!=='queued'||((t.submittedAt||t.leaflet||t.wordpress||t.paper|
     return reserved.slice(0,Math.max(0,room)).some(x=>x.id===t.id);
   }).sort((a,b)=>priority(a)-priority(b)||(effective.get(a.id)??Number.MAX_SAFE_INTEGER)-(effective.get(b.id)??Number.MAX_SAFE_INTEGER)||a.scheduledAt.localeCompare(b.scheduledAt))[0];
 }
-export function markVerified(t:Task,now:Date,url:string,rel:string){t.status='live';t.publicUrl=url;t.firstLiveAt??=now.toISOString();t.verifiedAt=now.toISOString();t.lastCheckedAt=now.toISOString();t.updatedAt=now.toISOString();t.linkRel=rel;t.message='公开页面已核验，外链已生效。'}
+export function markVerified(t:Task,now:Date,url:string,rel:string){t.status='live';t.publicUrl=url;t.firstLiveAt??=now.toISOString();t.verifiedAt=now.toISOString();t.lastCheckedAt=now.toISOString();t.updatedAt=now.toISOString();t.linkRel=rel;t.message='公开页链接已核验。'}
 
 export function applyLinkResult(task:Task,result:LinkResult,now=new Date()){
  task.lastCheckedAt=now.toISOString();task.linkCheck=result.outcome??(result.found?'found':'unreachable');

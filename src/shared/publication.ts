@@ -1,7 +1,7 @@
 import type {CapacityBlockReason,Channel,Site,SiteTopic,Task} from './types';
 import {isArticleTopicUrl} from './topic-policy';
 
-const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','raindrop','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark','memorywiki','plopino','wordcell','vibedrop','notebin','shippage','berrry','agenthow']);
+const REPEATABLE_ARTICLE_CHANNELS=new Set(['telegraph','github-gist','blogger','wordpress-com','leaflet','raindrop','bluesky','paragraph','nostr','paper-wf','hive','mataroa','verbose','prose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','markdrop','draftmark','memorywiki','plopino','wordcell','vibedrop','notebin','shippage','berrry','agenthow','agentsgather','agentswiki']);
 function deterministicPostSlug(taskId:string,contentHash:string):string{
   return `lf-${taskId.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,32)}-${contentHash.slice(0,12)}`;
 }
@@ -79,8 +79,11 @@ function validDate(value:string|undefined):Date|undefined{
   return Number.isFinite(date.getTime())?date:undefined;
 }
 
+// Formatter construction is expensive in multi-site snapshots. Keep one zone, not dated results.
+let calendarFormatter:{timeZone:string;format:Intl.DateTimeFormat}|undefined;
 function dateParts(value:Date,timeZone:string):{year:number;month:number;day:number;hour:number;minute:number;second:number}{
-  const parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(value);
+  if(calendarFormatter?.timeZone!==timeZone)calendarFormatter={timeZone,format:new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'})};
+  const parts=calendarFormatter.format.formatToParts(value);
   const part=(kind:Intl.DateTimeFormatPartTypes)=>Number(parts.find(item=>item.type===kind)?.value??0);
   return {year:part('year'),month:part('month'),day:part('day'),hour:part('hour'),minute:part('minute'),second:part('second')};
 }
@@ -170,9 +173,9 @@ function taskReservesTopic(task:Task):boolean{
 
 /** Registration uncertainty stays pinned, but is not an attempted article publication. */
 export function isPendingPublisherRegistration(task:Task):boolean{
-  const checkpoints=task.channelId==='berrry'?['berrry_register_pending','berrry_signin_pending']:[task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':task.channelId==='plopino'?'plopino_account_create_pending':task.channelId==='wordcell'?'wordcell_token_create_pending':task.channelId==='vibedrop'?'vibedrop_key_create_pending':task.channelId==='notebin'?'notebin_account_create_pending':task.channelId==='agenthow'?'agenthow_register_pending':undefined];
+  const checkpoints=task.channelId==='berrry'?['berrry_register_pending','berrry_signin_pending']:task.channelId==='agentswiki'?['agentswiki_registration_intent','agentswiki_registration_opaque_response','agentswiki_registration_unknown']:[task.channelId==='paper-wf'?'paper_account_create_pending':task.channelId==='mataroa'?'mataroa_account_create_pending':task.channelId==='verbose'?'verbose_account_create_pending':task.channelId==='plopino'?'plopino_account_create_pending':task.channelId==='wordcell'?'wordcell_token_create_pending':task.channelId==='vibedrop'?'vibedrop_key_create_pending':task.channelId==='notebin'?'notebin_account_create_pending':task.channelId==='agenthow'?'agenthow_register_pending':undefined];
   return !!task.checkpoint&&checkpoints.includes(task.checkpoint)&&!!task.accountId&&
-    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.raindrop&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.htmlApp&&!task.deedPage&&!task.markdrop&&!task.draftmark&&!task.memoryWiki&&!task.berrry&&!task.agentHow;
+    !task.submittedAt&&!task.publicUrl&&!task.firstLiveAt&&!task.blogger&&!task.leaflet&&!task.wordpress&&!task.raindrop&&!task.bluesky&&!task.paragraph&&!task.nostr&&!task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.prose&&!task.rentry&&!task.lucid&&!task.betterthanhtml&&!task.supanote&&!task.docsMd&&!task.htmlApp&&!task.deedPage&&!task.markdrop&&!task.draftmark&&!task.memoryWiki&&!task.berrry&&!task.agentHow&&!task.agentsWiki;
 }
 
 function topicCandidates(site:Site,tasks:Task[],topicKey=canonicalPublicPageUrl):{known:boolean;available:string[];invalid:boolean}{
@@ -196,7 +199,8 @@ function originalTaskCanRecover(task:Task):boolean{
 }
 
 function hasUnresolvedExternalAttempt(task:Task):boolean{
-  return !!task.agentHow||!!task.berrry||!!task.notebin||!!task.notebinJournal||!!task.wordcell||!!task.vibedrop||!!task.plopino||!!task.blogger||!!task.bluesky||!!task.leaflet||!!task.raindrop||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||!!task.htmlApp||!!task.deedPage||!!task.markdrop||!!task.draftmark||!!task.memoryWiki||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending','plopino_account_create_pending','wordcell_token_create_pending','vibedrop_key_create_pending','notebin_account_create_pending','agenthow_register_pending','berrry_register_pending','berrry_signin_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration)/i.test(task.checkpoint??'');
+  if(task.agentsWiki)return !!task.agentsGather||true;
+  return !!task.carcinus||!!task.agentHow||!!task.berrry||!!task.notebin||!!task.notebinJournal||!!task.wordcell||!!task.vibedrop||!!task.plopino||!!task.blogger||!!task.bluesky||!!task.leaflet||!!task.raindrop||!!task.paragraph||!!task.nostr||!!task.wordpress||!!task.paper||!!task.hive||!!task.mataroa||!!task.verbose||!!task.prose||!!task.rentry||!!task.lucid||!!task.betterthanhtml||!!task.supanote||!!task.docsMd||!!task.htmlApp||!!task.deedPage||!!task.markdrop||!!task.draftmark||!!task.memoryWiki||!!task.submittedAt||!!canonicalPublicPageUrl(task.publicUrl)||['paper_account_create_pending','mataroa_account_create_pending','verbose_account_create_pending','plopino_account_create_pending','wordcell_token_create_pending','vibedrop_key_create_pending','notebin_account_create_pending','agenthow_register_pending','berrry_register_pending','berrry_signin_pending'].includes(task.checkpoint??'')||/(?:submitt|publish|uncertain|registration|carcinus)/i.test(task.checkpoint??'');
 }
 
 function terminalBlock(task:Task):PublicationOpportunity|undefined{
@@ -245,6 +249,12 @@ export function publicationDates(tasks:Task[]):Date[]{
 export function publicationOpportunity(site:Site,channel:Channel,tasks:Task[],now:Date,timeZone:string,context:PublicationOpportunityContext={}):PublicationOpportunity{
   if(!channel.enabled||channel.free==='paid'||channel.free==='unknown')return {allowed:false,repeat:false,blockingReason:'no_automatic_channel',reason:'\u8be5\u6e20\u9053\u5f53\u524d\u4e0d\u7b26\u5408\u53ef\u7528\u7684\u514d\u8d39\u6267\u884c\u6761\u4ef6\u3002'};
   const related=tasks.filter(task=>task.siteId===site.id),sameChannel=related.filter(task=>task.channelId===channel.id),sameSource=related.filter(task=>sourceKey(task.sourceDomain)===sourceKey(channel.domain));
+  if(channel.id==='carcinus'&&tasks.some(task=>task.channelId==='carcinus'))return {allowed:false,repeat:false,blockingReason:'cooldown',reason:'Carcinus 的稳定 human-operated identity 只对应一张固定公开页；保留原任务和原管理状态，不会建立第二个任务。'};
+  if(channel.id==='carcinus'){
+    const topics=topicCandidates(site,related,context.topicKey),topicUrl=topics.available[0];
+    if(!topicUrl)return {allowed:false,repeat:false,blockingReason:topics.invalid?'invalid_topic':topics.known?'topics_exhausted':'topics_unknown',reason:topics.invalid?'已缓存的页面都不是可用的文章选题正文，未建立需要付费生成的任务。':topics.known?'没有尚未用于其他发布任务的真实主题页。':'尚未获得可去重的真实主题页，不建立文章发布任务。'};
+    return {allowed:true,repeat:false,topicUrl,scheduledAt:now.toISOString(),reason:'Carcinus 仅为第一张固定公开页选择一个未使用的真实主题页；后续不再调度第二篇。'};
+  }
   const repeatable=isRepeatableOfficialArticleChannel(channel),events=publicationEvents(sameChannel);
   const latestSuccess=events.map(event=>event.at.getTime()).sort((a,b)=>b-a)[0];
   const relevantSameChannel=sameChannel.filter(task=>{
@@ -289,7 +299,7 @@ export function publicationOpportunity(site:Site,channel:Channel,tasks:Task[],no
   return {allowed:true,repeat,topicUrl,scheduledAt:scheduledAt.toISOString(),reason:repeat?'\u5df2\u4e3a\u4e0d\u540c\u771f\u5b9e\u4e3b\u9898\u9875\u9884\u7559\u5e73\u53f0\u53d1\u5e03\u95f4\u9694\u3002':'\u5e73\u53f0\u9996\u4e2a\u4efb\u52a1\u53ef\u7acb\u5373\u5f00\u59cb\u3002'};
 }
 
-const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','raindrop_prepared','raindrop_submitting','raindrop_api_receipt','raindrop_published','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','wordpress_publish_submitting','wordpress_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','paper_account_create_pending','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_account_create_pending','mataroa_publish_submitting','mataroa_published','verbose_account_create_pending','verbose_publish_submitting','verbose_published','prose_publish_submitting','prose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published','docs_md_share_submitting','docs_md_api_receipt','docs_md_published','html_app_create_submitting','html_app_api_receipt','html_app_published','notebin_account_create_pending','notebin_note_create_submitting','notebin_note_opaque_response','notebin_note_api_receipt','notebin_note_owned']);
+const publicationCheckpoints=new Set(['submitting','submitted','submission_uncertain','carcinus_preflight_clear','carcinus_create_submitting','carcinus_create_unknown','carcinus_opaque_response','carcinus_api_receipt','carcinus_published','carcinus_live_unmanaged','raindrop_prepared','raindrop_submitting','raindrop_api_receipt','raindrop_published','telegraph_publish_submitting','telegraph_publish_uncertain','telegraph_published','gist_published','wordpress_publish_submitting','wordpress_published','leaflet_create_submitting','leaflet_create_accepted','leaflet_published','paper_account_create_pending','paper_publish_submitting','paper_published','hive_publish_submitting','hive_published','mataroa_account_create_pending','mataroa_publish_submitting','mataroa_published','verbose_account_create_pending','verbose_publish_submitting','verbose_published','prose_publish_submitting','prose_published','rentry_publish_submitting','rentry_published','lucid_publish_submitting','lucid_published','betterthanhtml_publish_submitting','betterthanhtml_published','supanote_publish_submitting','supanote_api_receipt','supanote_published','docs_md_share_submitting','docs_md_api_receipt','docs_md_published','html_app_create_submitting','html_app_api_receipt','html_app_published','notebin_account_create_pending','notebin_note_create_submitting','notebin_note_opaque_response','notebin_note_api_receipt','notebin_note_owned']);
 export function reservesSlot(t:Task,now:Date){
   if(t.firstLiveAt)return false;
   if(t.status==='review')return !(t.reviewUntil&&new Date(t.reviewUntil)<=now);

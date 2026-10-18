@@ -42,7 +42,7 @@ async function bounded(response:Response,signal:AbortSignal){
   try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.concat(parts.map(part=>Buffer.from(part))))}catch(error){if(error instanceof CreateResponseError)throw error;throw new CreateResponseError('decode')}
 }
 function exactCreateResponse(value:unknown,intent:HtmlAppIntent):{receipt:HtmlAppReceipt;updateKey:string}|undefined{
-  if(!object(value)||Object.keys(value).sort().join(',')!=='site_id,status,update_key,url'||value.status!=='active'||typeof value.site_id!=='string'||!SITE_ID.test(value.site_id)||!validUpdateKey(value.update_key))return;
+  if(!object(value)||Object.keys(value).some(key=>!['site_id','status','update_key','url','message'].includes(key))||('message' in value&&value.message!==null&&(typeof value.message!=='string'||value.message.length>2048))||value.status!=='active'||typeof value.site_id!=='string'||!SITE_ID.test(value.site_id)||!validUpdateKey(value.update_key))return;
   const publicUrl=htmlAppPublicUrl(value.site_id);if(value.url!==publicUrl)return;
   return {receipt:{...intent,siteId:value.site_id,publicUrl},updateKey:value.update_key};
 }

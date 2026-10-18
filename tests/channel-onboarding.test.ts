@@ -54,7 +54,7 @@ test('accepted anonymous publishers expose their current no-signup access withou
 
 test('verified no-signup and automatic identity flows stay distinct',()=>{
   for(const id of ['lucid-page','rentry','betterthanhtml','supanote','docs-md'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['agenthow','agentnotepad','large-language','mataroa','nostr','notebin','openagentchat','paper-wf','plopino','shippage','swarmmemo','telegraph','verbose','vibedrop','wordcell']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentswiki','carcinus','large-language','mataroa','nostr','notebin','openagentchat','paper-wf','plopino','shellbook','shippage','swarmmemo','telegraph','verbose','vibedrop','wordcell']);
   assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建作者身份/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/本机创建作者密钥/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/不是钱包连接/);

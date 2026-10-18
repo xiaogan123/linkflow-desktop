@@ -28,22 +28,33 @@ import {prepareWordcellIdentity,runWordcellTask,reconcileWordcellTask} from './w
 import {acceptNotebinPublication,makeNotebinContentApproval,notebinDraftIdentity,publishReviewedNotebinNote,recoverUnknownNotebinCreate,type NotebinDraftIdentity,type NotebinPublisherDependencies} from './notebin-publisher';
 import type {NotebinPublicationReceipt} from './notebin';
 import {prepareOpenAgentChatIdentity,reconcileOpenAgentChatTask,runOpenAgentChatTask} from './openagentchat-publisher';
+import {prepareShellbookIdentity,reconcileShellbookTask,runShellbookTask} from './shellbook-publisher';
+import {prepareAgentRiotIdentity,reconcileAgentRiotTask,runAgentRiotTask} from './agentriot-publisher';
 import {prepareAgentNotepadIdentity,reconcileAgentNotepadTask,runAgentNotepadTask} from './agentnotepad-publisher';
 import {prepareColonyIdentity,reconcileColonyTask,runColonyTask} from './colony-publisher';
 import {prepareAgentHowIdentity,reconcileAgentHowTask,runAgentHowTask} from './agenthow-publisher';
+import {reconcileAgentsGatherTask,runAgentsGatherTask} from './agentsgather-publisher';
 import {prepareBerrryIdentity,reconcileBerrryTask,runBerrryTask} from './berrry-publisher';
 import {prepareLargeLanguageIdentity,reconcileLargeLanguageTask,runLargeLanguageTask} from './large-language-publisher';
 import {prepareSwarmMemoIdentity,reconcileSwarmMemoTask,runSwarmMemoTask} from './swarmmemo-publisher';
 import {reconcileTantiveTask,runTantiveTask} from './tantive-publisher';
+import {reconcileTheThingsTask,runTheThingsTask} from './thethings-publisher';
+import {reconcileCarcinusTask,runCarcinusTask} from './carcinus-publisher';
+import {reconcileSynthfolkTask,runSynthfolkTask} from './synthfolk-publisher';
+import {prepareAgentsWikiIdentity,reconcileAgentsWikiTask,runAgentsWikiTask} from './agentswiki-publisher';
+import {reconcileAgentboardTask,runAgentboardTask} from './agentboard-publisher';
 function withPlopinoPersistence(context:ExecutionContext){context.plopinoPersistence??=(context.secrets as typeof context.secrets&{plopinoPersistence?:ExecutionContext['plopinoPersistence']}).plopinoPersistence;return context}
 function withVibeDropPersistence(context:ExecutionContext){context.vibedropPersistence??=(context.secrets as typeof context.secrets&{vibedropPersistence?:ExecutionContext['vibedropPersistence']}).vibedropPersistence;return context}
 function withWordcellPersistence(context:ExecutionContext){context.wordcellPersistence??=(context.secrets as typeof context.secrets&{wordcellPersistence?:ExecutionContext['wordcellPersistence']}).wordcellPersistence;return context}
 function withTantivePersistence(context:ExecutionContext){const hidden=context.secrets as typeof context.secrets&{tantivePersistence?:ExecutionContext['tantivePersistence'];tantiveDependencies?:ExecutionContext['tantiveDependencies']};context.tantivePersistence??=hidden.tantivePersistence;context.tantiveDependencies??=hidden.tantiveDependencies;return context}
+function withTheThingsPersistence(context:ExecutionContext){const hidden=context.secrets as typeof context.secrets&{theThingsPersistence?:ExecutionContext['theThingsPersistence'];theThingsDependencies?:ExecutionContext['theThingsDependencies']};context.theThingsPersistence??=hidden.theThingsPersistence;context.theThingsDependencies??=hidden.theThingsDependencies;return context}
+function withCarcinusPersistence(context:ExecutionContext){const hidden=context.secrets as typeof context.secrets&{carcinusPersistence?:ExecutionContext['carcinusPersistence'];carcinusDependencies?:ExecutionContext['carcinusDependencies']};context.carcinusPersistence??=hidden.carcinusPersistence;context.carcinusDependencies??=hidden.carcinusDependencies;return context}
+export function withAgentsWikiPersistence(context:ExecutionContext){const hidden=context.secrets as typeof context.secrets&{agentsWikiDependencies?:ExecutionContext['agentsWikiDependencies'];agentsWikiRegistrationPersistence?:ExecutionContext['agentsWikiRegistrationPersistence'];agentsWikiPublicationPersistence?:ExecutionContext['agentsWikiPublicationPersistence']};context.agentsWikiDependencies??=hidden.agentsWikiDependencies;context.agentsWikiRegistrationPersistence??=hidden.agentsWikiRegistrationPersistence;context.agentsWikiPublicationPersistence??=hidden.agentsWikiPublicationPersistence;return context}
 
 export interface ApiPublisher {
   prepare?(context:ExecutionContext):Promise<ExecutionResult|undefined>;
   publish(context:ExecutionContext):Promise<ExecutionResult>;
-  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>;markdrop?:NonNullable<ExecutionContext['task']['markdrop']>;draftmark?:NonNullable<ExecutionContext['task']['draftmark']>;vibedrop?:NonNullable<ExecutionContext['task']['vibedrop']>;wordcell?:NonNullable<ExecutionContext['task']['wordcell']>;notebin?:NonNullable<ExecutionContext['task']['notebin']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
+  reconcile?(context:ExecutionContext):Promise<{status:'found';publicUrl:string;raindrop?:NonNullable<ExecutionContext['task']['raindrop']>;leaflet?:NonNullable<ExecutionContext['task']['leaflet']>;wordpress?:NonNullable<ExecutionContext['task']['wordpress']>;paper?:NonNullable<ExecutionContext['task']['paper']>;hive?:NonNullable<ExecutionContext['task']['hive']>;mataroa?:NonNullable<ExecutionContext['task']['mataroa']>;verbose?:NonNullable<ExecutionContext['task']['verbose']>;prose?:NonNullable<ExecutionContext['task']['prose']>;rentry?:NonNullable<ExecutionContext['task']['rentry']>;lucid?:NonNullable<ExecutionContext['task']['lucid']>;betterthanhtml?:NonNullable<ExecutionContext['task']['betterthanhtml']>;supanote?:NonNullable<ExecutionContext['task']['supanote']>;docsMd?:NonNullable<ExecutionContext['task']['docsMd']>;htmlApp?:NonNullable<ExecutionContext['task']['htmlApp']>;deedPage?:NonNullable<ExecutionContext['task']['deedPage']>;markdrop?:NonNullable<ExecutionContext['task']['markdrop']>;draftmark?:NonNullable<ExecutionContext['task']['draftmark']>;vibedrop?:NonNullable<ExecutionContext['task']['vibedrop']>;wordcell?:NonNullable<ExecutionContext['task']['wordcell']>;notebin?:NonNullable<ExecutionContext['task']['notebin']>;agentsWiki?:NonNullable<ExecutionContext['task']['agentsWiki']>;synthfolk?:NonNullable<ExecutionContext['task']['synthfolk']>;carcinus?:NonNullable<ExecutionContext['task']['carcinus']>}|{status:'draft';blogger:NonNullable<ExecutionContext['task']['blogger']>}|{status:'draft';paragraph:NonNullable<ExecutionContext['task']['paragraph']>}|{status:'unknown'}>;
 }
 
 function exactNotebinTarget(task:Pick<Task,'topicUrl'>,site:Pick<Site,'url'>){return task.topicUrl??site.url}
@@ -83,13 +94,21 @@ const publishers:Readonly<Record<string,ApiPublisher>>={
   wordcell:{prepare:context=>prepareWordcellIdentity(withWordcellPersistence(context)),publish:context=>runWordcellTask(withWordcellPersistence(context)),reconcile:context=>reconcileWordcellTask(withWordcellPersistence(context))},
   notebin:{publish:context=>runNotebinTask(context),reconcile:context=>reconcileNotebinTask(context)},
   openagentchat:{prepare:prepareOpenAgentChatIdentity,publish:runOpenAgentChatTask,reconcile:reconcileOpenAgentChatTask},
+  shellbook:{prepare:prepareShellbookIdentity,publish:runShellbookTask,reconcile:reconcileShellbookTask},
+  agentriot:{prepare:prepareAgentRiotIdentity,publish:runAgentRiotTask,reconcile:reconcileAgentRiotTask},
   agentnotepad:{prepare:prepareAgentNotepadIdentity,publish:runAgentNotepadTask,reconcile:reconcileAgentNotepadTask},
   colony:{prepare:prepareColonyIdentity,publish:runColonyTask,reconcile:reconcileColonyTask},
   agenthow:{prepare:prepareAgentHowIdentity,publish:runAgentHowTask,reconcile:reconcileAgentHowTask},
+  agentsgather:{publish:runAgentsGatherTask,reconcile:reconcileAgentsGatherTask},
   berrry:{prepare:prepareBerrryIdentity,publish:runBerrryTask,reconcile:reconcileBerrryTask},
   'large-language':{prepare:prepareLargeLanguageIdentity,publish:runLargeLanguageTask,reconcile:reconcileLargeLanguageTask},
   swarmmemo:{prepare:prepareSwarmMemoIdentity,publish:runSwarmMemoTask,reconcile:reconcileSwarmMemoTask},
   tantive:{publish:context=>runTantiveTask(withTantivePersistence(context)),reconcile:(context=>reconcileTantiveTask(withTantivePersistence(context))) as ApiPublisher['reconcile']},
+  thethings:{publish:context=>runTheThingsTask(withTheThingsPersistence(context)),reconcile:(context=>reconcileTheThingsTask(withTheThingsPersistence(context))) as ApiPublisher['reconcile']},
+  carcinus:{publish:context=>runCarcinusTask(withCarcinusPersistence(context),context.carcinusDependencies),reconcile:(context=>reconcileCarcinusTask(withCarcinusPersistence(context),context.carcinusDependencies)) as ApiPublisher['reconcile']},
+  synthfolk:{publish:runSynthfolkTask,reconcile:reconcileSynthfolkTask},
+  agentswiki:{prepare:context=>prepareAgentsWikiIdentity(withAgentsWikiPersistence(context)),publish:context=>runAgentsWikiTask(withAgentsWikiPersistence(context)),reconcile:context=>reconcileAgentsWikiTask(withAgentsWikiPersistence(context))},
+  agentboard:{publish:runAgentboardTask,reconcile:reconcileAgentboardTask},
 };
 /** Only registered built-in API adapters may execute; a catalog label grants nothing. */
 export function publisherFor(channel:Channel):ApiPublisher|undefined{

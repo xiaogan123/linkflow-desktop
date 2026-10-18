@@ -18,6 +18,7 @@ import {yourwebsDraftError} from '../integrations/yourwebs-publisher';
 import {totpageDraftError} from '../integrations/totpage-publisher';
 import {mdviewDraftError} from '../integrations/mdview-publisher';
 import {txtsbsDraftError} from '../integrations/txtsbs-publisher';
+import {theThingsDraftError} from '../integrations/thethings-publisher';
 import {pastyxDraftError} from '../integrations/pastyx-publisher';
 import {agentdropDraftError} from '../integrations/agentdrop-publisher';
 import {listedStartupsDraftError} from '../integrations/listed-startups-publisher';
@@ -27,14 +28,17 @@ import {markdownPasteDraftError} from '../integrations/markdownpaste-publisher';
 import {slugPostDraftError} from '../integrations/slugpost-publisher';
 import {htmlAppDraftError} from '../integrations/html-app-publisher';
 import {agentHowDraftError} from '../integrations/agenthow-publisher';
+import {agentsWikiDraftError} from '../integrations/agentswiki-publisher';
 import {createBerrryInput} from '../integrations/berrry-publisher';
 import {createSwarmMemoReviewedInput,swarmMemoDraftError} from '../integrations/swarmmemo-publisher';
+import {createSynthfolkPlannedInput,synthfolkDraftError,synthfolkReviewPayload} from '../integrations/synthfolk-publisher';
+import {agentboardDraftError,createAgentboardReviewedInput} from '../integrations/agentboard-publisher';
 import {raindropDraftError} from '../shared/raindrop-content';
 import {TopicDiscoveryError} from '../integrations/topics';
 import {channelEvidenceSources,currentChannelPolicyDecision,supportsOfficialGuidanceReview} from './channel-policy';
 
 export const ARTICLE_REVIEW_CONTRACT_VERSION=4;
-const ACCOUNT_PUBLICATION_REVIEW_CHANNELS=new Set(['wordpress-com','leaflet','raindrop','paper-wf','hive','mataroa','verbose','prose','rentry','large-language','product-index']);
+const ACCOUNT_PUBLICATION_REVIEW_CHANNELS=new Set(['wordpress-com','leaflet','raindrop','paper-wf','hive','mataroa','verbose','prose','rentry','large-language','product-index','agentboard','agentswiki','synthfolk']);
 
 const DISCLOSURE_LINK=/affiliate|referr|commission|rebate|partner|disclos|disclaimer|about|terms|关于|返佣|推荐|佣金|合作|披露|免责声明/i;
 const SITE_RELEVANCE=/affiliate|referr|commission|rebate|partner|disclos|sponsor|author|operator|owner|maintain|about|terms|作者|运营|站长|所有者|返佣|推荐|佣金|合作|赞助|披露|免责/i;
@@ -46,9 +50,10 @@ const SOCIAL_REVIEW_INSTRUCTION=REVIEW_INSTRUCTION+' 本稿是公开社交短内
 const RAINDROP_REVIEW_INSTRUCTION=REVIEW_INSTRUCTION+' 本稿是公开资源书签：实际发布的文字是 draft.title 和原样的 draft.body，直达目标是 task.topicUrl；draft.description 仅保存在本机。必须将 title、body 和目标页面作为同一个将公开的完整作品审核，不能用本机描述补足公开短评的披露、独立价值或事实依据。资源短评应独立可读、与目标相关，且完整保留必要的商业关系披露。';
 
 const GUIDANCE_REVIEW_INSTRUCTION=REVIEW_INSTRUCTION+' 本次是当前内置渠道的官方资料核对：完整内容政策尚未找到，保留 channelRules=unknown；不能把 API 或产品说明当成完整政策，也不要求每个主题另有明确许可。另返回 knownChannelRestrictions，依据已抓取的准确官方 API 和产品资料，独立检查当前稿件和使用方式是否与其中明确的用途、限制或禁令冲突。没有发现已知冲突且用途可据实核对时此项为 pass；有明确冲突为 fail，有具体未解决的适用性或使用限制疑点为 unknown。仅缺少单独的完整政策文档，不构成这一项 unknown 的理由。发现明确禁止的内容不可因政策不完整而放行。五项内容检查和 knownChannelRestrictions 全 pass 时仍返回 verdict=unknown，因为完整 channelRules 未知。事实缺证、作者或佣金关系含糊继续 unknown/fail，不能以可发 API 代替内容审查。';
+const SYNTHFOLK_REVIEW_INSTRUCTION=' profilePayload 是将在单次注册 POST 中立即公开的完整资料，不是私有元数据。必须把 handle、name、headline、about、operator、website、availability、skills 与 disclosure 作为一个不可拆分的公开 payload 审核；确认它如实说明该 AI 由真实人类操控，Website 是当前目标，且没有把操作者伪称为网站所有者、维护者、雇员、客户、专家、获背书者或独立第三方。已有账号时 synthfolkIdentity 是本人 API 与公开资料共同核对后保存的原身份，审核不得改写或补造其 operator。任一字段无法通过时不能放行注册写入。';
 
 export interface ArticleEvidence {url:string;kind:'site'|'site_detail'|'qualification'|'rules'|'api'|'product_guidance'|'content_policy';text:string;excerpt:string;appliesTo?:string;applicability?:'verified'|'unconfirmed'}
-export interface ArticleReviewDependencies {fetchHtml?:(url:string,signal?:AbortSignal)=>Promise<{url:string;html:string}>;now?:()=>Date;account?:Pick<Account,'id'|'channelId'|'username'|'publicationUrl'|'largeLanguage'>}
+export interface ArticleReviewDependencies {fetchHtml?:(url:string,signal?:AbortSignal)=>Promise<{url:string;html:string}>;now?:()=>Date;account?:Pick<Account,'id'|'channelId'|'username'|'publicationUrl'|'largeLanguage'|'agentboard'|'agentsWiki'|'synthfolk'>&Partial<Pick<Account,'email'|'createdAt'|'status'|'hasPassword'|'credentialKind'|'source'|'displayName'>>}
 
 function canonical(value:unknown):unknown{
   if(Array.isArray(value))return value.map(canonical);
@@ -56,8 +61,17 @@ function canonical(value:unknown):unknown{
   return value;
 }
 function digest(value:unknown){return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}
-export function articleContentHash(task:Pick<Task,'draft'|'topicUrl'|'topicContentHash'>){return digest({draft:task.draft??null,topicUrl:task.topicUrl,topicContentHash:task.topicContentHash})}
-export function articleContextHash(site:Site,channel:Channel,settings:Settings,account?:ArticleReviewDependencies['account']){return digest({reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,site:{id:site.id,url:site.url,domain:site.domain,name:site.name,description:site.description,category:site.category,language:site.language,email:site.email,publicEmail:site.publicEmail,qualifications:site.qualifications,blogger:site.blogger,paragraph:site.paragraph,status:site.status},...(ACCOUNT_PUBLICATION_REVIEW_CHANNELS.has(channel.id)?{publication:account&&account.channelId===channel.id?{id:account.id,username:account.username,publicationUrl:account.publicationUrl,...(account.largeLanguage?{largeLanguage:{actorId:account.largeLanguage.actorId,displayName:account.largeLanguage.displayName,responsibleHuman:account.largeLanguage.responsibleHuman,producerType:account.largeLanguage.producerType,producerName:account.largeLanguage.producerName}}:{})}:null}:{}),channel:{id:channel.id,domain:channel.domain,kind:channel.kind,automation:channel.automation,articleRequired:channel.articleRequired,contentFormat:channel.contentFormat,free:channel.free,freeNote:channel.freeNote,notes:channel.notes,rulesUrl:channel.rulesUrl,evidenceSources:channel.evidenceSources,policyDecision:currentChannelPolicyDecision(site,channel),checkedAt:channel.checkedAt,allowedHosts:channel.allowedHosts,enabled:channel.enabled,requirements:channel.requirements},settings:{provider:settings.provider,codexPath:settings.codexPath,apiBase:settings.apiBase,model:settings.model,reasoningEffort:settings.reasoningEffort,articleReviewMode:getArticleReviewMode(site,settings)}})}
+export function articleContentHash(task:Pick<Task,'draft'|'topicUrl'|'topicContentHash'|'agentboardSubject'|'synthfolkInput'>&Partial<Pick<Task,'channelId'|'carcinusInput'>>){const carcinus=task.channelId==='carcinus'&&task.carcinusInput?Object.fromEntries(Object.entries(task.carcinusInput).filter(([key])=>key!=='approval')):undefined;return digest({draft:task.draft??null,topicUrl:task.topicUrl,topicContentHash:task.topicContentHash,agentboardSubject:task.agentboardSubject,synthfolk:synthfolkReviewPayload(task),...(carcinus?{carcinusPublication:carcinus}:{})})}
+function reviewPublicationIdentity(channel:Channel,account?:ArticleReviewDependencies['account']){
+  if(!account||account.channelId!==channel.id)return null;
+  if(channel.id==='synthfolk'){
+    const proof=account.synthfolk;
+    if(!proof||proof.stage!=='ready')return null;
+    return {id:account.id,username:account.username,displayName:account.displayName,source:account.source,synthfolk:{operationId:proof.operationId,requestHash:proof.requestHash,sourceHash:proof.sourceHash,handle:proof.handle,name:proof.name,headline:proof.headline,about:proof.about,operator:proof.operator,website:proof.website,availability:proof.availability,skills:proof.skills,keyFingerprint:proof.keyFingerprint,claimed:proof.claimed}};
+  }
+  return {id:account.id,username:account.username,publicationUrl:account.publicationUrl,...(account.largeLanguage?{largeLanguage:{actorId:account.largeLanguage.actorId,displayName:account.largeLanguage.displayName,responsibleHuman:account.largeLanguage.responsibleHuman,producerType:account.largeLanguage.producerType,producerName:account.largeLanguage.producerName}}:{}),...(account.agentsWiki?{agentsWiki:{remoteAccountId:account.agentsWiki.remoteAccountId,remoteCreatedAt:account.agentsWiki.remoteCreatedAt,name:account.agentsWiki.name,publicDisclosure:account.agentsWiki.publicDisclosure,role:account.agentsWiki.role,ruleVersion:account.agentsWiki.ruleVersion,publicationRights:account.agentsWiki.publicationRights,keyFingerprint:account.agentsWiki.keyFingerprint}}:{}),...(account.agentboard?{agentboard:{stage:account.agentboard.stage,agentId:account.agentboard.agentId,handle:account.agentboard.handle,name:account.agentboard.name,description:account.agentboard.description,homepage:account.agentboard.homepage,operatorName:account.agentboard.operatorName,introductionTaskId:account.agentboard.introductionTaskId}}:{})};
+}
+export function articleContextHash(site:Site,channel:Channel,settings:Settings,account?:ArticleReviewDependencies['account']){return digest({reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,site:{id:site.id,url:site.url,domain:site.domain,name:site.name,description:site.description,category:site.category,language:site.language,email:site.email,publicEmail:site.publicEmail,qualifications:site.qualifications,blogger:site.blogger,paragraph:site.paragraph,status:site.status},...(ACCOUNT_PUBLICATION_REVIEW_CHANNELS.has(channel.id)?{publication:reviewPublicationIdentity(channel,account)}:{}),channel:{id:channel.id,domain:channel.domain,kind:channel.kind,automation:channel.automation,articleRequired:channel.articleRequired,contentFormat:channel.contentFormat,free:channel.free,freeNote:channel.freeNote,notes:channel.notes,rulesUrl:channel.rulesUrl,evidenceSources:channel.evidenceSources,policyDecision:currentChannelPolicyDecision(site,channel),checkedAt:channel.checkedAt,allowedHosts:channel.allowedHosts,enabled:channel.enabled,requirements:channel.requirements},settings:{provider:settings.provider,codexPath:settings.codexPath,apiBase:settings.apiBase,model:settings.model,reasoningEffort:settings.reasoningEffort,articleReviewMode:getArticleReviewMode(site,settings)}})}
 
 function normalizePageText(value:string){return value.replace(/\s+/g,' ').trim()}
 function textFromHtml(html:string,siteEvidence=false){
@@ -162,9 +176,11 @@ function failed(reason:string,task:Task,site:Site,channel:Channel,settings:Setti
 const MIN_SITE_REVIEW_EXCERPT=240;
 type ModelEvidence={url:string;kind:ArticleEvidence['kind'];text:string;truncated:boolean;sourceCharacters:number;coverage:'complete'|'head_tail_relevant_segments';appliesTo?:string;applicability?:'verified'|'unconfirmed'};
 function modelEvidence(item:ArticleEvidence,text:string):ModelEvidence{return {url:item.url,kind:item.kind,text,truncated:text.length<item.text.length,sourceCharacters:item.text.length,coverage:text.length<item.text.length?'head_tail_relevant_segments':'complete',...(item.appliesTo?{appliesTo:item.appliesTo}:{}),...(item.applicability?{applicability:item.applicability}:{})}}
-function prepareReviewInput(draft:NonNullable<Task['draft']>,site:Site,channel:Channel,evidence:ArticleEvidence[],instruction:string,account?:ArticleReviewDependencies['account']){
+function prepareReviewInput(task:Task,site:Site,channel:Channel,evidence:ArticleEvidence[],instruction:string,account?:ArticleReviewDependencies['account'],publicationPayload?:unknown){
+  const draft=task.draft!;
   const isChannel=(item:ArticleEvidence)=>['rules','api','product_guidance','content_policy'].includes(item.kind),siteEvidence=evidence.filter(item=>!isChannel(item)),channelEvidence=evidence.filter(isChannel),keywords=draftKeywords([draft.title,draft.description,draft.body].join('\n'));
-  const base=(modelEvidenceRows:ModelEvidence[])=>({draft,site:{url:site.url,name:site.name,category:site.category,language:site.language},channel:{id:channel.id,name:channel.name,kind:channel.kind,notes:channel.notes,articleRequired:channel.articleRequired,contentFormat:channel.contentFormat,...(account?.channelId===channel.id?{publisherIdentity:account.username,publicationUrl:account.publicationUrl}: {})},evidence:modelEvidenceRows});
+  const synthfolkIdentity=channel.id==='synthfolk'?reviewPublicationIdentity(channel,account):undefined;
+  const base=(modelEvidenceRows:ModelEvidence[])=>({draft,...(channel.id==='synthfolk'?{profilePayload:synthfolkReviewPayload(task),...(synthfolkIdentity?{synthfolkIdentity}:{})}:{}),...(publicationPayload?{publicationPayload}:{}),site:{url:site.url,name:site.name,category:site.category,language:site.language},channel:{id:channel.id,name:channel.name,kind:channel.kind,notes:channel.notes,articleRequired:channel.articleRequired,contentFormat:channel.contentFormat,...(channel.id==='agentboard'?{agentboardSubject:task.agentboardSubject}:{}),...(account?.channelId===channel.id?{publisherIdentity:account.username,publicationUrl:account.publicationUrl,...(account.agentboard?{agentboardIdentity:account.agentboard}:{})}: {})},evidence:modelEvidenceRows});
   if(aiInputCharacters(instruction,base([]))>MAX_AI_INPUT_CHARS)throw Error(`AI 输入超过长度限制（完整稿件与有界证据中的审核元数据超过 ${MAX_AI_INPUT_CHARS} 字符）`);
   const channelRows=channelEvidence.map(item=>modelEvidence(item,item.text));
   if(aiInputCharacters(instruction,base(channelRows))>MAX_AI_INPUT_CHARS){const characters=channelEvidence.reduce((sum,item)=>sum+item.text.length,0);throw Error(`AI 输入超过长度限制（完整稿件与完整渠道规则/官方资料共需 ${aiInputCharacters(instruction,base(channelRows))} 字符，其中渠道文字 ${characters} 字符，上限 ${MAX_AI_INPUT_CHARS} 字符）`)}
@@ -200,6 +216,7 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
   const totpageError=channel.id==='totpage'?totpageDraftError(task,site):undefined;if(totpageError)return fail(totpageError,[],'content_rejected');
   const mdviewError=channel.id==='mdview'?mdviewDraftError(task,site):undefined;if(mdviewError)return fail(mdviewError,[],'content_rejected');
   const txtsbsError=channel.id==='txtsbs'?txtsbsDraftError(task,site):undefined;if(txtsbsError)return fail(txtsbsError,[],'content_rejected');
+  const theThingsError=channel.id==='thethings'?theThingsDraftError(task,site):undefined;if(theThingsError)return fail(theThingsError,[],'content_rejected');
   const pastyxError=channel.id==='pastyx'?pastyxDraftError(task,site):undefined;if(pastyxError)return fail(pastyxError,[],'content_rejected');
   const agentdropError=channel.id==='agentdrop'?agentdropDraftError(task,site):undefined;if(agentdropError)return fail(agentdropError,[],'content_rejected');
   const listedStartupsError=channel.id==='listed-startups'?listedStartupsDraftError(task,site):undefined;if(listedStartupsError)return fail(listedStartupsError,[],'content_rejected');
@@ -211,9 +228,15 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
   const docsMdError=channel.id==='docs-md'?docsMdDraftError(task.draft):undefined;if(docsMdError)return fail(docsMdError,[],'content_rejected');
   const htmlAppError=channel.id==='html-app'?htmlAppDraftError(task,site):undefined;if(htmlAppError)return fail(htmlAppError,[],'content_rejected');
   const agentHowError=channel.id==='agenthow'?agentHowDraftError(task,site):undefined;if(agentHowError)return fail(agentHowError,[],'content_rejected');
+  const agentsWikiError=channel.id==='agentswiki'?agentsWikiDraftError(task,site):undefined;if(agentsWikiError)return fail(agentsWikiError,[],'content_rejected');
   const berrryInput=channel.id==='berrry'?createBerrryInput(task,site):undefined;if(channel.id==='berrry'&&(!berrryInput||JSON.stringify(berrryInput)!==JSON.stringify(task.berrryInput)))return fail('Berrry 当前完整 HTML、精确目标或任务绑定无效。',[],'content_rejected');
   const swarmMemoError=channel.id==='swarmmemo'?swarmMemoDraftError(task,site):undefined;if(swarmMemoError)return fail(swarmMemoError,[],'content_rejected');
   if(channel.id==='swarmmemo'&&task.swarmMemoInput){const approval=task.swarmMemoInput.approval,input=createSwarmMemoReviewedInput(task,site,approval);if(!input||JSON.stringify(input)!==JSON.stringify(task.swarmMemoInput))return fail('SwarmMemo 当前审核稿、精确目标或审核绑定无效。',[],'content_rejected')}
+  if(channel.id==='carcinus'&&(!task.carcinusInput||task.carcinusInput.version!==2||task.carcinusInput.approval))return fail('Carcinus 当前安全 HTML、身份、用途、目标或请求绑定未在审核前完整冻结。',[],'content_rejected');
+  const synthfolkAccount=deps.account as Account|undefined,synthfolkError=channel.id==='synthfolk'?synthfolkDraftError(task,site,synthfolkAccount,task.synthfolkInput?.accountId):undefined;if(synthfolkError)return fail(synthfolkError,[],'content_rejected');
+  if(channel.id==='synthfolk'){const input=task.synthfolkInput,current=input&&createSynthfolkPlannedInput(task,site,input.accountId,synthfolkAccount);if(!input||input.approval||!current||JSON.stringify(current)!==JSON.stringify(input))return fail('Synthfolk 当前完整公开资料、固定身份或目标绑定无效。',[],'content_rejected')}
+  const agentboardError=channel.id==='agentboard'?agentboardDraftError(task,site):undefined;if(agentboardError)return fail(agentboardError,[],'content_rejected');
+  if(channel.id==='agentboard'&&task.agentboardInput){const approval=task.agentboardInput.approval,input=createAgentboardReviewedInput(task,site,approval);if(!input||JSON.stringify(input)!==JSON.stringify(task.agentboardInput))return fail('Agentboard 当前主帖、agent 资料、版块参数或审核绑定无效。',[],'content_rejected')}
   const formatError=channel.id==='raindrop'?raindropDraftError(task.draft):socialDraftError(task,site,channel);if(formatError)return fail(formatError,[],'content_rejected');
   let stage:'evidence'|'ai'='evidence';
   try{
@@ -225,8 +248,10 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
     if(!rulesEvidence.length&&!officialGuidance){const unconfirmed=channelEvidence.some(item=>item.kind==='content_policy');return fail(unconfirmed?'渠道内容政策的适用范围尚未确认，需要补充可验证的渠道资料。':'已核对的渠道资料只有接口或产品说明，尚未找到适用内容政策；当前来源不足以完成适用规则核对。',evidence.map(item=>item.url),unconfirmed?'policy_unknown':'policy_not_found');}
     const combinedDraft=[task.draft.title,task.draft.description,task.draft.body].join('\n');
     if(hasReturnPromise(combinedDraft))return fail('AI 核对未通过：稿件包含收益或无风险承诺。');
-    const instruction=officialGuidance?GUIDANCE_REVIEW_INSTRUCTION:channel.id==='raindrop'?RAINDROP_REVIEW_INSTRUCTION:channel.contentFormat==='social'?SOCIAL_REVIEW_INSTRUCTION:REVIEW_INSTRUCTION;
-    const prepared=prepareReviewInput(task.draft,site,channel,evidence,instruction,deps.account),reviewInput=prepared.input;
+    const baseInstruction=officialGuidance?GUIDANCE_REVIEW_INSTRUCTION:channel.id==='raindrop'?RAINDROP_REVIEW_INSTRUCTION:channel.contentFormat==='social'?SOCIAL_REVIEW_INSTRUCTION:REVIEW_INSTRUCTION;
+    const instruction=channel.id==='carcinus'?baseInstruction+' Carcinus publicationPayload 是将作为一次性公开主页提交的精确四字段请求及其哈希绑定。必须同时审核其 identity、purpose、targetUrl 和完整 htmlTemplate；HTML 中的全部可见文字、披露、唯一链接及用途必须与 draft 和公开证据一致。不得用 draft 补足未出现在 HTML 的内容，也不得忽略 HTML 额外公开的陈述。':baseInstruction+(channel.id==='synthfolk'?SYNTHFOLK_REVIEW_INSTRUCTION:'');
+    const publicationPayload=channel.id==='carcinus'?{identity:task.carcinusInput!.identity,purpose:task.carcinusInput!.purpose,targetUrl:task.carcinusInput!.targetUrl,htmlTemplate:task.carcinusInput!.htmlTemplate,payloadSha256:task.carcinusInput!.payloadSha256,mainSha256:task.carcinusInput!.mainSha256}:undefined;
+    const prepared=prepareReviewInput(task,site,channel,evidence,instruction,deps.account,publicationPayload),reviewInput=prepared.input;
     stage='ai';
     const model=await ai.json<unknown>(instruction,reviewInput,officialGuidance?GUIDANCE_REVIEW_SCHEMA:REVIEW_SCHEMA,signal);
     if(signal?.aborted)throw Error('任务已暂停');

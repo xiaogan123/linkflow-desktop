@@ -28,14 +28,20 @@ const labelByKind:Record<ChannelOnboardingKind,string>={
 // an automatic publisher capability, enable a disabled channel, or prove that
 // a candidate can be used for a particular site.
 const onboardingById:Record<string,OnboardingDefinition>={
+  agentboard:{kind:'ai_account',setup:'首个获准任务通过一次原子请求建立并复用一个如实命名的无邮箱 agent，同时发布该项目唯一的 introductions 主帖；一次性 credential、账号与主帖回执只加密保存在本机。未知结果不重发、不换身份或主页；后续只发独立审核的非 introductions 技术讨论',verification:{checkedAt:'2026-10-17',sourceUrl:'https://www.agentboard.ai/for-agents'}},
+  agentsgather:{kind:'no_signup',setup:'无需账号、邮箱或密钥；单次匿名主帖在 POST 前绑定最终原稿、目标、真实关系披露与独立 AI 审核，响应不明只读恢复且不重发。真实验收前保持停用',verification:{checkedAt:'2026-10-17',sourceUrl:'https://agentsgather.org/core-api.json'}},
   swarmmemo:{kind:'ai_account',setup:'软件在本机自动建立并加密复用 Ed25519 作者身份，无需邮箱或钱包签名；原稿和回执加密保存，未知结果只读核对原页面，不重发',verification:{checkedAt:'2026-10-16',sourceUrl:'https://swarmmemo.com/skill.md'}},
   notebin:{kind:'ai_account',setup:'任务按官方代理协议完成有界 PoW 注册并铸造 audience 与 note 权限受限的专用密钥；凭据只加密保存在本机，结果不明时不重建身份或重发',verification:{checkedAt:'2026-10-12',sourceUrl:'https://pastebin.ca/auth.md'}},
   vibedrop:{kind:'ai_account',setup:'任务创建一枚匿名密钥并仅在本机加密保存；密钥或发布结果不明时不会自动重试',verification:{checkedAt:'2026-10-12',sourceUrl:'https://vibedrop.cc/skill.md'}},
   wordcell:{kind:'ai_account',setup:'首次任务仅创建一枚固定托管令牌并在本机加密保存；已完成一次真实令牌建立、发布、公开页与加密备份恢复验收。结果不明时只查询同一 operation，不重复 PUT 或改用新 slug；不保证永久可用或保留',verification:{checkedAt:'2026-10-16',sourceUrl:'https://wordcell.io/docs/hosted-publication'}},
+  carcinus:{kind:'ai_account',setup:'只建立一个如实披露的 human-operated identity 和一张固定公开页；write token 仅在本机加密保存。未知结果只 GET 核对，不重发或换 identity；丢 token 的页面只记为 live_unmanaged',verification:{checkedAt:'2026-10-18',sourceUrl:'https://carcinus.org/docs/agents'}},
   agenthow:{kind:'ai_account',setup:'首次任务自动建立并复用一个如实命名的无邮箱 actor；key、注册意图与原始响应只在本机加密保存。注册最多一次，未知结果不换 label、不重试',verification:{checkedAt:'2026-10-16',sourceUrl:'https://agenthow.to/reference/register'}},
   agentnotepad:{kind:'ai_account',setup:'首次任务自动建立并跨网站复用一个无邮箱 agent；API key、注册意图与原始响应只在本机加密保存。注册最多一次，未知结果不换名、不重试',verification:{checkedAt:'2026-10-16',sourceUrl:'https://agentnotepad.com/skill.md'}},
   openagentchat:{kind:'ai_account',setup:'首次任务自动建立并复用一个如实命名的无邮箱 agent，也可连接用户已有 token；token 与原始响应只在本机加密保存。注册最多一次，未知结果不换名、不重试',verification:{checkedAt:'2026-10-16',sourceUrl:'https://openagentchat.net/for-agents'}},
+  shellbook:{kind:'ai_account',setup:'首次任务自动建立并复用一个无邮箱、如实命名的持久 agent；token、注册意图与原始响应只在本机加密保存。注册最多一次，未知结果不换名、不重试',verification:{checkedAt:'2026-10-18',sourceUrl:'https://shellbook.io/skill.md'}},
+  agentriot:{kind:'ai_account',setup:'首次任务自动建立并复用一个无邮箱、如实命名的持久 agent；token、注册意图与原始响应只在本机加密保存。注册最多一次，未知结果不换名、不重试',verification:{checkedAt:'2026-10-18',sourceUrl:'https://agentriot.com/docs/post-updates'}},
   'large-language':{kind:'ai_account',setup:'首次任务自动建立并复用一个如实命名的无邮箱 agent，也可连接用户已有 token；token 与原始响应只在本机加密保存。未知结果不换名、不重试；公开资料库收录不代表编辑推荐',verification:{checkedAt:'2026-10-16',sourceUrl:'https://large-language.ai/for-agents'}},
+  agentswiki:{kind:'ai_account',setup:'连接并跨网站复用一个本人合法控制的 agent API key；只接受当前任务生成且经独立 AI 审核的原创中立知识稿。发布前核对 2026-10-13 规则、CC BY 4.0 权利与公开 agent 身份披露；未知结果只读核对，不重发。真实验收前保持停用',verification:{checkedAt:'2026-10-13',sourceUrl:'https://agents-wiki.com/contribution-rules'}},
   plopino:{kind:'ai_account',setup:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可用邮箱和密码连接，注册结果不明不会重复注册',verification:{checkedAt:'2026-10-11',sourceUrl:'https://plopino.com/publish'}},
   'here-now':{kind:'existing_account',setup:'首次需要邮箱验证并连接个人账号 API key；关联网站后按审核与排期发布，邮箱验证码仍需本人完成',verification:{checkedAt:'2026-10-11',sourceUrl:'https://here.now/docs'}},
   shiply:{kind:'existing_account',setup:'向已授权本人邮箱请求六位验证码并一次验证；加密保存 API key 后复用。真实验收前停用。',verification:{checkedAt:'2026-10-14',sourceUrl:'https://shiply.now/docs/getting-started/authentication'}},
@@ -129,6 +135,7 @@ const onboardingById:Record<string,OnboardingDefinition>={
   'html-app':{kind:'no_signup',setup:'无需账号；发布内容完全公开，可能被抓取或复制。免费 best-effort 服务不保证保留、可用性或永久存续；发布前须核对条款',verification:{checkedAt:'2026-10-11',sourceUrl:'https://ht-ml.app/terms'}},
   supanote:{kind:'no_signup',setup:'无需账号；匿名发布公开 Markdown。仅在平台返回管理令牌时加密保存，不承诺可编辑或删除',verification:{checkedAt:'2026-10-09',sourceUrl:'https://supanote.app/docs'}},
   tantive:{kind:'no_signup',setup:'无需账号、邮箱或密钥；匿名发布前会先逐字预览并加密保存临时票据，结果不明时只按原 request ID 查询',verification:{checkedAt:'2026-10-15',sourceUrl:'https://tantive.space/skill.md'}},
+  thethings:{kind:'no_signup',setup:'无需账号或邮箱；匿名 scratch 页面会公开可发现且不可编辑。claim_url 和原始回包只在本机加密保存，超时、503、断流或未知结果都不重发；当前停用，等待独立审查和仅一次原生实发验收',verification:{checkedAt:'2026-10-17',sourceUrl:'https://thethings.ai/'}},
   'docs-md':{kind:'no_signup',setup:'无需账号；匿名分享经核对的 Markdown。当前保持停用，等待真实托管公开页验收',verification:{checkedAt:'2026-10-09',sourceUrl:'https://github.com/invisible-hand/docs-md.com/tree/199f9a2656f83ed2918ee1d1f0ee8bf6734b2a2e'}},
   markest:{kind:'existing_account',setup:'本人用邮箱注册并完成邮件验证；在本人账户中手动创建一次仅含 create_paste、list_own、read_own 的专用个人 key，再到账号页只读验证。连接不证明远端身份或发布权限',verification:{checkedAt:'2026-10-09',sourceUrl:'https://marke.st/api'}},
   telegraph:{kind:'ai_account',setup:'软件调用 API 自动创建作者身份并加密保存令牌'},

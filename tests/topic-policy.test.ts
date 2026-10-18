@@ -45,3 +45,20 @@ test('rejects external URLs and obvious non-content resources', () => {
   assert.equal(isArticleTopicUrl('https://example.com/assets/app.js', site), false);
   assert.equal(isArticleTopicUrl('https://example.com/articles/page?page=2', site), false);
 });
+
+test('recognizes a GitHub release tag page without treating all tag routes as articles', () => {
+  const github = {url:'https://github.com/',domain:'github.com'};
+  assert.equal(isArticleTopicUrl('https://github.com/example-owner/example-project/releases/tag/v2.3.4',github),true);
+  assert.equal(isArticleTopicUrl('https://github.com/example-owner/example-project/releases/tag/v2.3.4-rc.1',github),true);
+  for(const url of [
+    'https://github.com/example-owner/example-project/releases/tag',
+    'https://github.com/example-owner/example-project/releases/tag/v2.3.4/edit',
+    'https://github.com/example-owner/example-project/releases/tag/v2%2Fedit',
+    'https://github.com/example-owner/example-project/tags/v2.3.4',
+    'https://github.com/example-owner/example-project/releases/tag/v2.3.4?page=2',
+    'https://github.com/example-owner/example-project/releases/tag/secret.pdf',
+    'https://github.com@outside.example/example-owner/example-project/releases/tag/v2.3.4',
+  ])assert.equal(isArticleTopicUrl(url,github),false,url);
+  assert.equal(isArticleTopicUrl('https://example.com/owner/project/releases/tag/v2.3.4',site),false);
+  assert.equal(isArticleTopicUrl('https://github.com.evil.test/owner/project/releases/tag/v2.3.4',github),false);
+});
