@@ -5,17 +5,17 @@ import {AGENTBOARD_ORIGIN} from './agentboard';
 export async function readAgentboardRobots(deps:OpenAgentChatDependencies={}):Promise<string>{
   const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(abort,Math.min(60000,Math.max(100,deps.timeoutMs??25000)));
   deps.signal?.addEventListener('abort',abort,{once:true});if(deps.signal?.aborted)abort();
-  const wait=<T>(promise:Promise<T>)=>new Promise<T>((resolve,reject)=>{const stop=()=>{controller.signal.removeEventListener('abort',stop);reject(Error('Agentboard robots 请求已取消'))};if(controller.signal.aborted){void promise.catch(()=>{});stop();return}controller.signal.addEventListener('abort',stop,{once:true});promise.then(value=>{controller.signal.removeEventListener('abort',stop);resolve(value)},error=>{controller.signal.removeEventListener('abort',stop);reject(error)})});
+  const wait=<T>(promise:Promise<T>)=>new Promise<T>((resolve,reject)=>{const stop=()=>{controller.signal.removeEventListener('abort',stop);reject(Error('Agentboard 抓取规则请求已取消'))};if(controller.signal.aborted){void promise.catch(()=>{});stop();return}controller.signal.addEventListener('abort',stop,{once:true});promise.then(value=>{controller.signal.removeEventListener('abort',stop);resolve(value)},error=>{controller.signal.removeEventListener('abort',stop);reject(error)})});
   let response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
   try{
-    if(controller.signal.aborted)throw Error('Agentboard robots 请求已取消');
+    if(controller.signal.aborted)throw Error('Agentboard 抓取规则请求已取消');
     const url=AGENTBOARD_ORIGIN+'/robots.txt';response=await wait((deps.fetch??fetch)(url,{method:'GET',redirect:'manual',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',signal:controller.signal,headers:{accept:'text/plain'}}));
-    if(response.redirected||response.url&&response.url!==url)throw Error('Agentboard robots 路径已改变');
+    if(response.redirected||response.url&&response.url!==url)throw Error('Agentboard 抓取规则路径已改变');
     if(response.status===404)return '';
-    if(response.status!==200||response.headers.get('content-type')?.split(';',1)[0].trim().toLowerCase()!=='text/plain')throw Error('Agentboard robots 不可读取');
-    const declared=response.headers.get('content-length');if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>256000))throw Error('Agentboard robots 过大');
+    if(response.status!==200||response.headers.get('content-type')?.split(';',1)[0].trim().toLowerCase()!=='text/plain')throw Error('Agentboard 抓取规则不可读取');
+    const declared=response.headers.get('content-length');if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>256000))throw Error('Agentboard 抓取规则过大');
     reader=response.body?.getReader();if(!reader)return '';const parts:Buffer[]=[];let size=0;
-    for(;;){const next=await wait(reader.read());if(next.done)break;size+=next.value.length;if(size>256000)throw Error('Agentboard robots 过大');parts.push(Buffer.from(next.value))}
+    for(;;){const next=await wait(reader.read());if(next.done)break;size+=next.value.length;if(size>256000)throw Error('Agentboard 抓取规则过大');parts.push(Buffer.from(next.value))}
     return new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts));
   }finally{clearTimeout(timer);deps.signal?.removeEventListener('abort',abort);if(reader)void reader.cancel().catch(()=>{});else if(response?.body&&!response.body.locked)void response.body.cancel().catch(()=>{})}
 }

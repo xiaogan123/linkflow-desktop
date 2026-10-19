@@ -4,8 +4,9 @@ import {SHIPLY_ORIGIN,shiplySha256} from '../src/integrations/shiply';
 import {resendExpiredShiplyCode,verifyShiplyCode} from '../src/main/shiply-management';
 import {validateBackup} from '../src/main/backup-validation';
 import {Store} from '../src/main/store';
+import {createHumanAction} from '../src/shared/human-action';
 import type {Vault} from '../src/main/vault';
-import type {Account,Task} from '../src/shared/types';
+import type {Account,Site,Task} from '../src/shared/types';
 
 const accountId='11111111-2222-4333-8444-555555555555';
 const taskId='22222222-3333-4444-8555-666666666666';
@@ -29,6 +30,25 @@ test('expired code resends once on the same account and the new code can complet
     assert.equal(ready.id,accountId);assert.equal(ready.shiply?.stage,'ready');assert.equal(ready.shiply?.previousRequestedAt,firstRequestedAt);assert.equal(ready.shiply?.requestedAt,resendAt);
     const backup={state:store.read(),secrets:Object.fromEntries(plaintext)};assert.doesNotThrow(()=>validateBackup(backup));const tampered=structuredClone(backup);tampered.state.accounts[0].shiply!.previousRequestedAt=tampered.state.accounts[0].shiply!.requestedAt;assert.throws(()=>validateBackup(tampered),/Shiply/);
   }finally{store.close()}
+});
+test('resending an expired Shiply code adopts confirmation and ambiguous mail stops',async()=>{
+  const siteId='33333333-4444-4555-8666-777777777777',mailboxId='44444444-5555-4666-8777-888888888888';
+  for(const stop of ['email_confirmation','email_verification_human'] as const){
+    const store=fixture();try{
+      const site:Site={id:siteId,domain:'example.com',url:'https://example.com/',email,mailboxId,name:'Example',description:'Fixture',category:'content',language:'en',monthlyTarget:1,status:'ready',createdAt:firstRequestedAt};
+      const wait:NonNullable<Task['emailWait']>={kind:'code',recipient:email,since:firstRequestedAt,nextPollAt:firstRequestedAt,expiresAt:'2026-10-14T00:10:00.000Z',mailboxId,consumedMessageIds:['old-code'],continuation:'shiply'};
+      const task:Task={id:taskId,siteId,channelId:'shiply',accountId,sourceDomain:'shiply.now',status:'needs_input',checkpoint:stop,reasonCode:'human_required',createdAt:firstRequestedAt,scheduledAt:firstRequestedAt,updatedAt:firstRequestedAt,attempts:0,message:'fixture'};
+      task.humanAction=createHumanAction(task,{kind:stop==='email_confirmation'?'email_confirmation':'email_code_ambiguous',expiresAt:wait.expiresAt},new Date(firstRequestedAt));
+      task.waitingSince=task.humanAction.since;task.waitingDeadlineAt=task.humanAction.deadline;
+      if(stop==='email_confirmation')task.emailConfirmation={wait,messageId:'old-code'};
+      store.update(state=>{state.sites=[site];state.mailboxes=[{id:mailboxId,label:'Fixture',host:'imap.example.com',port:993,user:email,secure:true,hasPassword:true,aliases:[],createdAt:firstRequestedAt,updatedAt:firstRequestedAt,verifiedAt:firstRequestedAt}];state.accounts[0].mailboxId=mailboxId;state.accounts[0].shiply!.siteId=siteId;state.tasks=[task]});
+      if(stop==='email_confirmation')store.setCipher(`signup:${taskId}:email`,'cipher:old-code');
+      await resendExpiredShiplyCode(store,accountId,{now:()=>new Date(resendAt),fetch:async url=>response(url)});
+      const saved=store.read().tasks[0];
+      assert.equal(saved.checkpoint,'email_code_pending',stop);assert.equal(saved.humanAction,undefined);assert.equal(saved.emailConfirmation,undefined);
+      assert.equal(store.getCipher(`signup:${taskId}:email`),undefined);
+    }finally{store.close()}
+  }
 });
 
 test('a current code is never duplicated, including the exact ten-minute boundary',async t=>{

@@ -100,8 +100,8 @@ function errorMessage(error: unknown): string {
   }
   if (error instanceof NetlifyAccountError) {
     if (error.code === 'cancelled') return 'Netlify 连接已取消';
-    if (error.code === 'timeout') return 'Netlify 只读核对已超时';
-    if (error.code === 'identity_mismatch') return 'Netlify 票据身份与当前授权用户不一致';
+    if (error.code === 'timeout') return 'Netlify 检查已超时';
+    if (error.code === 'identity_mismatch') return 'Netlify 授权票据对应的账号与当前授权用户不一致';
     if (error.code === 'auth' || error.code === 'forbidden') return 'Netlify 授权已失效或无权读取该项目';
     if (error.code === 'limit') return 'Netlify 可访问项目过多或分页不稳定，未返回不完整列表';
     return 'Netlify 返回了无法安全核对的数据';
@@ -170,7 +170,7 @@ export class NetlifyConnections {
       await getNetlifyAccountIdentity(grant.accessToken, grant.userId, { ...this.dependencies, signal: abort.signal });
       const projects = await listNetlifyAccessibleProjects(grant.accessToken, { ...this.dependencies, signal: abort.signal });
       if (abort.signal.aborted) throw new NetlifyAccountError('cancelled');
-      if (!projects.length) throw new NetlifyManagementError('当前 Netlify 身份没有可供安全选择的 netlify.app HTTPS 项目');
+      if (!projects.length) throw new NetlifyManagementError('当前 Netlify 发布账号没有可供安全选择的 netlify.app HTTPS 项目');
       const sessionId = this.dependencies.uuid?.() ?? randomUUID();
       const until = now(this.dependencies) + sessionDuration(this.dependencies.sessionTimeoutMs);
       const setTimer = this.dependencies.setTimer ?? ((callback: () => void, milliseconds: number) => setTimeout(callback, milliseconds));
@@ -196,7 +196,7 @@ export class NetlifyConnections {
     this.pending.delete(input.sessionId);
     if (session) this.clearTimer(session.timer);
     if (!session || session.until <= now(this.dependencies)) throw new NetlifyManagementError('Netlify 连接会话已过期，请重新授权');
-    if (!input.dedicatedPublicationConfirmed) throw new NetlifyManagementError('请先确认这是由本工具专用管理的出版项目');
+    if (!input.dedicatedPublicationConfirmed) throw new NetlifyManagementError('请先确认这是由外链助手专用管理的出版项目');
     const selected = session.projects.find(project => project.id === input.siteId);
     if (!selected) throw new NetlifyManagementError('请选择本次授权列出的 Netlify 项目');
     if (selected.nonGitProductionBlocked) throw new NetlifyManagementError('该项目明确禁止普通非 Git 生产部署，不能保存为出版项目');
@@ -223,14 +223,14 @@ export class NetlifyConnections {
         if (generation !== this.generation || abort.signal.aborted) throw new NetlifyAccountError('cancelled');
         if (oldCredential.siteId !== previous.username || oldCredential.siteUrl !== previous.publicationUrl
           || oldCredential.siteId !== selected.id || oldCredential.siteUrl !== selected.publicUrl) {
-          throw new NetlifyManagementError('Netlify 原项目身份或公开网址不一致，不会覆盖历史连接');
+          throw new NetlifyManagementError('Netlify 原项目标识或公开网址不一致，不会覆盖历史连接');
         }
       }
       const identity = await getNetlifyAccountIdentity(session.accessToken, session.userId, { ...this.dependencies, signal: abort.signal });
       const verified = await getNetlifyAccessibleProject(session.accessToken, selected.id, { ...this.dependencies, signal: abort.signal });
       if (generation !== this.generation || abort.signal.aborted) throw new NetlifyAccountError('cancelled');
       if (identity.id !== session.userId || verified.id !== selected.id || verified.teamId !== selected.teamId
-        || verified.publicUrl !== selected.publicUrl) throw new NetlifyManagementError('Netlify 授权期间项目身份发生变化');
+        || verified.publicUrl !== selected.publicUrl) throw new NetlifyManagementError('Netlify 授权期间项目标识发生变化');
       if (verified.nonGitProductionBlocked) throw new NetlifyManagementError('该项目已禁止普通非 Git 生产部署，不能保存为出版项目');
       if (oldCredential && (oldCredential.userId !== identity.id || oldCredential.teamId !== verified.teamId
         || oldCredential.siteId !== verified.id || oldCredential.siteUrl !== verified.publicUrl)) {
@@ -251,7 +251,7 @@ export class NetlifyConnections {
       const key = `account:${id}`;
       if (generation !== this.generation) throw new NetlifyAccountError('cancelled');
       const ciphers = this.vault.encryptSecrets({ [key]: serialized });
-      if (typeof ciphers[key] !== 'string' || !ciphers[key]) throw new NetlifyManagementError('Netlify 凭据未能加密');
+      if (typeof ciphers[key] !== 'string' || !ciphers[key]) throw new NetlifyManagementError('Netlify 登录信息未能加密');
       const account: Account = {
         ...previous,
         id,
@@ -269,7 +269,7 @@ export class NetlifyConnections {
         verifiedAt: undefined,
         diagnostic: {
           code: 'verification_required',
-          message: 'Netlify 只读身份已连接；部署权限、匿名公开访问与真实发布仍待验证。',
+          message: 'Netlify 只读发布账号已连接；部署权限、匿名公开访问与真实发布仍待验证。',
           at: timestamp,
           retryable: false,
         },

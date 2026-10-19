@@ -73,7 +73,7 @@ function fixture(overrides: {
   };
   if (task.articleReview?.contentHash === 'a'.repeat(64)) {
     task.articleReview = { ...task.articleReview, reviewContractVersion: 4, contentHash: articleContentHash(task),
-      contextHash: articleContextHash(site, channel(), settings, account) };
+      contextHash: articleContextHash(site, channel(), settings, account,4) };
   }
   const secrets = new Map([[`account:${account.id}`, JSON.stringify(credential())]]);
   const checkpoints: Array<Partial<TestTask>> = [];
@@ -145,6 +145,7 @@ function server(f: ReturnType<typeof fixture>, options: ServerOptions = {}) {
   let pageStatus = 200;
   let pageHeaders: Record<string, string> = {};
   let recordReads = 0;
+  let recordFailureStatus:number|undefined;
   const fetch: LeafletTransport = async (url, init) => {
     calls.push({ url, init });
     if (url === 'https://bsky.social/xrpc/com.atproto.server.refreshSession') {
@@ -185,6 +186,7 @@ function server(f: ReturnType<typeof fixture>, options: ServerOptions = {}) {
       assert.equal(query.get('collection'), 'site.standard.document');
       assert.equal(query.get('rkey'), f.task.leaflet?.rkey);
       recordReads += 1;
+      if(recordFailureStatus)return json({error:recordFailureStatus===404?'RecordNotFound':'Unavailable'},recordFailureStatus);
       if (!record || !f.task.leaflet || options.getNotFoundOnce && recordReads === 1) {
         return json({ error: 'RecordNotFound' }, 404);
       }
@@ -202,6 +204,7 @@ function server(f: ReturnType<typeof fixture>, options: ServerOptions = {}) {
     fetch, calls,
     get record() { return record; },
     setRecord(value: Record<string, unknown> | undefined) { record = value; },
+    setRecordFailure(status:number|undefined){recordFailureStatus=status},
     setPage(value: string, status = 200, headers: Record<string, string> = {}) { page = value; pageStatus = status; pageHeaders = headers; },
     receipt: () => receipt,
   };
@@ -424,7 +427,7 @@ test('independent AI review is a hard gate and rejected or stale drafts make no 
     let calls = 0;
     const result = await runLeafletTask(f.context, { fetch: async () => { calls += 1; throw Error('must not call'); } });
     assert.equal(result.status, 'needs_input');
-    assert.match(result.message, /独立 AI 核对/);
+    assert.match(result.message, /平台 AI 复核未通过或已失效/);
     assert.equal(calls, 0);
     assert.equal(f.checkpoints.length, 0);
   }
@@ -440,7 +443,7 @@ test('a draft change while refreshed account state is saved invalidates approval
   const remote = server(f);
   const result = await runLeafletTask(f.context, dependencies(remote.fetch));
   assert.equal(result.status, 'needs_input');
-  assert.match(result.message, /身份核对期间发生变更/);
+  assert.match(result.message, /发布账号核对期间发生变更/);
   assert.deepEqual(methodCalls(remote.calls), ['POST https://bsky.social/xrpc/com.atproto.server.refreshSession']);
   assert.equal(remote.calls.some(call => call.url.endsWith('/com.atproto.repo.createRecord')), false);
   assert.equal(f.checkpoints.length, 0);
@@ -519,7 +522,7 @@ test('a changed draft or conflicting record keeps the original rkey and forbids 
   await runLeafletTask(conflict.context, dependencies(conflictRemote.fetch));
   const conflictResult = await runLeafletTask(conflict.context, dependencies(conflictRemote.fetch));
   assert.equal(conflictResult.status, 'review');
-  assert.match(conflictResult.message, /只会继续只读核验/);
+  assert.match(conflictResult.message, /只会继续检查，不会重发/);
   assert.equal(conflictRemote.calls.filter(call => call.url.endsWith('/com.atproto.repo.createRecord')).length, 1);
 });
 
@@ -626,7 +629,7 @@ test('public verification rejects noindex, wrong canonical, hidden or incomplete
   assert.match(mutated.reason, /PDS 原记录/);
 });
 
-test('Leaflet cached 404 is unreachable, never absent, and verification never issues another POST', async () => {
+test('Leaflet cached 404 stays unreachable during its one-hour grace period and verification never issues another POST', async () => {
   const f = fixture();
   const remote = server(f);
   const published = await runLeafletTask(f.context, dependencies(remote.fetch));
@@ -638,6 +641,28 @@ test('Leaflet cached 404 is unreachable, never absent, and verification never is
   assert.equal(result.outcome, 'unreachable');
   assert.match(result.reason, /缓存|不会重发/);
   assert.equal(remote.calls.filter(call => call.url.endsWith('/com.atproto.repo.createRecord')).length, creates);
+});
+
+test('Leaflet local receipt and draft inconsistencies stay unreachable without a read',async()=>{
+  const f=fixture(),remote=server(f);await runLeafletTask(f.context,dependencies(remote.fetch));
+  const cases=[structuredClone(f.task),structuredClone(f.task),structuredClone(f.task),structuredClone(f.task)];
+  delete cases[0].leaflet;
+  cases[1].leaflet!.recordHash='f'.repeat(64);
+  cases[2].draft={...cases[2].draft!,body:`${cases[2].draft!.body}\nchanged`};
+  cases[3].leaflet!.cid=undefined;
+  for(const task of cases){let calls=0;const result=await verifyLeafletPublication(task,f.site.url,{fetch:async()=>{calls++;throw Error('must not read')}});assert.equal(result.outcome,'unreachable');assert.equal(calls,0)}
+});
+
+test('Leaflet PDS and public not-found outcomes share the exact one-hour visibility grace',async t=>{
+  const after=(ms:number)=>()=>new Date(Date.parse(NOW)+ms);
+  await t.test('PDS RecordNotFound',async()=>{const f=fixture(),remote=server(f);await runLeafletTask(f.context,dependencies(remote.fetch));remote.setRecord(undefined);const during=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:after(60*60*1000)}));assert.equal(during.outcome,'unreachable');const afterGrace=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:after(60*60*1000+1)}));assert.equal(afterGrace.outcome,'absent')});
+  await t.test('PDS HTTP 410',async()=>{const f=fixture(),remote=server(f);await runLeafletTask(f.context,dependencies(remote.fetch));remote.setRecordFailure(410);const immediate=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:after(0)}));assert.equal(immediate.outcome,'unreachable');const afterGrace=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:after(60*60*1000+1)}));assert.equal(afterGrace.outcome,'absent')});
+  for(const status of [404,410])await t.test(`public ${status}`,async()=>{const f=fixture(),remote=server(f);await runLeafletTask(f.context,dependencies(remote.fetch));remote.setPage('missing',status);const result=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:after(60*60*1000+1)}));assert.equal(result.outcome,'absent')});
+  await t.test('unknown clock',async()=>{const f=fixture(),remote=server(f);await runLeafletTask(f.context,dependencies(remote.fetch));remote.setPage('missing',404);const result=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:()=>new Date('invalid')}));assert.equal(result.outcome,'unreachable')});
+});
+
+test('Leaflet 403, 408, 429, and 5xx reads remain unreachable',async t=>{
+  for(const point of ['pds','page'] as const)for(const status of [403,408,429,503])await t.test(`${point} ${status}`,async()=>{const f=fixture(),remote=server(f);await runLeafletTask(f.context,dependencies(remote.fetch));if(point==='pds')remote.setRecordFailure(status);else remote.setPage('unavailable',status);const result=await verifyLeafletPublication(f.task,f.site.url,dependencies(remote.fetch,{now:()=>new Date(Date.parse(NOW)+2*60*60*1000)}));assert.equal(result.outcome,'unreachable')});
 });
 
 test('malformed Markdown and unsafe HTML are rejected before createRecord', async () => {

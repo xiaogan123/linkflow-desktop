@@ -9,7 +9,7 @@ import {
   type TopicResourceKind,
   type TopicTransport,
 } from '../src/integrations/topics.js';
-import { fetchPublicText } from '../src/integrations/web.js';
+import { fetchPublicText, PublicFetchError } from '../src/integrations/web.js';
 
 function fixtures(
   values: Record<string, TopicFetchResult | Error | ((kind: TopicResourceKind) => TopicFetchResult)>,
@@ -155,7 +155,7 @@ test('rejects entity-bearing XML, cross-site final redirects, and private sites'
 });
 
 test('falls back to at most 50 eligible homepage links when sitemap is absent', async () => {
-  const missing = Object.assign(new Error('HTTP 404'), { status: 404 });
+  const missing = new PublicFetchError('http_status', '占位错误文案', 404);
   const links = [
     '<a href="/about">About</a>',
     '<a href="https://outside.example/post">Outside</a>',
@@ -191,6 +191,23 @@ test('temporary sitemap failures are classified and never converted to an empty 
     (error: unknown) => error instanceof TopicDiscoveryError && error.code === 'temporary' && error.retryable,
   );
   assert.deepEqual(calls, ['https://example.com/sitemap.xml']);
+});
+
+test('topic transport classification uses structured fields instead of error text', async () => {
+  for (const [failure, expected] of [
+    [new PublicFetchError('unsafe_address', 'unrelated placeholder'), 'unsafe_response'],
+    [new PublicFetchError('size_limit', 'unrelated placeholder'), 'limit_exceeded'],
+    [new Error('private address, aborted, size limit, HTTP 404'), 'temporary'],
+  ] as const) {
+    await assert.rejects(
+      discoverTopics(
+        { url: 'https://example.com/', domain: 'example.com' },
+        undefined,
+        fixtures({ 'https://example.com/sitemap.xml': failure }),
+      ),
+      (error: unknown) => error instanceof TopicDiscoveryError && error.code === expected,
+    );
+  }
 });
 
 test('reads bounded evidence only from an already discovered same-site topic', async () => {

@@ -4,6 +4,7 @@ import {maintainWaitingTasks,recoverWithAlternativeTopic,resumeDeferredTask} fro
 import {defaultSettings,emptyState} from '../src/main/store';
 import {validateBackup} from '../src/main/backup-validation';
 import {CHANNELS} from '../src/integrations/catalog';
+import {createHumanAction} from '../src/shared/human-action';
 import type {Site,Task} from '../src/shared/types';
 const stamp='2026-10-01T00:00:00.000Z',now=new Date('2026-10-03T01:00:00.000Z');
 const site:Site={id:'s',url:'https://example.com',domain:'example.com',name:'Example',description:'Original guides',email:'owner@example.com',category:'content',language:'en',status:'ready',monthlyTarget:2,createdAt:stamp,articleReviewMode:'manual'};
@@ -56,29 +57,41 @@ test('publisher receipts alone preserve remote work through timeout, recovery an
  }
 });
 
-test('48h manual waits defer original draft while external/unknown/system states stay unchanged',()=>{
- const waiting=task(),submitted=task({id:'submitted',submittedAt:stamp}),registration=task({id:'registration',checkpoint:'account_registration_submitted'}),system=task({id:'system',checkpoint:'system_vault_unavailable'}),policy=task({id:'policy',checkpoint:'channel_wait'});
+test('48h human waits time out with a 14-day cooldown while external and system states stay unchanged',()=>{
+ const waiting=task({reasonCode:'manual_review'}),submitted=task({id:'submitted',submittedAt:stamp}),registration=task({id:'registration',checkpoint:'account_registration_submitted',reasonCode:'human_required'}),system=task({id:'system',checkpoint:'system_vault_unavailable'}),policy=task({id:'policy',checkpoint:'channel_wait'});
  const tasks=[waiting,submitted,registration,system,policy];maintainWaitingTasks(tasks,[site],[channel],settings,now);
- assert.equal(waiting.status,'skipped');assert.ok(waiting.deferredAt);assert.equal(waiting.draft?.body,'Original');assert.equal(waiting.cost?.aiCalls,2);
- for(const t of tasks.slice(1))assert.equal(t.status,'needs_input');
+ for(const t of [waiting,registration]){assert.equal(t.status,'skipped');assert.equal(t.reasonCode,'human_timeout');assert.equal(t.cooldownUntil,'2026-10-17T01:00:00.000Z');assert.equal(t.deferredAt,undefined);assert.equal(t.draft?.body,'Original');assert.equal(t.cost?.aiCalls,2)}
+ assert.equal(submitted.status,'needs_input');for(const t of [system,policy])assert.equal(t.status,'skipped');
 });
 test('legacy wait starts now and paused execution never ages or changes task state',()=>{
- const t=task({waitingSince:undefined}),old=structuredClone(t);maintainWaitingTasks([t],[site],[channel],{...settings,autoRun:false},now);assert.deepEqual(t,old);
+ const t=task({reasonCode:'manual_review',waitingSince:undefined}),old=structuredClone(t);maintainWaitingTasks([t],[site],[channel],{...settings,autoRun:false},now);assert.deepEqual(t,old);
  maintainWaitingTasks([t],[{...site,status:'paused'}],[channel],settings,now);assert.deepEqual(t,old);
  maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.waitingSince,now.toISOString());assert.equal(t.status,'needs_input');
 });
+test('manual nonhuman waits discard stale actions without timing out',()=>{
+ const manual={...channel,automation:'manual' as const};
+ for(const [checkpoint,reasonCode] of [['referral_guard','referral_blocked'],['eligibility_wait','channel_ineligible']] as const)
+  for(const initialReason of [reasonCode,'human_required'] as const){
+   const t=task({checkpoint,reasonCode:initialReason});
+   t.humanAction=createHumanAction(t,{kind:'other'},new Date(stamp));
+   t.waitingDeadlineAt=t.humanAction.deadline;
+   maintainWaitingTasks([t],[site],[manual],settings,now);
+   assert.equal(t.status,reasonCode==='referral_blocked'?'failed':'skipped');assert.equal(t.reasonCode,reasonCode);
+   assert.equal(t.humanAction,undefined);assert.equal(t.waitingSince,undefined);assert.equal(t.waitingDeadlineAt,undefined);
+  }
+});
 test('temporary recovery is once on same id with cumulative cost and cannot revive policy failure',()=>{
- const t=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:4},topicUrl:'https://example.com/guide',accountId:'account'}),originalDraft=structuredClone(t.draft);
- maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'queued');assert.equal(t.recoveryAttempts,1);assert.equal(t.cost?.aiCalls,4);
- Object.assign(t,{status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,message:'临时故障，将在次日进行最后一轮有预算的恢复。'});maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'failed');assert.equal(t.nextCheckAt,undefined);assert.equal(t.recoveryEligible,false);assert.match(t.message,/不再安排自动恢复/);assert.equal(t.cost?.aiCalls,4);assert.deepEqual(t.draft,originalDraft);assert.equal(t.topicUrl,'https://example.com/guide');assert.equal(t.accountId,'account');
+ const t=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:2},topicUrl:'https://example.com/guide',accountId:'account'}),originalDraft=structuredClone(t.draft);
+ maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'queued');assert.equal(t.recoveryAttempts,1);assert.equal(t.cost?.aiCalls,2);
+ Object.assign(t,{status:'failed',checkpoint:'system_wait',reasonCode:'temporary_failure',recoveryEligible:true,nextCheckAt:stamp,message:'placeholder'});maintainWaitingTasks([t],[site],[channel],settings,now);assert.equal(t.status,'failed');assert.equal(t.nextCheckAt,undefined);assert.equal(t.recoveryEligible,false);assert.equal(t.reasonCode,'temporary_failure');assert.equal(t.cooldownUntil,undefined);assert.equal(t.cost?.aiCalls,2);assert.deepEqual(t.draft,originalDraft);assert.equal(t.topicUrl,'https://example.com/guide');assert.equal(t.accountId,'account');
  const budget=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:6}});
  const policy=task({status:'failed',checkpoint:'channel_wait',nextCheckAt:stamp});
- maintainWaitingTasks([budget,policy],[site],[channel],settings,now);assert.equal(budget.status,'failed');assert.equal(budget.nextCheckAt,undefined);assert.equal(budget.recoveryEligible,false);assert.match(budget.message,/AI 处理次数上限/);assert.equal(budget.cost?.aiCalls,6);assert.equal(policy.status,'failed');
+ maintainWaitingTasks([budget,policy],[site],[channel],settings,now);assert.equal(budget.status,'failed');assert.equal(budget.nextCheckAt,undefined);assert.equal(budget.recoveryEligible,false);assert.equal(budget.reasonCode,'ai_task_limit');assert.equal(budget.cost?.aiCalls,6);assert.equal(policy.status,'failed');
 });
 
 test('exhausted legacy recovery metadata is normalized without touching future eligible or external work',()=>{
  const future='2026-10-04T01:00:00.000Z';
- const eligible=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:future,cost:{aiCalls:5},message:'临时故障，等待冷却结束。'}),eligibleBefore=structuredClone(eligible);
+ const eligible=task({status:'failed',checkpoint:'system_wait',recoveryEligible:true,nextCheckAt:future,cost:{aiCalls:2},message:'临时故障，等待冷却结束。'}),eligibleBefore=structuredClone(eligible);
  const external=task({status:'failed',checkpoint:'system_wait',submittedAt:stamp,recoveryAttempts:1,recoveryEligible:true,nextCheckAt:stamp,cost:{aiCalls:6},message:'外部提交结果待确认。'}),externalBefore=structuredClone(external);
  maintainWaitingTasks([eligible,external],[site],[channel],settings,now);
  assert.deepEqual(eligible,eligibleBefore);assert.deepEqual(external,externalBefore);
@@ -87,7 +100,7 @@ test('restoring deferred work preserves draft and budget, and refuses a competin
  const t=task({status:'skipped',deferredAt:stamp});resumeDeferredTask([t],t.id,settings,now);assert.equal(t.status,'queued');assert.equal(t.deferredAt,undefined);assert.equal(t.cost?.aiCalls,2);assert.equal(t.draft?.body,'Original');assert.equal(t.checkpoint,'article_review');
  const d=task({status:'skipped',deferredAt:stamp});assert.throws(()=>resumeDeferredTask([d,task({id:'other',status:'queued'})],d.id,settings,now),/已有其他任务/);
  assert.throws(()=>resumeDeferredTask([task({status:'skipped',deferredAt:stamp,submittedAt:stamp})],'t',settings,now),/外部提交/);
- assert.throws(()=>resumeDeferredTask([task({status:'skipped',deferredAt:stamp,cost:{aiCalls:6}})],'t',settings,now),/预算/);
+ assert.throws(()=>resumeDeferredTask([task({status:'skipped',deferredAt:stamp,cost:{aiCalls:6}})],'t',settings,now),/已达处理次数上限/);
 });
 
 test('recovery cannot revive an older failed draft after newer successful or active work',()=>{
@@ -105,9 +118,9 @@ test('failed unknown submission blocks recovery of a separate earlier task',()=>
 test('one rejected article switches topic on the same task and archives the prior draft and review',()=>{
  const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:'2026-10-02T00:00:00.000Z'}]};
  const review={status:'failed' as const,reason:'Unsupported claim remains',reasonCode:'content_rejected' as const,checks:{factualAccuracy:'fail',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'} as const,evidenceUrls:['https://example.com/guide-one'],draftRevision:2,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
- const rejected=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',draftRevision:2,articleRepairAttempts:1,articleReview:review,cost:{aiCalls:4}}),id=rejected.id;
+ const rejected=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',draftRevision:2,articleRepairAttempts:1,articleReview:review,cost:{aiCalls:1}}),id=rejected.id;
  maintainWaitingTasks([rejected],[aiSite],[channel],settings,now);
- assert.equal(rejected.id,id);assert.equal(rejected.status,'queued');assert.equal(rejected.topicUrl,'https://example.com/guide-two');assert.equal(rejected.topicSwitchAttempts,1);assert.equal(rejected.cost?.aiCalls,4);
+ assert.equal(rejected.id,id);assert.equal(rejected.status,'queued');assert.equal(rejected.topicUrl,'https://example.com/guide-two');assert.equal(rejected.topicSwitchAttempts,1);assert.equal(rejected.cost?.aiCalls,1);
  assert.equal(rejected.draft,undefined);assert.equal(rejected.articleReview,undefined);assert.equal(rejected.articleRepairAttempts,0);assert.equal(rejected.articleAttempts?.length,1);assert.equal(rejected.articleAttempts?.[0].topicUrl,'https://example.com/guide-one');assert.equal(rejected.articleAttempts?.[0].draft?.body,'Original');assert.equal(rejected.articleAttempts?.[0].articleReview?.reasonCode,'content_rejected');
  Object.assign(rejected,{status:'failed',checkpoint:'channel_wait',draft:{title:'B',description:'B',body:'Second'},articleReview:{...review,draftRevision:3},cost:{aiCalls:6}});
  maintainWaitingTasks([rejected],[aiSite],[channel],settings,now);assert.equal(rejected.status,'failed');assert.equal(rejected.topicUrl,'https://example.com/guide-two');assert.equal(rejected.topicSwitchAttempts,1);assert.equal(rejected.checkpoint,'article_rejected');
@@ -136,7 +149,7 @@ test('topic switching respects pause, manual mode, disabled channels and uncerta
 test('an alternative never reuses a topic archived by another task',()=>{
  const aiSite:Site={...site,articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/guide-two',discoveredAt:stamp},{url:'https://example.com/guide-three',discoveredAt:stamp}]};
  const review={status:'failed' as const,reason:'Rejected',reasonCode:'content_rejected' as const,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)};
- const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review,cost:{aiCalls:2}});
+ const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review,cost:{aiCalls:1}});
  const historical=task({id:'other',status:'failed',topicUrl:'https://example.com/old',articleAttempts:[{topicUrl:'https://example.com/guide-two',recordedAt:stamp,reason:'Previously rejected'}]});
  const result=recoverWithAlternativeTopic(current,aiSite,channel,[current,historical],settings,now);
  assert.equal(result.kind,'switched');assert.equal(current.topicUrl,'https://example.com/guide-three');
@@ -144,7 +157,7 @@ test('an alternative never reuses a topic archived by another task',()=>{
 
 test('an alternative softly prefers an ASCII locale prefix matching the site language',()=>{
  const aiSite:Site={...site,language:'zh-CN',articleReviewMode:'ai',topics:[{url:'https://example.com/guide-one',discoveredAt:stamp},{url:'https://example.com/en/guides/newer',discoveredAt:'2026-10-02T00:00:00.000Z'},{url:'https://example.com/zh-hans/guides/older',discoveredAt:stamp}]};
- const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:{status:'failed',reason:'Rejected',reasonCode:'content_rejected',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}});
+ const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:{status:'failed',reason:'Rejected',reasonCode:'content_rejected',evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)},cost:{aiCalls:1}});
  assert.equal(recoverWithAlternativeTopic(current,aiSite,channel,[current],settings,now).kind,'switched');assert.equal(current.topicUrl,'https://example.com/zh-hans/guides/older');
 });
 
@@ -160,17 +173,17 @@ test('alternative topics remain reserved by a different publisher receipt withou
   {channelId:'bluesky',checkpoint:'bluesky_publish_uncertain'},
  ];
  for(const receipt of receipts)for(const status of ['failed','skipped','expired'] as const){
-  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review});
+  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review,cost:{aiCalls:1}});
   const other=task({...receipt,id:'other',status,topicUrl:'https://example.com/guide-two/'}),before=structuredClone(other);
   const result=recoverWithAlternativeTopic(current,aiSite,channel,[current,other],settings,now);
   assert.equal(result.kind,'switched');assert.equal(current.topicUrl,'https://example.com/guide-three',`${receipt.channelId}:${status}`);
-  assert.deepEqual(other,before);assert.equal(current.cost?.aiCalls,2);assert.equal(current.articleAttempts?.[0].draft?.body,'Original');
+  assert.deepEqual(other,before);assert.equal(current.cost?.aiCalls,1);assert.equal(current.articleAttempts?.[0].draft?.body,'Original');
  }
- const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review});
+ const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review,cost:{aiCalls:1}});
  const held=task({...receipts[0],id:'held',status:'failed',topicUrl:'https://example.com/guide-two'});
  const result=recoverWithAlternativeTopic(current,{...aiSite,topics:aiSite.topics!.slice(0,2)},channel,[current,held],settings,now);
  assert.equal(result.kind,'blocked');assert.equal(current.topicUrl,'https://example.com/guide-one');
- assert.equal(current.topicSwitchAttempts,undefined);assert.equal(current.draft?.body,'Original');assert.equal(current.cost?.aiCalls,2);
+ assert.equal(current.topicSwitchAttempts,undefined);assert.equal(current.draft?.body,'Original');assert.equal(current.cost?.aiCalls,1);
 });
 
 test('a released registration-only wait or unsubmitted failure does not reserve an alternative topic',()=>{
@@ -180,9 +193,17 @@ test('a released registration-only wait or unsubmitted failure does not reserve 
   {channelId:'paper-wf',status:'skipped',checkpoint:'paper_account_create_pending',accountId:'original-account',deferredAt:stamp},
   {channelId:'blogger',status:'failed',checkpoint:'article_rejected'},
  ] satisfies Partial<Task>[]){
-  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review});
+  const current=task({status:'failed',checkpoint:'channel_wait',topicUrl:'https://example.com/guide-one',articleReview:review,cost:{aiCalls:1}});
   const other=task({...extra,id:'other',topicUrl:'https://example.com/guide-two'}),before=structuredClone(other);
   assert.equal(recoverWithAlternativeTopic(current,aiSite,channel,[current,other],settings,now).kind,'switched');
   assert.equal(current.topicUrl,'https://example.com/guide-two');assert.deepEqual(other,before);
  }
+});
+
+test('a durable remote attempt clears a stale local handoff without timing out or crashing',()=>{
+ const current=task({checkpoint:'telegraph_publish_uncertain',reasonCode:'account_handoff',submittedAt:stamp});
+ current.humanAction=createHumanAction(current,{kind:'account_login'},new Date(stamp));
+ assert.doesNotThrow(()=>maintainWaitingTasks([current],[site],CHANNELS,settings,now));
+ assert.equal(current.status,'needs_input');assert.equal(current.humanAction,undefined);assert.equal(current.submittedAt,stamp);
+ assert.notEqual(current.reasonCode,'human_timeout');
 });

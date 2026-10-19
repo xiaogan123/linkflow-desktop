@@ -242,7 +242,7 @@ test('source site identity changes preserve the claim but reject late receipt at
         else state.sites[0].url = 'https://changed.example/';
       });
       await assert.rejects(persistence.persistCreatedAtomically({ receipt: createdReceipt(expected),
-        editKey: EDIT_KEY }), /来源站点身份/);
+        editKey: EDIT_KEY }), /来源网站标识已改变/);
       assert.equal(f.store.read().tasks[0].shareYourHtml?.stage, 'submitting');
       assert.equal(f.store.getCipher(`publication:${TASK_ID}`), undefined);
     } finally { f.cleanup(); }

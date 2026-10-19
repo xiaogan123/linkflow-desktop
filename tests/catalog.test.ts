@@ -17,7 +17,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, ['thethings','tantive','slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','wordcell','sigle','nuance','prose','tumblr','carcinus'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, !channel.evidenceSources?.length?'unverified':['thethings','tantive','slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','wordcell','sigle','nuance','prose','tumblr','carcinus'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority){
       const metric=channel.authority;
       assert.equal(metric.name,'Ahrefs DR');assert.equal(metric.provenance,'official_snapshot');
@@ -34,6 +34,18 @@ test('catalog contains distinct curated channels with source evidence', () => {
     if (channel.kind === 'community' && !['agentsgather','bluesky','hive','raindrop','colony','tantive','agentboard'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
+});
+
+test('batch 5 policy decisions stay explicit in catalog metadata',()=>{
+  const slopit=CHANNELS.find(channel=>channel.id==='slopit')!;
+  assert.equal(slopit.enabled,false);assert.equal(slopit.promotionPolicy,'forbidden');
+  assert.match(slopit.notes,/第 4 节.*协调博客网络/);assert.match(slopit.notes,/多个网站各开.*博客.*每篇回链/);assert.match(slopit.notes,/保留适配器/);
+  const pastemyst=CHANNELS.find(channel=>channel.id==='pastemyst')!;
+  assert.equal(pastemyst.promotionPolicy,'unknown');assert.match(pastemyst.notes,/legal.*没有内容或商业推广规则.*不能据此认定允许推广/);
+  const wordpress=CHANNELS.find(channel=>channel.id==='wordpress-com')!;
+  assert.match(wordpress.notes,/User Guidelines.*Spam or machine-generated content/);assert.match(wordpress.notes,/SEO.*联盟营销/);
+  const rant=CHANNELS.find(channel=>channel.id==='rant')!;
+  assert.match(rant.notes,/滚动 24 小时内最多新建 2 个/);
 });
 
 test('independently accepted channels are enabled with per-publication limits intact',()=>{
@@ -131,8 +143,8 @@ test('financial publication candidates require ownership and never gain automati
   s.qualifications={publication:'https://example.com/about'};
   const matched=matchChannels(s,CHANNELS).map(m=>m.channel.id);
   for(const id of ids){const c=CHANNELS.find(c=>c.id===id)!;assert(matched.includes(id),id);assert.equal(c.automation,'manual');assert.equal(c.checkedAt,id==='tumblr'?'2026-10-09':'2026-09-30');if(c.authority){assert.equal(c.authority.target,c.domain);assert.equal(c.authority.provenance,'official_snapshot')}assert.equal(c.traffic,undefined)}
-  const wordpress=CHANNELS.find(c=>c.id==='wordpress-com')!;assert(!matched.includes(wordpress.id));assert.equal(wordpress.automation,'api');assert.equal(wordpress.enabled,false);assert.equal(wordpress.checkedAt,'2026-10-08');assert.match(wordpress.notes,/待实发验收/);
-  const leaflet=CHANNELS.find(c=>c.id==='leaflet')!;assert(!matched.includes(leaflet.id));assert.equal(leaflet.automation,'api');assert.equal(leaflet.enabled,false);assert.equal(leaflet.checkedAt,'2026-10-08');assert.equal(leaflet.requirements,undefined);assert(leaflet.categories.includes('general'));assert(leaflet.categories.includes('finance'));assert.equal(leaflet.authority,undefined);assert.equal(leaflet.traffic,undefined);assert.match(leaflet.notes,/不构成平台.*专门许可/);assert.match(leaflet.notes,/当前保持停用/);
+  const wordpress=CHANNELS.find(c=>c.id==='wordpress-com')!;assert(matched.includes(wordpress.id));assert.equal(wordpress.automation,'api');assert.equal(wordpress.enabled,true);assert.equal(wordpress.trial,true);assert.match(wordpress.notes,/待实发验收/);
+  const leaflet=CHANNELS.find(c=>c.id==='leaflet')!;assert(matched.includes(leaflet.id));assert.equal(leaflet.automation,'api');assert.equal(leaflet.enabled,true);assert.equal(leaflet.trial,true);assert.equal(leaflet.requirements,undefined);assert(leaflet.categories.includes('general'));assert(leaflet.categories.includes('finance'));assert.equal(leaflet.authority,undefined);assert.equal(leaflet.traffic,undefined);assert.match(leaflet.notes,/不构成平台.*专门许可/);assert.match(leaflet.notes,/本批启用试运行/);
   assert.equal(CHANNELS.find(c=>c.id==='ghost-pro')?.free,'paid');
 });
 

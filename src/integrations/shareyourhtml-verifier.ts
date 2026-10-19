@@ -2,8 +2,8 @@ import {load, type CheerioAPI} from 'cheerio';
 import {applyDeclaredArticleVisibility, elementConcealed, pageRobotsDirectives} from './article-visibility';
 import {renderShareYourHtmlArticle, type RenderedShareYourHtmlArticle} from './shareyourhtml-article';
 import {shareYourHtmlDraftHash, shareYourHtmlSiteIdentityHash} from '../main/shareyourhtml-publication';
-import {isArticleTopicUrl} from '../shared/topic-policy';
-import {fetchPublicResourceBytes, type PublicFetchDependencies} from './web';
+import {publicationReadSource} from '../main/publication-snapshot';
+import {fetchPublicResourceBytes, PublicFetchError, type PublicFetchDependencies} from './web';
 import type {Site, Task} from '../shared/types';
 
 /** Local verifier budgets; they are not statements about ShareYourHTML service limits. */
@@ -59,6 +59,7 @@ function exactTimestamp(value:string|undefined):boolean{
 function expectedUrl(slug:string):string{return `https://${slug}.shareyourhtml.com`}
 
 function bind(task:Task,site:Site):BoundPublication|undefined{
+  ({task,site}=publicationReadSource(task,site));
   const claim=task.shareYourHtml;
   if(task.channelId!=='shareyourhtml'||task.sourceDomain!=='shareyourhtml.com'||task.accountId
     ||task.siteId!==site.id||!claim||claim.stage!=='api_receipt'||!task.draft
@@ -73,8 +74,6 @@ function bind(task:Task,site:Site):BoundPublication|undefined{
     ||task.submittedAt!==claim.createdAt
     ||task.checkpoint!=='shareyourhtml_api_receipt'||task.publicUrl!==expectedUrl(claim.slug))return;
   const target=task.topicUrl??site.url;
-  if(task.topicUrl&&(!isArticleTopicUrl(task.topicUrl,site)
-    ||!site.topics?.some(topic=>topic.url===task.topicUrl)))return;
   try{
     const rendered=renderShareYourHtmlArticle({draft:task.draft,targetUrl:target,language:site.language,slug:claim.slug});
     if(rendered.sourceHash!==claim.sourceHash||rendered.requestHash!==claim.requestHash)return;
@@ -123,7 +122,7 @@ async function fixedGet(url:string,kind:'html'|'robots',deps:ShareYourHtmlVerifi
       const maximum=kind==='html'?SHAREYOURHTML_READBACK_MAX_HTML_BYTES:SHAREYOURHTML_READBACK_MAX_ROBOTS_BYTES;
       let resource:Awaited<ReturnType<typeof fetchPublicResourceBytes>>;
       try{resource=await fetchPublicResourceBytes(url,controller.signal,deps.publicFetchDependencies,{maxBytes:maximum,accept:kind==='html'?'text/html,application/xhtml+xml':'text/plain',mediaTypes:kind==='html'?['text/html','application/xhtml+xml']:['text/plain'],redirect:'error'})}
-      catch(error){const message=error instanceof Error?error.message:'';if(/(?:Redirect|media type|size|Compressed|malformed)/i.test(message))throw new ReadError('invalid_response');throw error}
+      catch(error){if(error instanceof PublicFetchError&&['redirect_invalid','media_type','size_limit','malformed_response'].includes(error.code))throw new ReadError('invalid_response');throw error}
       if(resource.url!==url)throw new ReadError('invalid_response');
       if(resource.status!==200)throw new ReadError(resource.status>=500||resource.status===408||resource.status===429?'unreachable':'invalid_response');
       let decoded:string;try{decoded=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(resource.body)}catch{throw new ReadError('invalid_response')}
@@ -237,13 +236,13 @@ function inspectPage(page:PageRead,bound:BoundPublication):Omit<ShareYourHtmlRea
   try{
     const $=load(page.text);applyDeclaredArticleVisibility($);
     if($('meta[http-equiv]').toArray().some(node=>($(node).attr('http-equiv')??'').trim().toLowerCase()==='refresh'))
-      return failed('invalid_response','ShareYourHTML 公开页包含不允许的客户端跳转');
+      return failed('invalid_response','ShareYourHTML 公开页包含不允许的浏览器跳转');
     const blockers=$('input[type="password"],iframe,dialog[open],[role="dialog"][aria-modal="true"]').toArray();
     if(blockers.some(node=>visibleWithAncestors($,node)))
       return failed('content_mismatch','ShareYourHTML 公开页显示登录、挑战或遮挡内容');
     const canonicalLinks=$('link[rel]').toArray().filter(node=>($(node).attr('rel')??'').toLowerCase().split(/\s+/).includes('canonical'));
     if(canonicalLinks.length>1||canonicalLinks.some(node=>{try{return new URL($(node).attr('href')??'',bound.requestUrl).href!==bound.requestUrl}catch{return true}}))
-      return failed('invalid_response','ShareYourHTML 公开页规范地址与回执不一致');
+      return failed('invalid_response','ShareYourHTML 公开页规范地址与记录不一致');
     const expected=load(bound.rendered.html),expectedArticle=expected('article').get(0),expectedCanonical=canonicalArticle(expectedArticle);
     if(!expectedArticle||!expectedCanonical)return failed('invalid_binding','ShareYourHTML 本地审核稿无法重建');
     if($('title').length!==1||$('title').text()!==expected('title').text()
@@ -256,7 +255,7 @@ function inspectPage(page:PageRead,bound:BoundPublication):Omit<ShareYourHtmlRea
     if(!visibleWithAncestors($,article)||authored.some(node=>!visibleWithAncestors($,node)))
       return failed('content_hidden','ShareYourHTML 审核正文或其组成部分不可见');
     if(hasUnsupportedVisibility($,article))
-      return failed('visibility_unknown','ShareYourHTML 页面样式超出静态可见性核验范围');
+      return failed('visibility_unknown','ShareYourHTML 页面样式超出静态可见性检查范围');
     const targetLinks=$(article).find('a[href]').toArray().filter(node=>$(node).attr('href')===bound.rendered.targetUrl).map(node=>({
       href:bound.rendered.targetUrl,
       rel:[...new Set(($(node).attr('rel')??'').toLowerCase().split(/\s+/).filter(Boolean))].sort(),
@@ -279,14 +278,14 @@ function inspectPage(page:PageRead,bound:BoundPublication):Omit<ShareYourHtmlRea
  */
 export async function verifyShareYourHtmlReadback(task:Task,site:Site,deps:ShareYourHtmlVerifierDependencies={}):Promise<ShareYourHtmlReadbackResult>{
   const bound=bind(task,site);
-  if(!bound)return failed('invalid_binding','ShareYourHTML API 回执、站点或审核稿绑定无效');
+  if(!bound)return failed('invalid_binding','ShareYourHTML 平台返回记录、站点或审核稿绑定无效');
   const deadline=new AbortController(),external=()=>deadline.abort();
   deps.signal?.addEventListener('abort',external,{once:true});if(deps.signal?.aborted)deadline.abort();
   const timer=setTimeout(()=>deadline.abort(),safeTimeout(deps.timeoutMs));timer.unref?.();
   const boundedDeps={...deps,signal:deadline.signal};
   try{
     let page:PageRead;
-    try{page=await fixedGet(bound.requestUrl,'html',boundedDeps)}catch(error){const kind=error instanceof ReadError?error.kind:'unreachable';return failed(kind,kind==='unreachable'?'ShareYourHTML 公开页暂时无法完成只读核验':'ShareYourHTML 公开页响应未通过固定地址与格式校验',bound.publicUrl)}
+    try{page=await fixedGet(bound.requestUrl,'html',boundedDeps)}catch(error){const kind=error instanceof ReadError?error.kind:'unreachable';return failed(kind,kind==='unreachable'?'ShareYourHTML 公开页暂时无法完成检查':'ShareYourHTML 公开页响应未通过固定地址与格式校验',bound.publicUrl)}
     const inspected=inspectPage(page,bound) as ShareYourHtmlReadbackResult;inspected.publicUrl=bound.publicUrl;
     if(inspected.status!=='visible_match')return inspected;
     try{

@@ -88,16 +88,28 @@ if(!process.versions.electron){
   const clickText=async text=>{const ok=await evaluate('(()=>{const text='+JSON.stringify(text)+';const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()===text&&!item.disabled);if(!button)return false;button.click();return true})()');assert(ok,'button: '+text);await delay(25)};
   const clickLabel=async label=>{const ok=await evaluate('(()=>{const label='+JSON.stringify(label)+';const button=[...document.querySelectorAll("button")].find(item=>item.getAttribute("aria-label")===label&&!item.disabled);if(!button)return false;button.click();return true})()');assert(ok,'button label: '+label);await delay(25)};
   const actionCount=command=>evaluate('window.__wordpressFixture.actions.filter(item=>item.command==='+JSON.stringify(command)+').length');
-  const openWordPress=async()=>{
-    await clickText('添加 / 连接账号');
+  // The platform catalog no longer sits on the accounts tab; on this page it lives in the
+  // "连接账号" guide drawer (a listbox of platforms plus a selection panel with the one action).
+  const openGuide=async()=>{
+    await clickText('连接账号');
     await waitFor('document.querySelector(".account-guide-drawer")!==null');
-    const picked=await evaluate('(()=>{const option=[...document.querySelectorAll(".account-guide-drawer [role=option]")].find(item=>item.querySelector("strong")?.textContent==="WordPress.com");if(!option)return false;option.click();return true})()');
+  };
+  const wordpressOption='[...document.querySelectorAll(".account-guide-drawer [role=option]")].find(item=>item.querySelector("strong")?.textContent==="WordPress.com")';
+  const selectWordPressInGuide=async()=>{
+    const picked=await evaluate('(()=>{const option='+wordpressOption+';if(!option)return false;option.click();return true})()');
     assert(picked,'WordPress.com platform option');
     await waitFor('document.querySelector(".account-guide-drawer .platform-selection")?.innerText.includes("WordPress.com")');
+  };
+  const startWordPressFromGuide=async()=>{
     const opened=await evaluate('(()=>{const button=[...document.querySelectorAll(".account-guide-drawer .platform-selection button")].find(item=>item.innerText.trim()==="查看 WordPress.com 授权"&&!item.disabled);if(!button)return false;button.click();return true})()');
     assert(opened,'guided WordPress.com authorization action');
     await waitFor('document.querySelector(".side-drawer")?.getAttribute("aria-label")==="连接 WordPress.com 博客"');
     await waitFor('document.querySelector(".account-guide-drawer")===null');
+  };
+  const openWordPress=async()=>{
+    await openGuide();
+    await selectWordPressInGuide();
+    await startWordPressFromGuide();
   };
 
   app.whenReady().then(async()=>{
@@ -105,11 +117,15 @@ if(!process.versions.electron){
       win=new BrowserWindow({width:1260,height:820,show:false,webPreferences:{nodeIntegration:false,contextIsolation:true,sandbox:true}});
       win.webContents.on('console-message',(_event,...args)=>{const details=args.find(value=>value&&typeof value==='object'&&typeof value.message==='string');const message=details?.message??args.find(value=>typeof value==='string')??'';consoleMessages.push(String(message))});
       await win.loadFile(join(dir,'index.html'));
-      await waitFor('document.body.innerText.includes("WordPress.com")');
+      await waitFor('[...document.querySelectorAll("button")].some(item=>item.innerText.trim()==="连接账号"&&!item.disabled)');
 
-      check('disabled catalog row remains explicit about acceptance and publication limits',await evaluate('(()=>{const row=[...document.querySelectorAll(".connection-overview-row")].find(item=>item.querySelector("strong")?.textContent==="WordPress.com");return !!row&&row.textContent.includes("当前未启用")&&row.textContent.includes("浏览器授权和真实公开发布尚待验收")&&row.querySelector("button")?.textContent.includes("查看 WordPress.com 授权")})()'));
-      await openWordPress();
+      await openGuide();
+      check('disabled platform stays listed in the connection guide and is labelled not enabled',await evaluate('(()=>{const option='+wordpressOption+';return !!option&&option.querySelector("small")?.textContent.includes("当前未启用")})()'));
+      await selectWordPressInGuide();
+      check('disabled catalog selection remains explicit about publication limits and offers only the authorization review',await evaluate('(()=>{const panel=document.querySelector(".account-guide-drawer .platform-selection");if(!panel)return false;const buttons=[...panel.querySelectorAll("button")];return panel.querySelector(".connection-state")?.textContent==="当前未启用"&&panel.innerText.includes("平台目前停用，不参与自动发布")&&buttons.length===1&&buttons[0].innerText.trim()==="查看 WordPress.com 授权"})()'));
+      await startWordPressFromGuide();
       await waitFor('document.body.innerText.includes("WordPress.com 浏览器授权待接入验收")');
+      check('authorization drawer remains explicit that browser authorization awaits acceptance',await evaluate('document.querySelector("[role=dialog]")?.innerText.includes("WordPress.com 浏览器授权待接入验收。当前版本暂不能发起授权")'));
       check('unconfigured product OAuth disables authorization',await evaluate('(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.includes("待接入验收"));return !!button&&button.disabled})()'));
       check('drawer never asks for or renders a token input',await evaluate('!document.querySelector("[role=dialog] input[type=password]")&&!/access[_ -]?token|client[_ -]?secret/i.test(document.querySelector("[role=dialog]").innerText)'));
       await clickText('取消');

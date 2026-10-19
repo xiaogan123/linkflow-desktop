@@ -39,7 +39,7 @@ export async function readDenoApps(token:string,dependencies:DenoConnectionDepen
     for(let page=0;page<MAX_PAGES;page++){
       const response=await request.get(url);const body=response.body;
       if(!Array.isArray(body)||body.length>100)throw Error('Deno 应用列表格式无法确认');
-      for(const item of body){const choice=appChoice(item),old=choices.get(choice.id);if(old&&old.slug!==choice.slug)throw Error('Deno 应用列表身份不一致');choices.set(choice.id,choice)}
+      for(const item of body){const choice=appChoice(item),old=choices.get(choice.id);if(old&&old.slug!==choice.slug)throw Error('Deno 应用列表标识不一致');choices.set(choice.id,choice)}
       const next=nextListUrl(response.link);
       if(!next)return [...choices.values()];
       if(page===MAX_PAGES-1)throw Error('Deno 应用列表超过本次读取上限；请缩小组织应用数量后重试');
@@ -57,14 +57,14 @@ export async function checkDenoSelectedApp(token:string,selectedId:string,depend
   const request=new DenoReadSession(token,dependencies);
   try{
     const detail=appChoice((await request.get(`${ORIGIN}/v2/apps/${selected.id}`)).body);
-    if(detail.id!==selected.id||detail.slug!==selected.slug)throw Error('Deno 应用详情与列表身份不一致');
+    if(detail.id!==selected.id||detail.slug!==selected.slug)throw Error('Deno 应用详情与列表标识不一致');
     // The revisions endpoint is read to establish present state; it does not prove publishing eligibility.
     const revisions=(await request.get(`${ORIGIN}/v2/apps/${selected.id}/revisions?limit=30`)).body;
     if(!Array.isArray(revisions)||revisions.length>30||revisions.some(item=>!item||typeof item!=='object'||Array.isArray(item)||typeof (item as {id?:unknown}).id!=='string'||!(item as {id:string}).id||String((item as {id:string}).id).length>256))throw Error('Deno revision 列表格式无法确认');
     if(revisions.length){
       const revisionId=(revisions[0] as {id:string}).id;
       const revision=(await request.get(`${ORIGIN}/v2/revisions/${encodeURIComponent(revisionId)}`)).body;
-      if(!revision||typeof revision!=='object'||Array.isArray(revision)||(revision as {id?:unknown}).id!==revisionId)throw Error('Deno revision 详情与列表身份不一致');
+      if(!revision||typeof revision!=='object'||Array.isArray(revision)||(revision as {id?:unknown}).id!==revisionId)throw Error('Deno revision 详情与列表标识不一致');
     }
     return detail;
   }finally{request.close()}

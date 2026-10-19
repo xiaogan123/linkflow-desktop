@@ -15,7 +15,7 @@ export const colonyRegistrationSchema=z.object({
   username,
   display_name:clean(100),
   bio:clean(1000),
-  registered_via:z.literal('linkflow-desktop'),
+  registered_via:z.enum(['site-publisher','linkflow-desktop']),
 }).strict();
 export type ColonyRegistration=z.infer<typeof colonyRegistrationSchema>;
 
@@ -111,7 +111,7 @@ export const colonyPostSchema=z.object({
   colony:z.literal(COLONY_COMMUNITY),post_type:z.literal('analysis'),
   title:clean(300).min(3),body:z.string().min(1).max(50000),
   language:z.literal('en'),tags:z.array(clean(50)).max(10),
-  client:z.literal('linkflow-desktop'),bridge_to_nostr:z.literal(false),confirm_duplicate:z.literal(false),
+  client:z.enum(['site-publisher','linkflow-desktop']),bridge_to_nostr:z.literal(false),confirm_duplicate:z.literal(false),
 }).strict();
 export type ColonyPostInput=z.infer<typeof colonyPostSchema>;
 const postSchema=z.object({
@@ -164,7 +164,7 @@ function record(value:unknown):value is Record<string,unknown>{return !!value&&t
 function dateValue(value:unknown):value is string{return typeof value==='string'&&Number.isFinite(Date.parse(value))}
 function safeText(value:unknown,min:number,max:number):value is string{return typeof value==='string'&&value.length>=min&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value)}
 export function parseColonyMe(value:unknown):ColonyMe|undefined{if(!record(value)||!uuid.safeParse(value.id).success||!username.safeParse(value.username).success||!safeText(value.display_name,1,100)||value.user_type!=='agent'||!dateValue(value.created_at))return;return {id:value.id as string,username:value.username as string,displayName:value.display_name,userType:'agent',createdAt:new Date(value.created_at).toISOString()}}
-export function colonyRegistrationRequest(){const input:ColonyRegistration={username:'linkflow_agent',display_name:'Linkflow AI assistant',bio:'AI development assistant for the Linkflow desktop publishing project.',registered_via:'linkflow-desktop'};const body=JSON.stringify(input);return {input,body,requestHash:colonyHash(`POST\n${COLONY_BEGIN_URL}\ncontent-type:application/json\n\n${body}`)}}
+export function colonyRegistrationRequest(identity?:{username:string;displayName:string}){const input:ColonyRegistration={username:identity?.username??'site_agent',display_name:identity?.displayName??'Site publishing assistant',bio:'AI-assisted contributor for the site operator.',registered_via:'site-publisher'};const body=JSON.stringify(input);return {input,body,requestHash:colonyHash(`POST\n${COLONY_BEGIN_URL}\ncontent-type:application/json\n\n${body}`)}}
 export function colonyConfirmRequest(pending:ColonyPendingIdentity){const body=JSON.stringify({claim_token:pending.claim_token,key_fingerprint:pending.api_key.slice(-6)});return {body,requestHash:colonyHash(`POST\n${COLONY_CONFIRM_URL}\ncontent-type:application/json\n\n${body}`)}}
 export function colonyTokenRequest(apiKey:string){const body=JSON.stringify({api_key:apiKey});return {body,requestHash:colonyHash(`POST\n${COLONY_TOKEN_URL}\ncontent-type:application/json\n\n${body}`)}}
 export function colonyPostRequest(input:ColonyPostInput,idempotencyKey:string){const body=JSON.stringify(colonyPostSchema.parse(input));return {body,sourceHash:colonyHash(input.body),requestHash:colonyHash(`POST\n${COLONY_POSTS_URL}\nidempotency-key:${idempotencyKey}\ncontent-type:application/json\n\n${body}`)}}

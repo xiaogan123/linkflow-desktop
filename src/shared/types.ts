@@ -1,3 +1,11 @@
+import type {WritingProfile,WritingGenre,WritingEnvelope} from './writing-profile';
+import type {Batch5TaskState,Batch5RegistrationState,Batch5Persistence,Batch5AccountPersistence,Batch5Dependencies} from '../integrations/batch5-contract';
+import type {ChannelTrialState} from '../main/channel-trials';
+export interface Task {batch5?:Batch5TaskState;batch5Registration?:Batch5RegistrationState;temporaryPage?:boolean;trialFailure?:string;trialFailureOperationId?:string;trialLastDefinitiveOutcome?:'absent'|'invalid';prepareAttempts?:number}
+export interface ExecutionResult {batch5?:Batch5TaskState;trialFailure?:string;trialFailureOperationId?:string}
+export interface ExecutionContext {batch5Persistence?:Batch5Persistence;batch5AccountPersistence?:Batch5AccountPersistence;batch5Dependencies?:Batch5Dependencies}
+export interface Settings {channelTrials?:Record<string,ChannelTrialState>}
+import type {ArticleEvidenceSnapshot,ArticleFact,ArticlePatch,ChannelTermsCache} from '../main/article-evidence';
 import type {NextgenSlidesPersistence} from '../integrations/nextgen-slides';
 import type {YourwebsPersistence} from '../integrations/yourwebs';
 import type {TotpagePersistence} from '../integrations/totpage';
@@ -48,9 +56,49 @@ import type {AgentboardDiscussionPersistence,AgentboardFirstPersistence,Agentboa
 import type {OpenAgentChatDependencies as AgentboardDependencies} from '../integrations/openagentchat';
 import type {AgentsGatherDependencies} from '../integrations/agentsgather';
 import type {AgentsGatherManagedPersistence} from '../main/agentsgather-publication';
+import type {TaskReasonCode} from './task-reasons';
+import type {HumanAction} from './human-action';
+import type {EmailConfirmation, EmailWait, MailboxAutomationReadiness, MailboxUsageCounts} from './mail-automation';
+import type {SignupTaskState, SignupExecutionHooks} from './signup';
+
+export type {TaskReasonCode} from './task-reasons';
 
 export type SiteStatus = 'analyzing'|'ready'|'paused'|'attention';
 export type TaskStatus = 'queued'|'running'|'needs_input'|'review'|'live'|'failed'|'skipped'|'expired';
+export interface Site {
+  writingProfile?: WritingProfile;
+  archivedAt?: string;
+  linkTargets?: string[];
+  forbiddenTerms?: string[];
+  topicOverrides?: {added:SiteTopic[];excluded:string[]};
+  timezone?: string;
+  planStatus?: {month:string;target:number;effectiveTarget:number;capacity:number;reasonCode?:'platform_capacity';message:string};
+}
+export type ChannelAccessClass='direct_submit'|'auto_account'|'email_auto'|'human_verify_once'|'connect_once'|'wallet'|'manual'|'unqualified';
+export interface Channel {termsCache?:ChannelTermsCache;accessClass?:ChannelAccessClass}
+export interface Task {
+  emailWaitRegisteredAt?:string;
+  humanAction?: HumanAction;
+  emailWait?: EmailWait;
+  emailConfirmation?: EmailConfirmation;
+  signup?: SignupTaskState;
+  scheduling?: {version:1;month:string;slot:number;target:number;effectiveTarget:number;reschedules:number;selectionAt?:string;publicIdentity?:string;nextPublishAt?:string;attemptedAt?:string};
+  writingGenre?:WritingGenre;
+  writingEnvelope?:WritingEnvelope;
+  draftHistory?:{at:string;draft:{title:string;description:string;body:string};writingEnvelope?:WritingEnvelope}[];
+  diversityRepairStage?:0|1|2|3;
+  evidenceSnapshot?:ArticleEvidenceSnapshot;
+  factManifest?:ArticleFact[];
+  reasonCode?: TaskReasonCode;
+  cooldownUntil?: string;
+  waitingDeadlineAt?: string;
+  waitingReminderAt?: string;
+  suitabilityReason?: string;
+}
+export interface ExecutionResult {reasonCode?: TaskReasonCode; humanAction?: HumanAction; emailWait?: EmailWait; signup?: SignupTaskState; /** Transient transport metadata; never persisted on Task. */ failureOrigin?:'ai'}
+export interface ExecutionContext {signupHooks?: SignupExecutionHooks}
+export interface Snapshot {mailboxUsage?: Record<string, MailboxUsageCounts>;mailboxReadiness?:Record<string,MailboxAutomationReadiness>;humanActionCapabilities?:Record<string,{canDone:boolean;mode:'page_check'|'resume'|'verify_publication'|'confirm_email'|'unsupported'}>}
+export interface Settings {humanActionSummaryDate?: string}
 export type Category = 'software'|'ai'|'developer'|'design'|'business'|'content'|'education'|'finance'|'general';
 export type Qualification = 'software'|'developer'|'portfolio'|'publication'|'business'|'localBusiness'|'techContent'|'wordpressPlugin'|'drupalProject'|'javascriptPackage'|'pythonPackage'|'dotnetPackage'|'rustCrate'|'phpPackage'|'dartPackage'|'rubyGem'|'containerImage'|'aiArtifact'|'firefoxExtension'|'vscodeExtension'|'jetbrainsPlugin'|'linuxApp'|'androidFoss'|'openSource'|'gameAsset';
 export interface SearchReport {checkedAt:string;method:'api'|'csv';sources:string[];complete:boolean;message:string;targetUrl?:string;error?:boolean;firstSeenAt?:Record<string,string>}
@@ -58,14 +106,29 @@ export interface ChannelEvidenceSource {url:string;kind:'api'|'product_guidance'
 export interface ChannelPolicyDecision {scopeHash:string;confirmedAt:string;decision:'use_without_confirmed_policy'}
 export interface SiteTopic {url:string;title?:string;lastModified?:string;discoveredAt:string}
 export interface Site {paragraph?:{publicationId:string;url:string};blogger?:{blogId:string;url:string};topics?:SiteTopic[];topicsCheckedAt?:string;topicsAttemptedAt?:string;topicsError?:string;id:string;domain:string;url:string;email:string;publicEmail?:string;mailboxId?:string;name:string;description:string;category:Category;language:string;monthlyTarget:number;articleReviewMode?:ArticleReviewMode;channelPolicyDecisions?:Record<string,ChannelPolicyDecision>;status:SiteStatus;createdAt:string;analyzedAt?:string;error?:string;qualifications?:Partial<Record<Qualification,string>>;searchReports?:{gsc?:SearchReport;bing?:SearchReport}}
-export interface Channel {contentFormat?:'social';id:string;name:string;domain:string;url:string;submitUrl:string;categories:Category[];languages:string[];kind:'directory'|'profile'|'article'|'community';emailRequired:boolean;accountRequired:boolean;articleRequired:boolean;free:'yes'|'conditional'|'unknown'|'paid';freeNote:string;automation:'browser'|'api'|'manual';quality:'A'|'B'|'C';qualityReason:string;provenance?:'built-in'|'custom';requirements?:Qualification[];evidenceStatus?:'rules_checked'|'source_checked'|'user_added';authority?:{name:string;value:number;source:string;asOf?:string;scope?:'domain'|'subdomain'|'page';target?:string;dataMonth?:string;checkedAt?:string;provenance?:'official_snapshot'};traffic?:{monthly:number;source:string;asOf:string;region?:string;period?:string;metric?:'visits'|'organicVisits';estimated?:boolean};rulesUrl:string;evidenceSources?:ChannelEvidenceSource[];checkedAt:string;notes:string;allowedHosts:string[];enabled:boolean}
+export type ChannelAudience = 'general'|'finance'|'software'|'ai_agent'|'local_business'|'design';
+/** Optional fields preserve old settings and encrypted backups. Undefined retention means no configured expiry, not a permanence guarantee. */
+export interface Channel {
+ linkRel?:'follow'|'nofollow'|'ugc'|'unknown';
+ indexable?:'yes'|'no'|'partial'|'unknown';
+ retentionDays?:number;
+ audience?:ChannelAudience[];
+ promotionPolicy?:'allowed'|'disclosed'|'forbidden'|'unknown';
+ promotionPolicySource?:string;
+ trial?:boolean;
+ /** One identity belongs to one site; it may still publish multiple articles for that site. */
+ singleSiteOnly?:boolean;
+ irreversible?:boolean;
+}
+export interface ChannelMetric {provider:string;value:number;target:string;linkScope:'same-host'|'platform-root';asOf:string;version:''|'dr3'|'dr4';source:string;note?:string;apiProvenance?:'ahrefs_api'}
+export interface Channel {metrics?:ChannelMetric[];contentFormat?:'social';id:string;name:string;domain:string;url:string;submitUrl:string;categories:Category[];languages:string[];kind:'directory'|'profile'|'article'|'community';emailRequired:boolean;accountRequired:boolean;articleRequired:boolean;free:'yes'|'conditional'|'unknown'|'paid';freeNote:string;automation:'browser'|'api'|'manual';quality:'A'|'B'|'C';qualityReason:string;provenance?:'built-in'|'custom';requirements?:Qualification[];evidenceStatus?:'rules_checked'|'source_checked'|'user_added'|'unverified';authority?:{name:string;value:number;source:string;asOf?:string;scope?:'domain'|'subdomain'|'page';target?:string;dataMonth?:string;checkedAt?:string;provenance?:'official_snapshot'};traffic?:{monthly:number;source:string;asOf:string;region?:string;period?:string;metric?:'visits'|'organicVisits';estimated?:boolean};rulesUrl:string;evidenceSources?:ChannelEvidenceSource[];checkedAt:string;notes:string;allowedHosts:string[];enabled:boolean}
 export interface TaskHistoryEntry {at:string;status:TaskStatus;message:string;linkCheck?:'found'|'absent'|'unreachable'|'invalid'}
 export interface TaskCost {aiCalls:number;durationMs?:number;inputTokens?:number;outputTokens?:number;amount?:number;currency?:string}
 export type ArticleReviewMode='manual'|'ai';
 export type ArticleCheckName='factualAccuracy'|'authorRelationship'|'affiliateDisclosure'|'independentValue'|'financialSafety'|'channelRules';
 export type ArticleChecks=Record<ArticleCheckName,'pass'|'fail'|'unknown'>;
-export type ArticleReviewReasonCode='passed'|'content_rejected'|'policy_unknown'|'policy_not_found'|'evidence_fetch_failed'|'evidence_invalid'|'invalid_topic'|'format_invalid'|'ai_unavailable'|'input_too_long'|'user_policy_decision';
-export interface ArticleReview {status:'running'|'passed'|'failed';reason:string;reasonCode?:ArticleReviewReasonCode;reviewContractVersion?:number;checks?:ArticleChecks;policyDecision?:ChannelPolicyDecision;reviewedAt?:string;evidenceUrls:string[];draftRevision:number;contentHash:string;contextHash:string}
+export type ArticleReviewReasonCode='review_changes_requested'|'passed'|'content_rejected'|'policy_unknown'|'policy_not_found'|'evidence_fetch_failed'|'evidence_invalid'|'evidence_truncated'|'invalid_topic'|'format_invalid'|'format_repair_exhausted'|'ai_unavailable'|'ai_daily_limit'|'analysis_daily_limit'|'ai_task_limit'|'input_too_long'|'user_policy_decision';
+export interface ArticleReview {bindingVersion?:2;bindingHash?:string;targetUrl?:string;failureStage?:'input'|'response';factManifest?:ArticleFact[];patches?:ArticlePatch[];termsHash?:string;status:'running'|'passed'|'failed';reason:string;reasonCode?:ArticleReviewReasonCode;reviewContractVersion?:number;checks?:ArticleChecks;policyDecision?:ChannelPolicyDecision;reviewedAt?:string;evidenceUrls:string[];draftRevision:number;contentHash:string;contextHash:string}
 export interface ArticleReviewMigration {contractVersion:4;recordedAt:string;priorRepairAttempts:number;draft:{title:string;description:string;body:string};draftRevision:number;topicUrl?:string;topicContentHash?:string;review:ArticleReview}
 export interface OneReviewRetryBinding {siteId:string;channelId:string;accountId:string|null;draftRevision:number;contentHash:string;contextHash:string;provider:Settings['provider'];model:string}
 interface OneReviewRetryBase extends OneReviewRetryBinding {version:1;purpose:'independent_article_review';operationTokenHash:string;grantedAt:string}
@@ -74,7 +137,7 @@ export type OneReviewRetry=OneReviewRetryBase&(
   |{status:'consumed';consumedAt:string}
   |{status:'invalidated';invalidatedAt:string;invalidationReason:'cancelled'|'restart'|'backup_import'|'request_not_started'|'binding_changed'}
 );
-export interface Task {oneReviewRetry?:OneReviewRetry}
+export interface Task {metrics?:ChannelMetric[];oneReviewRetry?:OneReviewRetry}
 export interface TheThingsTaskReceipt extends importTheThingsIntent {stage:'submitting'|'opaque_response'|'api_receipt'|'published';slug?:string}
 type importTheThingsIntent=import('../integrations/thethings').TheThingsIntent;
 export interface Task {theThings?:TheThingsTaskReceipt}
@@ -244,12 +307,12 @@ export type AccountStatus='draft'|'needs_verification'|'registered'|'credentials
 export type AccountIssueCode='legacy_saved'|'password_missing'|'bad_password'|'email_exists'|'username_taken'|'verification_required'|'registration_failed'|'registration_unknown'|'restricted';
 export interface AccountDiagnostic {code:AccountIssueCode;message:string;at:string;retryable:boolean}
 export interface Account {hereNow?:{version:1;checkedAt:string;accountId:string;keyFingerprint:string;identity:'verified_personal';existingSlug?:string;existingSiteUrl?:string}}
-export interface Account {shiply?:{version:1;emailHash:string;requestedAt:string;previousRequestedAt?:string;stage:'requesting'|'request_unknown'|'code_sent'|'verifying'|'verify_unknown'|'verify_opaque'|'ready';keyFingerprint?:string}}
+export interface Account {shiply?:{version:1;emailHash:string;requestedAt:string;siteId?:string;previousRequestedAt?:string;stage:'requesting'|'request_unknown'|'code_sent'|'verifying'|'verify_unknown'|'verify_opaque'|'ready';keyFingerprint?:string}}
 export interface NotebinAccountProof {version:1;rootAccountId:string;rootKeyFingerprint:string;whoamiResponseHash:string;noteKeyFingerprint:string;keyId:string;keyListResponseHash:string;noteReadResponseHash:string;audience:'https://notebin.ca';scopes:readonly ['note:read','note:create'];rootIdentity:'exact_readback';keyBinding:'exact_response'|'exact_readback';verifiedAt:string}
 export interface Account {raindrop?:RaindropAccountBinding;denoReadAccess?:{version:1;checkedAt:string;appId:string;appSlug:string;declaredOrgSlug:string;tokenFingerprint:string;identity:'app_verified_org_declared'};markestReadAccess?:{version:1;checkedAt:string;keyFingerprint:string;identity:'user_declared'};mataroaExcludedSiteIds?:string[];verboseExcludedSiteIds?:string[];rentryExcludedSiteIds?:string[];publicationUrl?:string;displayName?:string;credentialKind?:'password'|'api_token'|'oauth';id:string;channelId:string;email:string;username:string;mailboxId?:string;createdAt:string;status:AccountStatus;hasPassword:boolean;source?:'generated'|'imported';updatedAt?:string;lastUsedAt?:string;registeredAt?:string;verifiedAt?:string;registrationAttempts?:number;diagnostic?:AccountDiagnostic}
 export interface Account {notebin?:NotebinAccountProof;notebinJournal?:NotebinIdentityJournal}
 export interface BloggerBlogSummary {id:string;name:string;url:string}
-export interface BloggerConnectionResult {account:Account;blogs:BloggerBlogSummary[]}
+export interface BloggerConnectionResult {account:Account;blogs:BloggerBlogSummary[];guidance?:typeof import('./blogger-messages').BLOGGER_GUIDANCE}
 export interface SiteAccountBinding {id:string;siteId:string;channelId:string;accountId:string;createdAt:string;updatedAt:string}
 export interface Mailbox {id:string;label:string;host:string;port:number;user:string;secure:boolean;hasPassword:boolean;aliases:string[];createdAt:string;updatedAt:string;verifiedAt?:string;lastError?:string}
 // Service-reported identifiers may grow beyond the currently known display labels.
@@ -259,17 +322,32 @@ export interface AiModelOption {id:string;label?:string;source:'api'|'codex';isD
 export interface AiModelDiscovery {provider:'codex'|'api';models:AiModelOption[];defaultModel?:string;effectiveModel?:string;source:'remote'|'local-cli'|'configured'|'unavailable';discoveredAt:string;message:string}
 export type CapacityBlockReason='topics_unknown'|'topics_exhausted'|'invalid_topic'|'article_rejected'|'cadence_wait'|'no_automatic_channel'|'account_required'|'cooldown'|'budget_exhausted';
 export interface SiteCapacity {eligiblePages?:number;automaticPages?:number;blockingReason?:CapacityBlockReason;nextAvailableAt?:string;currentSources?:number;monthlySources?:number;siteId:string;currentLive:number;firstVerifiedThisMonth:number;missing:number;eligibleUnused:number;automaticUnused:number;manualUnused:number;monthsAtTarget:number|null;reason?:string}
-export interface Settings {hasBingKey?:boolean;monitorSearch?:boolean;htmlAppPublicNotice?:HtmlAppPublicNoticeAcceptance;provider:'codex'|'api';codexPath:string;model:string;reasoningEffort?:ReasoningEffort;articleReviewMode:ArticleReviewMode;preferredBrowser?:'system'|'chrome'|'edge';apiBase:string;hasApiKey:boolean;autoRun:boolean;launchAtLogin:boolean;notify:boolean;timezone:string;maxAttempts:number;maxSteps:number;dailyAiLimit:number;channelOverrides:Record<string,boolean>;mail:{host:string;port:number;user:string;secure:boolean;hasPassword:boolean};}
+export type Appearance = 'system'|'light'|'dark';
+export interface Settings {appearance?:Appearance;hasAhrefsKey?:boolean;ahrefsStatus?:'connected'|'error';ahrefsLastUpdatedAt?:string;ahrefsLastRefreshMonth?:string;ahrefsRetryAfter?:string;hasBingKey?:boolean;monitorSearch?:boolean;htmlAppPublicNotice?:HtmlAppPublicNoticeAcceptance;provider:'codex'|'api';codexPath:string;model:string;reasoningEffort?:ReasoningEffort;articleReviewMode:ArticleReviewMode;preferredBrowser?:'system'|'chrome'|'edge';apiBase:string;hasApiKey:boolean;autoRun:boolean;launchAtLogin:boolean;notify:boolean;timezone:string;maxAttempts:number;maxSteps:number;dailyAiLimit:number;channelOverrides:Record<string,boolean>;mail:{host:string;port:number;user:string;secure:boolean;hasPassword:boolean};}
 export interface Event {id:string;at:string;siteId?:string;taskId?:string;level:'info'|'warning'|'error';message:string}
 export interface Runtime {busy:boolean;activeTaskId?:string;aiReady:boolean;vaultReady:boolean;mailReady:boolean;version:string;platform:string;dataPath:string;error?:string;aiCallsToday:number}
-export interface Snapshot {sites:Site[];tasks:Task[];channels:Channel[];accounts:Account[];mailboxes:Mailbox[];accountBindings:SiteAccountBinding[];settings:Settings;events:Event[];runtime:Runtime;siteOriginMigrations?:Array<{siteId:string}>;channelPolicyStatus?:Record<string,Record<string,'valid'|'expired_or_changed'|'unconfirmed'>>;capacity?:SiteCapacity[];aiModels?:AiModelDiscovery;demo?:boolean}
+export interface Task {replacementTaskId?:string;replacesTaskId?:string;trialSendStartedAt?:string;failedPlatformIds?:string[];failedPlatformAt?:Record<string,string>;temporaryRetryCount?:number;temporaryRetryStage?:'review'|'publish';temporaryBackoffCount?:number;temporaryBackoffStartedAt?:string;recoveredAt?:string;linkRecheckVersion?:1;linkRecheckAt?:string;linkObservation?:{version:1;checkedAt:string;publicUrl:string};missedPublicationAt?:string}
+export interface PlatformSurvival {sampleSize:number;lostCount:number;survivalRate:number;pausedAt?:string;resumedAt?:string}
+export interface Settings {onlineHours?:Array<{day:string;mask:number}>;platformSurvival?:Record<string,PlatformSurvival>}
+export interface Runtime {onlineHoursLast7Days?:number;missedPublicationsLast7Days?:number}
+export interface Snapshot {aiEstimate?:{sites:number;monthlyTarget:number;daily:number};
+  /** Per ready site: the platforms the scheduler would use for it now (same predicate as task scheduling). */
+  schedulablePlatformIds?:Record<string,string[]>}
+export interface Snapshot {platformSurvival?:Record<string,PlatformSurvival>;platformSurvivalTodos?:Array<{channelId:string;message:string;pausedAt:string}>}
+export type FinancePlatformGroup='no_signup'|'auto_account'|'email_auto'|'one_time_verification'|'connected_auto'|'wallet_login'|'manual_publish'|'ineligible';
+export interface FinancePlatformCount {count:number;channelIds:string[];runtimeSchedulableIds:string[];trialCount:number;acceptedCount:number;pendingAcceptanceCount?:number;confirmationRequiredIds?:string[];verificationRequiredIds?:string[];connectionRequiredIds:string[];temporaryIds:string[];groupedChannelIds?:Record<FinancePlatformGroup,string[]>}
+export interface Snapshot {sites:Site[];tasks:Task[];channels:Channel[];accounts:Account[];mailboxes:Mailbox[];accountBindings:SiteAccountBinding[];settings:Settings;events:Event[];runtime:Runtime;siteOriginMigrations?:Array<{siteId:string}>;channelPolicyStatus?:Record<string,Record<string,'valid'|'expired_or_changed'|'unconfirmed'>>;capacity?:SiteCapacity[];financePlatformCounts?:Record<string,FinancePlatformCount>;aiModels?:AiModelDiscovery;demo?:boolean}
+export interface AddSitesBatchInput {domains:string[];monthlyTarget:number;articleReviewMode:ArticleReviewMode;siteType:'auto'|'finance-zh';contactEmail:string}
+export interface AddSitesBatchResult {added:number;duplicates:number;errors:Array<{index:number;input:string;code:'invalid_domain'|'save_failed';message:string}>;siteIds:string[];rolloutDays:number}
+export interface SiteContentInput {id:string;topics:Array<{url:string;title?:string}>;linkTargets:string[];forbiddenTerms:string[]}
 export interface AddSiteInput {domain:string;email:string;monthlyTarget:number;articleReviewMode?:ArticleReviewMode}
 export type DraftClipboardField='title'|'description'|'body';
 export interface DraftClipboardRequest {id:string;field:DraftClipboardField;value:string}
 export interface AppApi {invoke<T=unknown>(command:string,payload?:unknown):Promise<T>;copyDraft(payload:DraftClipboardRequest):Promise<void>;onChange(callback:()=>void):()=>void;onUpdate?(callback:(state:import('./update-types').UpdateState)=>void):()=>void}
 declare global {interface Window {linkflow?:AppApi}}
 export interface SecretStore {get(key:string):Promise<string|undefined>;set(key:string,value:string):Promise<void>;delete(key:string):Promise<void>}
-export interface AiPort {json<T>(instruction:string,data:unknown,schema?:Record<string,unknown>,signal?:AbortSignal):Promise<T>}
+export interface AiCompletionOptions {maxCompletionTokens?:number}
+export interface AiPort {json<T>(instruction:string,data:unknown,schema?:Record<string,unknown>,signal?:AbortSignal,options?:AiCompletionOptions):Promise<T>}
 export interface ExecutionContext {hereNowPersistence?:HereNowPersistence}
 export interface ExecutionContext {shiplyPersistence?:ShiplyPersistence}
 export interface ExecutionContext {site:Site;channel:Channel;task:Task;settings:Settings;mailbox?:Mailbox;secrets:SecretStore;ai:AiPort;signal:AbortSignal;supanotePersistence?:SupanotePersistence;docsMdPersistence?:DocsMdPersistence;htmlAppPersistence?:HtmlAppPersistence;deedPagePersistence?:DeedPagePersistence;markdropPersistence?:MarkdropPersistence;katbinPersistence?:KatbinPersistence;pastemystPersistence?:PasteMystPersistence;markdownPastePersistence?:MarkdownPastePersistence;draftmarkPersistence?:DraftmarkPersistence;getAccount:()=>Account|undefined;saveAccount:(account:Account,password?:string)=>Promise<void>;checkpoint:(partial:Partial<Task>)=>void;log:(message:string)=>void}
@@ -291,7 +369,7 @@ export interface ExecutionContext {notebinPersistence?:NotebinPublicationPersist
 export interface ExecutionResult {notebin?:NotebinTaskReceipt}
 export interface LinkResult {outcome?:'found'|'absent'|'unreachable'|'invalid';found:boolean;url:string;rel:string;reason:string}
 export const PLOPINO_IPC_COMMANDS=['account:connect-agentswiki','account:connect-openagentchat','account:connect-agentnotepad','account:connect-colony','account:connect-large-language','account:connect-plopino','account:connect-synthfolk'] as const;
-export const IPC_COMMANDS=['snapshot','site:add','site:update','site:delete','site:analyze','site:pause','site:migrate-origin','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:save-key','task:retry','task:review-once','task:skip','task:verify','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-product-index','account:connect-carcinus-existing','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit'] as const;
+export const IPC_COMMANDS=['app:ready','snapshot','settings:adopt-ai-limit','ahrefs.saveAndTest','site:add','site:add-batch','site:archive','site:restore','site:dismiss-proposal','site:reroll-writing-profile','site:content-update','site:update','site:delete','site:analyze','site:pause','site:migrate-origin','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:import-gsc-batch','search:save-key','task:retry','task:review-once','task:skip','task:verify','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:enable-trial','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-product-index','account:connect-carcinus-existing','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-hackmd','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit','account:transfer-owner'] as const;
 export const HERE_NOW_IPC_COMMANDS=['account:connect-here-now','account:cancel-here-now'] as const;
 export const SHIPLY_IPC_COMMANDS=['account:request-shiply-code','account:resend-shiply-code','account:verify-shiply-code','account:recover-shiply-verify'] as const;
 
@@ -345,3 +423,28 @@ export interface Task {shipPage?:ShipPageTaskReceipt}
 export interface Account {shipPage?:ShipPageAccountProof}
 export interface ExecutionContext {shipPagePersistence?:ShipPagePersistence}
 export interface ExecutionResult {shipPage?:ShipPageTaskReceipt}
+
+/** Frozen locally when a new publication is submitted; legacy tasks may lack it. */
+export interface PublicationSnapshot {version:1;capturedAt:string;source:'submitted_draft';siteUrl:string;targetUrl:string;siteName:string;language:string;draft:NonNullable<Task['draft']>;contentHash:string}
+export interface Task {publicationSnapshot?:PublicationSnapshot;linkCheckReason?:string;linkMatchedOrigin?:string;linkUsesLegacyOrigin?:boolean;linkIndexable?:boolean;linkCheckFinalUrl?:string}
+export interface Account {retiredAt?:string;/** Retired because its site was deleted; restoring that site brings it back. */retiredReason?:'site_deleted';retiredSiteId?:string;ownerSiteId?:string}
+export interface LinkResult {reasonCode?:string;matchedOrigin?:string;usesLegacyOrigin?:boolean;indexable?:boolean}
+
+export interface Snapshot {actualCost?:{aiCalls:number;durationMs:number;inputTokens:number;outputTokens:number;amountsByCurrency:Record<string,number>};actualTaskCosts?:Record<string,TaskCost>}
+
+export interface Settings {dailyAnalysisAiLimit?:number;publicationSummaryDate?:string;publicationSummaryThrough?:string}
+export interface Runtime {analysisAiCallsToday?:number}
+export interface Site {analysisProposal?:{url?:string;domain?:string;analyzedAt:string};referralCodes?:string[];
+  /** Fields last filled by the page heuristic, not the AI; a later AI analysis may still correct them. */
+  heuristicFields?:Array<'name'|'description'|'language'|'category'>;
+  /** When an analysis that fell back to the heuristic should try the AI again. */
+  analysisRetryAt?:string;
+  /** Background retries already spent on a guessed analysis (stops at three). */
+  analysisRetries?:number}
+export interface Task {remoteContentScan?:{version:1;checkedAt:string;referral:boolean;legacyMarkers:string[]};formatRepairFailures?:number;/** The one rewrite allowed when the program finds a price prediction or return promise. */contentRepairAttempts?:number;formatRepairDraft?:NonNullable<Task['draft']>}
+export interface Snapshot {remoteContentTodos?:Array<{taskId:string;siteId:string;publicUrl:string;kind:'referral'|'legacy_marker';markers?:string[];message:string}>;oneReviewRetryEligibility?:Record<string,boolean>}
+
+export interface LinkResult {publicContent?:{text:string;html:string;articleText?:string;articleHtml?:string}}
+
+export interface Settings {signupConsents?:Record<string,{scriptId:string;scriptVersion:number;consentedAt:string}>}
+export interface Snapshot {channelDrViews?:Record<string,import('../integrations/channel-authority-snapshots').ChannelDrSnapshotView>}

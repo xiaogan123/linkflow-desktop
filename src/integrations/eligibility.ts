@@ -1,4 +1,5 @@
-import type {Channel,Qualification,Site} from '../shared/types';
+import type {Channel,ChannelAudience,Qualification,Site} from '../shared/types';
+import {BATCH5_MESSAGES} from '../shared/batch5-messages';
 
 export const qualificationLabels:Record<Qualification,string>={
  software:'可用的软件产品',developer:'本人维护的开发项目',portfolio:'本人创作的作品集',publication:'本人运营的出版物',business:'真实公司或服务业务',localBusiness:'符合资格的本地商家',
@@ -18,10 +19,34 @@ export function requirementsFor(channel:Channel):Qualification[]{return channel.
 export function validQualificationUrl(proof:string|undefined):boolean{
  try{const u=new URL(proof||'');return u.protocol==='https:'&&!u.username&&!u.password&&(!u.port||u.port==='443')&&u.hostname.includes('.')&&!/^\d+(?:\.\d+){3}$/.test(u.hostname)&&!u.hostname.includes(':')&&!/(?:^|\.)(?:localhost|local|internal|invalid)$/.test(u.hostname)}catch{return false}
 }
+/** Older custom channels remain readable, but product-only qualifications never imply a finance audience. */
+export function channelAudience(channel:Pick<Channel,'categories'|'requirements'|'audience'>):ChannelAudience[]{
+ if(channel.audience!==undefined)return channel.audience;
+ if(channel.requirements?.includes('localBusiness'))return ['local_business'];
+ if(channel.requirements?.some(value=>value==='software'||value==='developer'))return ['software'];
+ if(channel.categories.includes('general'))return ['general'];
+ if(channel.categories.includes('finance'))return ['finance'];
+ if(channel.categories.includes('software')||channel.categories.includes('developer')||channel.categories.includes('ai'))return ['software'];
+ if(channel.categories.includes('design'))return ['design'];
+ return ['general'];
+}
+export function channelLanguageMatches(site:Pick<Site,'language'>,channel:Pick<Channel,'languages'>):boolean{
+ const language=site.language.toLowerCase().split('-')[0];
+ if(!Array.isArray(channel.languages))return true;
+ return channel.languages.includes('*')||!!language&&channel.languages.some(value=>value.toLowerCase().split('-')[0]===language);
+}
+/** Hard suitability is shared by discovery, scheduling, and capability counts. */
+export function channelSuitability(site:Pick<Site,'category'|'language'>,channel:Channel):{eligible:boolean;reason:string}{
+ if(channel.promotionPolicy==='forbidden')return {eligible:false,reason:BATCH5_MESSAGES.promotionForbidden};
+ if(site.category==='finance'&&!channelAudience(channel).some(value=>value==='general'||value==='finance'))return {eligible:false,reason:BATCH5_MESSAGES.audienceMismatch};
+ if(!channelLanguageMatches(site,channel))return {eligible:false,reason:BATCH5_MESSAGES.languageMismatch};
+ return {eligible:true,reason:''};
+}
 export function eligibilityFor(site:Site,channel:Channel):{eligible:boolean;reason:string;requirement?:Qualification}{
- if(!channel.enabled)return {eligible:false,reason:'该渠道目前停用，请查看官方规则'};
+ if(!channel.enabled)return {eligible:false,reason:'该平台目前停用，请查看官方规则'};
+ const suitability=channelSuitability(site,channel);if(!suitability.eligible)return suitability;
  if(channel.id==='paragraph'&&site.paragraph?.publicationId&&validQualificationUrl(site.paragraph.url))return {eligible:true,reason:'已连接本人出版物；AI 将结合出版物公开内容核对原创用途、相关性与附带商业披露',requirement:'publication'};
- if(channel.id==='github-gist'&&(validQualificationUrl(site.qualifications?.developer)||validQualificationUrl(site.qualifications?.techContent)))return {eligible:true,reason:'有公开技术材料；发布前仍独立核对真实性、可复用价值和与本站关系',requirement:validQualificationUrl(site.qualifications?.developer)?'developer':'techContent'};
+ if(channel.id==='github-gist'&&(validQualificationUrl(site.qualifications?.developer)||validQualificationUrl(site.qualifications?.techContent)))return {eligible:true,reason:'有公开技术材料；发布前仍会核对真实性、可复用价值和与本站关系',requirement:validQualificationUrl(site.qualifications?.developer)?'developer':'techContent'};
  const required=requirementsFor(channel);
  const missing=required.find(q=>!validQualificationUrl(site.qualifications?.[q]));
  if(missing)return {eligible:false,reason:`需要确认${qualificationLabels[missing]}并提供资料网址；一般软件或网站网址不能替代对应资格`,requirement:missing};

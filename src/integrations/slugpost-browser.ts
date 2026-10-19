@@ -9,7 +9,7 @@ const HOST='slugpost.com';
 function safeUrl(value:string){try{const url=new URL(value);return url.protocol==='https:'&&url.hostname===HOST&&!url.username&&!url.password&&(!url.port||url.port==='443')}catch{return false}}
 export function guardSession(browserSession:Session,onBoundaryEvent?:(event:SlugPostBoundaryEvent)=>void){
   let authorization:(()=>boolean)|undefined,expectedBody:Buffer|undefined,requestHash='',publishRequests=0,sequence=0;
-  const record=(stage:SlugPostBoundaryStage,reason?:SlugPostBoundaryEvent['reason'],uploadShape?:SlugPostUploadShape)=>{if(!onBoundaryEvent)throw Error('SlugPost 派发证据持久化未配置');onBoundaryEvent({sequence:++sequence,stage,at:new Date().toISOString(),requestHash,...(reason?{reason}:{}),...(uploadShape?{uploadShape}:{})})};
+  const record=(stage:SlugPostBoundaryStage,reason?:SlugPostBoundaryEvent['reason'],uploadShape?:SlugPostUploadShape)=>{if(!onBoundaryEvent)throw Error('SlugPost 派发证据保存未配置');onBoundaryEvent({sequence:++sequence,stage,at:new Date().toISOString(),requestHash,...(reason?{reason}:{}),...(uploadShape?{uploadShape}:{})})};
   browserSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
   browserSession.setPermissionCheckHandler(()=>false);
   browserSession.on('will-download',event=>event.preventDefault());
@@ -32,7 +32,7 @@ export function guardSession(browserSession:Session,onBoundaryEvent?:(event:Slug
     }else if(publishing&&requestHash){try{record('dispatch_denied',publishRequests?'duplicate':'authorization')}catch{/* Request remains canceled. */}}
     callback({cancel:!allowed});
   });
-  return (body:Buffer,check:()=>boolean,hash=createHash('sha256').update(body).digest('hex'))=>{if(expectedBody||publishRequests)throw Error('SlugPost 发布请求已布防');if(!/^[a-f0-9]{64}$/.test(hash))throw Error('SlugPost 请求哈希无效');requestHash=hash;record('armed');expectedBody=Buffer.from(body);authorization=check};
+  return (body:Buffer,check:()=>boolean,hash=createHash('sha256').update(body).digest('hex'))=>{if(expectedBody||publishRequests)throw Error('SlugPost 发布请求已布防');if(!/^[a-f0-9]{64}$/.test(hash))throw Error('SlugPost 请求校验值无效');requestHash=hash;record('armed');expectedBody=Buffer.from(body);authorization=check};
 }
 const armPublish=new WeakMap<Window,(body:Buffer,check:()=>boolean,requestHash?:string)=>void>();
 /** Bind the exact session guard for injected/native test windows. */

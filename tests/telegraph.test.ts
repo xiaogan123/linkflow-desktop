@@ -65,26 +65,36 @@ test('article conversion preserves safe citations and JSON code while keeping on
   assert.match(serialized, /https:\/\/research\.example\/paper/);
   assert.match(serialized, /javascript:alert/);
   assert.equal(serialized.includes('"href":"javascript:'), false);
-  assert.equal(serialized.includes('"href":"https://example.com/docs'), false);
+  assert.equal(serialized.includes('"href":"https://example.com/docs'), true);
   assert.equal(serialized.includes('"href":"https://example.com/other'), false);
   assert.equal(serialized.includes('<script>'), false);
   assert.equal(serialized.includes('<img'), false);
-  assert.match(serialized, /Website discussed/);
+  assert.doesNotMatch(serialized, /Website discussed|文中所述网站/);
   assert.doesNotMatch(serialized, /site owner|owner or operator/i);
   assert.doesNotMatch(JSON.stringify(nodes.at(-1)), /owner|operator|official source/i);
   const chinese = JSON.stringify(articleToTelegraphNodes(technicalBody, '示例产品', 'https://example.com/', 'zh'));
-  assert.match(chinese, /文中所述网站/);
+  assert.doesNotMatch(chinese, /文中所述网站/);
   assert.doesNotMatch(chinese, /所有者|运营方|官方来源/);
 });
 
-test('conversion retains the reviewed commercial disclosure while adding only a neutral site link',()=>{
+test('conversion retains the reviewed commercial disclosure and inserts one inline site link',()=>{
   const reviewedBody=[body,'Commercial relationship disclosure: This article is promotional content for the linked website, not an independent third-party recommendation. The website participates in a referral plan that pays commissions.'].join('\n\n');
   const nodes=articleToTelegraphNodes(reviewedBody,'Example Product','https://example.com/','en');
   const serialized=JSON.stringify(nodes);
   assert.match(serialized,/The website participates in a referral plan that pays commissions/);
   assert.match(serialized,/not an independent third-party recommendation/);
   assert.equal(telegraphTesting.countTargetLinks(nodes,'https://example.com/'),1);
-  assert.deepEqual(nodes.at(-1),{tag:'p',children:['Website discussed: ',{tag:'a',attrs:{href:'https://example.com/'},children:['Example Product']},'.']});
+  assert.equal((nodes[0] as Exclude<typeof nodes[number],string>).children?.some(node=>typeof node!=='string'&&node.tag==='a'&&node.attrs?.href==='https://example.com/'),true);
+  assert.equal(nodes.some(node=>typeof node!=='string'&&node.tag==='hr'),false);
+});
+
+test('missing site links receive a site-specific visible lead-in',()=>{
+  const first=JSON.stringify(articleToTelegraphNodes(body,'Example Product','https://example.com/','en'));
+  const second=JSON.stringify(articleToTelegraphNodes(body,'Another Product','https://example-site.com/','en'));
+  assert.match(first,/example\.com/);
+  assert.match(second,/example-site\.com/);
+  assert.notEqual(first,second);
+  assert.doesNotMatch(first,/For background, see/);
 });
 
 test('real-shaped Unicode Telegraph path is accepted as one canonical segment', () => {
@@ -123,8 +133,11 @@ test('new account token is persisted as a vault secret and never placed in a URL
   assert.ok(calls.every(call => !call.url.includes(token) && call.redirect === 'error'));
   assert.equal(calls.find(call => call.url.endsWith('/createPage'))?.params.get('access_token'), token);
   assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.has('access_token'), false);
-  assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.get('author_name'), 'Promotional content publisher');
-  assert.equal(calls.find(call => call.url.endsWith('/createPage'))?.params.get('author_name'), 'Promotional content publisher');
+  assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.get('short_name'), 'Example Product');
+  assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.get('author_name'), 'Example Product');
+  assert.equal(calls.find(call => call.url.endsWith('/createAccount'))?.params.get('author_url'), 'https://example.com/');
+  assert.equal(calls.find(call => call.url.endsWith('/createPage'))?.params.get('author_name'), 'Example Product');
+  assert.equal(calls.find(call => call.url.endsWith('/createPage'))?.params.get('author_url'), 'https://example.com/');
   assert.doesNotMatch(JSON.stringify(publishedContent), /site owner|owner or operator|所有者|运营方/i);
   assert.equal(telegraphTesting.countTargetLinks(publishedContent, 'https://example.com/'), 1);
 });
@@ -254,6 +267,59 @@ test('invalid stored token changes account state and cannot cause automatic repl
   assert.equal(second.status, 'needs_input');
   assert.equal(accounts[0].status, 'credentials_invalid');
   assert.deepEqual(endpoints.map(url => new URL(url).pathname), ['/getAccountInfo']);
+});
+
+test('FLOOD_WAIT seconds defer account creation and retry the same site identity', async () => {
+  const { context, accounts } = fixture();
+  const token = 'new-secret-telegraph-token-1234567890';
+  let accountCalls = 0;
+  let content: unknown;
+  const before = Date.now();
+  const transport: TelegraphTransport = async (url, init) => {
+    const fields = new URLSearchParams(String(init.body));
+    if (url.endsWith('/createAccount')) {
+      accountCalls++;
+      return accountCalls === 1 ? json('FLOOD_WAIT_3', false) : json({ short_name: 'Example Product', access_token: token });
+    }
+    if (url.endsWith('/createPage')) { content = JSON.parse(fields.get('content') ?? 'null'); return json({ path: 'After-wait-09-27', url: 'https://telegra.ph/After-wait-09-27' }); }
+    if (url.endsWith('/getPage/After-wait-09-27')) return json({ path: 'After-wait-09-27', url: 'https://telegra.ph/After-wait-09-27', content });
+    throw Error(`unexpected endpoint ${url}`);
+  };
+  const waiting = await telegraphTesting.runWithTransport(context, transport);
+  assert.equal(waiting.status, 'queued');
+  assert.equal(waiting.checkpoint, 'telegraph_account_flood_wait');
+  assert.ok(Date.parse(waiting.scheduledAt ?? '') >= before + 3_000);
+  assert.equal(context.task.submittedAt, undefined);
+  assert.equal(accounts[0].status, 'draft');
+  assert.equal(accounts[0].registrationAttempts, 0);
+  const originalId = accounts[0].id;
+  assert.equal((await telegraphTesting.runWithTransport(context, transport)).status, 'review');
+  assert.equal(accounts[0].id, originalId);
+  assert.equal(accountCalls, 2);
+});
+
+test('FLOOD_WAIT after a known createPage rejection clears the write intent and retries once due', async () => {
+  const account: Account = { id: 'account', channelId: 'telegraph', email: 'owner@example.com', username: 'Example Product', createdAt: '2026-09-27T00:00:00.000Z', status: 'registered', source: 'generated', hasPassword: true, credentialKind: 'api_token' };
+  const { context } = fixture(account);
+  let pageCalls = 0;
+  let content: unknown;
+  const transport: TelegraphTransport = async (url, init) => {
+    if (url.endsWith('/getAccountInfo')) return json({ short_name: 'Example Product', page_count: 0 });
+    if (url.endsWith('/createPage')) {
+      pageCalls++;
+      if (pageCalls === 1) return json('FLOOD_WAIT_2', false);
+      content = JSON.parse(new URLSearchParams(String(init.body)).get('content') ?? 'null');
+      return json({ path: 'Retry-09-27', url: 'https://telegra.ph/Retry-09-27' });
+    }
+    if (url.endsWith('/getPage/Retry-09-27')) return json({ path: 'Retry-09-27', url: 'https://telegra.ph/Retry-09-27', content });
+    throw Error(`unexpected endpoint ${url}`);
+  };
+  const waiting = await telegraphTesting.runWithTransport(context, transport);
+  assert.equal(waiting.status, 'queued');
+  assert.equal(waiting.checkpoint, 'telegraph_publish_flood_wait');
+  assert.equal(context.task.submittedAt, undefined);
+  assert.equal((await telegraphTesting.runWithTransport(context, transport)).status, 'review');
+  assert.equal(pageCalls, 2);
 });
 
 test('short article and existing public result stop before any remote call', async () => {

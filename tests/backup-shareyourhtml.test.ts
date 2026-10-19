@@ -94,7 +94,7 @@ test('receipt stage, task binding, draft binding, and secret binding are strict'
     { siteId: OTHER_TASK_ID }, { siteIdentityHash: 'e'.repeat(64) },
     { editKey: 'not-a-uuid' }]) {
     assert.throws(() => validateBackup({ state: state('api_receipt'),
-      secrets: { [`publication:${TASK_ID}`]: secret(overrides) } }), /孤立/);
+      secrets: { [`publication:${TASK_ID}`]: secret(overrides) } }), /没有归属的加密信息/);
   }
 });
 

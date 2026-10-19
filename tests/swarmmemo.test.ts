@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["Controller permits the fixed intent to spend its durable budget before one authorized POST", "ordinary Controller AI review binds one site draft and keeps another site away from its encrypted identity"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});});
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -6,7 +8,7 @@ import {join} from 'node:path';
 import {marked} from 'marked';
 import {CHANNELS} from '../src/integrations/catalog';
 import {
-  SWARMMEMO_COMMAND_URL,SWARMMEMO_DISCLOSURE,SWARMMEMO_ORIGIN,SWARMMEMO_RECOVERY_URL,SWARMMEMO_ROBOTS_URL,
+  SWARMMEMO_COMMAND_URL,SWARMMEMO_DISCLOSURE,SWARMMEMO_LEGACY_DISCLOSURE,SWARMMEMO_ORIGIN,SWARMMEMO_RECOVERY_URL,SWARMMEMO_ROBOTS_URL,
   createSwarmMemoCommand,generateSwarmMemoIdentity,parseSwarmMemoEntry,matchesSwarmMemoMessage,parseSwarmMemoOpaque,parseSwarmMemoReceipt,readSwarmMemoText,recoverSwarmMemoReceipt,
   swarmMemoCanonical,swarmMemoCommandBody,swarmMemoEntryBaseUrl,swarmMemoEntryJsonUrl,swarmMemoHash,
   swarmMemoTesting,verifySwarmMemoCommand,type SwarmMemoDependencies,type SwarmMemoOpaqueResponse,
@@ -19,15 +21,17 @@ import {
 } from '../src/integrations/swarmmemo-publisher';
 import {createSwarmMemoPublicationPersistence} from '../src/main/swarmmemo-publication';
 import {validateBackup} from '../src/main/backup-validation';
+import {decorateManagedDraft} from '../src/main/draft-contract';
 import {Controller} from '../src/main/controller';
 import {ARTICLE_REVIEW_CONTRACT_VERSION,articleContentHash,articleContextHash} from '../src/main/article-review';
 import {emptyState,Store} from '../src/main/store';
 import {saveTaskDraft} from '../src/main/task-draft';
+import {ensureWritingProfile} from '../src/shared/writing-profile';
 import type {Vault} from '../src/main/vault';
-import type {Account,Channel,ExecutionContext,Site,Task} from '../src/shared/types';
+import type {Account,Channel,ExecutionContext,Site,SwarmMemoTaskReceipt,Task} from '../src/shared/types';
 
-const at='2026-10-16T03:00:00.000Z';
-const reviewedAt='2026-10-16T03:01:00.000Z';
+const at='2026-10-16T10:00:00.000Z';
+const reviewedAt='2026-10-16T10:01:00.000Z';
 const taskId='11111111-1111-4111-8111-111111111111';
 const siteId='22222222-2222-4222-8222-222222222222';
 const accountId='33333333-3333-4333-8333-333333333333';
@@ -60,6 +64,45 @@ test('accepted catalog is enabled and one local Ed25519 identity signs exact UTF
 
 test('reviewed input binds title, body, revision and exact target and any edit clears it',()=>{const current=task(),identity=swarmMemoTaskIdentity(current,site());assert.ok(identity);assert.equal(identity.targetUrl,target);for(const changed of [{...current,draft:{...current.draft!,body:`${body}\nchanged`}},{...current,topicUrl:'https://example.test/other'},{...current,draftRevision:2}])assert.equal(swarmMemoTaskIdentity(changed,site()),undefined);for(const invalid of [body.replace(`[Linkflow Desktop project](${target})`,'no target'),body.replace(SWARMMEMO_DISCLOSURE,''),`${body}\nhttps://example.test`])assert.ok(swarmMemoDraftError({...current,draft:{...current.draft!,body:invalid}},site()));const state=emptyState();state.sites=[site()];state.tasks=[{...current,status:'needs_input',checkpoint:'article_review'}];saveTaskDraft(state,current.id,{...current.draft!,body:`${body}\nA reviewed clarification.`},new Date(at));assert.equal(state.tasks[0].swarmMemoInput,undefined);assert.equal(state.tasks[0].articleApprovedAt,undefined)});
 
+test('saved SwarmMemo drafts and receipts preserve their originally signed body bytes',()=>{
+ const saved=task(),signed=intent(),current=swarmMemoTaskIdentity(saved,site());
+ assert.ok(current);assert.equal(current.body,body);assert.equal(signed.command.text,body);
+ assert.equal(saved.swarmMemoInput!.bodySha256,signed.bodySha256);
+ const secret=generateSwarmMemoIdentity(accountId,at),legacyBody=body.replace(SWARMMEMO_DISCLOSURE,SWARMMEMO_LEGACY_DISCLOSURE);
+ const built=createSwarmMemoCommand({text:legacyBody,requestId:taskId.replaceAll('-',''),timestamp:Math.floor(Date.parse(at)/1000),nonce:'2'.repeat(32),identity:secret});
+ const receipt:SwarmMemoTaskReceipt={operationId:`swarmmemo_post_${taskId.replaceAll('-','')}`,accountId,fingerprint:secret.fingerprint,requestId:taskId.replaceAll('-',''),targetUrl:target,sourceHash:built.sourceHash,bodySha256:built.sourceHash,canonicalSha256:built.canonicalSha256,requestHash:built.requestHash,createdAt:at,stage:'published'};
+ const legacy:Task={...saved,draft:{...saved.draft!,body:legacyBody},swarmMemo:receipt};
+ assert.ok(swarmMemoDraftError({...legacy,swarmMemo:undefined},site()));
+ legacy.swarmMemoInput=createSwarmMemoReviewedInput(legacy,site(),{method:'manual',approvedAt:at});
+ assert.ok(legacy.swarmMemoInput);assert.equal(swarmMemoTaskIdentity(legacy,site())?.body,built.command.text);
+ assert.equal(built.command.text,legacyBody);
+});
+
+test('a renamed site keeps its reviewed SwarmMemo body and strict backup valid',()=>{
+ const original=site();original.writingProfile=ensureWritingProfile(original,[]);
+ const pending:Task={id:taskId,siteId,channelId:'swarmmemo',sourceDomain:'swarmmemo.com',status:'queued',createdAt:at,scheduledAt:at,updatedAt:at,attempts:0,message:'',draftRevision:1,articleApprovedAt:at};
+ const managed=decorateManagedDraft({title,description:'',body:'A local publication ledger keeps the exact approved bytes before one authorized network dispatch. It lets a restart use read-only checks instead of sending edited content. '.repeat(4)},original,channel(),pending);
+ pending.draft=managed.draft;pending.writingEnvelope=managed.envelope;
+ pending.swarmMemoInput=createSwarmMemoReviewedInput(pending,original,{method:'manual',approvedAt:at});
+ assert.ok(pending.swarmMemoInput);assert.ok(swarmMemoTaskIdentity(pending,original));
+ const beforeBody=pending.draft.body,beforeHash=pending.swarmMemoInput.bodySha256;
+ const state=emptyState();state.sites=[original];state.tasks=[pending];
+ assert.doesNotThrow(()=>validateBackup({state:structuredClone(state),secrets:{}}));
+ state.sites[0].name='Renamed Linkflow';
+ const after=swarmMemoTaskIdentity(pending,state.sites[0]);
+ assert.ok(after);assert.equal(after.body,beforeBody);assert.equal(after.bodySha256,beforeHash);
+ const imported=validateBackup({state:structuredClone(state),secrets:{}});
+ assert.equal(imported.state.tasks[0].draft?.body,beforeBody);
+ assert.equal(imported.state.tasks[0].swarmMemoInput,undefined);
+ assert.equal(imported.state.tasks[0].articleApprovedAt,undefined);
+ const reapproved={...imported.state.tasks[0],articleApprovedAt:at};
+ reapproved.swarmMemoInput=createSwarmMemoReviewedInput(reapproved,imported.state.sites[0],{method:'manual',approvedAt:at});
+ assert.ok(reapproved.swarmMemoInput);assert.ok(swarmMemoTaskIdentity(reapproved,imported.state.sites[0]));
+ assert.equal(swarmMemoTaskIdentity({...pending,writingEnvelope:{...pending.writingEnvelope!,targetUrl:'https://different.example/'}},state.sites[0]),undefined);
+ assert.equal(swarmMemoTaskIdentity({...pending,draft:{...pending.draft!,body:beforeBody+' Changed.'}},state.sites[0]),undefined);
+ assert.equal(swarmMemoTaskIdentity({...pending,articleApprovedAt:reviewedAt},state.sites[0]),undefined);
+});
+
 test('strict receipt parsing rejects duplicate JSON keys and mismatched shared receipt fields',()=>{const value=intent(),good=opaque(receiptValue(value));assert.ok(parseSwarmMemoReceipt(parseSwarmMemoOpaque(good),value));const duplicate=opaque(`{"ok":true,"ok":true}`,true);assert.equal(parseSwarmMemoOpaque(duplicate),undefined);assert.equal(parseSwarmMemoReceipt({...receiptValue(value),shared_receipt:{...receiptValue(value).shared_receipt,extra:true}},value),undefined);assert.equal(parseSwarmMemoReceipt({...receiptValue(value),receipt:{...receiptValue(value).receipt,sha256:'0'.repeat(64)}},value),undefined);assert.equal(swarmMemoTesting.strictJson('{"a":1,"a":2}'),undefined)});
 
 test('API, SSR, native target, canonical and robots must all match before acceptance',async()=>{const value=intent(),receipt=parseSwarmMemoReceipt(receiptValue(value),value);assert.ok(receipt);const identity=swarmMemoTaskIdentity(task(),site());assert.ok(identity);const accepted=await swarmMemoPublisherTesting.acceptPublication(value,receipt,identity,readDeps(value));assert.equal(accepted.publicUrl,publicUrl);assert.match(accepted.rel,/nofollow/);await assert.rejects(()=>swarmMemoPublisherTesting.acceptPublication(value,receipt,identity,readDeps(value,{renderPage:async()=>rendered({candidates:rendered().candidates.map((candidate,index)=>index?candidate:{...candidate,allTextVisible:false})})})),/不可见/);assert.equal(swarmMemoPublisherTesting.robotsAllows('User-agent: *\nDisallow: /\nAllow: /e/*\nUser-agent: Googlebot\nDisallow: /e/\n','/e/'+messageId+'/slug','googlebot'),false);assert.equal(swarmMemoPublisherTesting.robotsAllows('User-agent: *\nDisallow: /\nAllow: /e/*\n','/e/'+messageId+'/slug','bingbot'),true);assert.throws(()=>swarmMemoPublisherTesting.assertHttpCanonical(`<${publicUrl}>; rel="canonical", <https://swarmmemo.com/wrong>; rel=canonical`,publicUrl))});
@@ -83,7 +126,7 @@ test('an encrypted intent saved before a crash can resume exactly once because n
 test('Controller permits the fixed intent to spend its durable budget before one authorized POST',async()=>{
   const f=fixture();let controller:Controller|undefined,posts=0,entryReads=0,htmlReads=0,robotsReads=0,nativeReads=0,command:ReturnType<typeof createSwarmMemoCommand>['command']|undefined;
   try{
-    f.store.update(state=>{const current=state.tasks[0];Object.assign(current,{status:'queued',scheduledAt:'2020-01-01T00:00:00.000Z',attempts:0,message:'queued Controller fixture'})});
+    f.store.update(state=>{const current=state.tasks[0];Object.assign(current,{status:'queued',scheduledAt:new Date().toISOString(),attempts:0,message:'queued Controller fixture'})});
     const deps:SwarmMemoDependencies={now:()=>new Date(at),renderPage:async()=>{nativeReads++;return rendered()},fetch:async(url,init)=>{
       if(init.method==='POST'){
         assert.equal(url,SWARMMEMO_COMMAND_URL);posts++;assert.equal(posts,1);command=JSON.parse(String(init.body));assert.ok(command);assert.equal(swarmMemoCommandBody(command),String(init.body));
@@ -97,7 +140,7 @@ test('Controller permits the fixed intent to spend its durable budget before one
   }finally{controller?.stop();f.cleanup()}
 });
 
-test('ordinary Controller AI review binds two different site drafts to one encrypted identity without network writes',async()=>{const dir=mkdtempSync(join(tmpdir(),'swarmmemo-controller-')),store=new Store(join(dir,'state.sqlite')),state=emptyState(),secondSiteId='55555555-5555-4555-8555-555555555555',secondTaskId='66666666-6666-4666-8666-666666666666',secondTarget='https://example.test/product',secondTitle='Keep a local publication ledger before transport',secondBody=`# ${secondTitle}\n\nA durable publication ledger records the final reviewed bytes and the one authorized dispatch before network transport. This makes a restart safe even when the remote service accepted a request but the response did not arrive.\n\nThe same flow can publish an independently reviewed note for a different product without compiling that product or target into the adapter. The [example product](${secondTarget}) is bound before review and remains the only outbound link.\n\n${SWARMMEMO_DISCLOSURE}`;state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='ai';state.settings.timezone='UTC';state.settings.channelOverrides={swarmmemo:true};state.sites=[{...site(),articleReviewMode:'ai'},{...site(secondSiteId,secondTarget),name:'Example Product',articleReviewMode:'ai'}];state.tasks=[{...task({accountId:undefined,status:'queued',attempts:0,articleApprovedAt:undefined,articleReview:undefined,swarmMemoInput:undefined,scheduledAt:'2020-01-01T00:00:00.000Z'})},{...task({id:secondTaskId,siteId:secondSiteId,accountId:undefined,status:'queued',attempts:0,articleApprovedAt:undefined,articleReview:undefined,swarmMemoInput:undefined,scheduledAt:'2020-01-01T00:00:00.000Z',topicUrl:secondTarget,draft:{title:secondTitle,description:'',body:secondBody}})}];store.update(current=>Object.assign(current,state));const vault={ready:true,available:()=>true,get:async(name:string)=>{const cipher=store.getCipher(name);return cipher?.startsWith('enc:')?Buffer.from(cipher.slice(4),'base64url').toString():undefined},set:async()=>{},delete:async()=>{},encryptSecrets:(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>[name,`enc:${Buffer.from(value).toString('base64url')}`]))} as unknown as Vault;const seen:Array<{target:string;body:string;accountId?:string}>=[],enabled=channel(true),controller=new Controller(store,vault,'isolated',{channelCatalog:[enabled],aiFactory:(()=>({json:async()=>({})})) as never,prepareTask:context=>prepareSwarmMemoIdentity(context,{now:()=>new Date(at)}),reviewArticle:async(current,currentSite,currentChannel,settings,_ai,_signal,deps)=>({status:'passed',reason:'independent fixture review',reviewedAt,evidenceUrls:[current.topicUrl!],draftRevision:current.draftRevision??0,contentHash:articleContentHash(current),contextHash:articleContextHash(currentSite,currentChannel,settings,deps?.account),reasonCode:'passed',reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'}}),executeTask:async context=>{const bound=swarmMemoTaskIdentity(context.task,context.site);assert.ok(bound);seen.push({target:bound.targetUrl,body:bound.body,accountId:context.task.accountId});return {status:'needs_input',message:'fixture stops before transport'}}});controller.runtime.aiReady=true;try{await controller.tick();await controller.tick();const saved=store.read(),accounts=saved.accounts.filter(value=>value.channelId==='swarmmemo'),diagnostic=JSON.stringify(saved.tasks);assert.equal(accounts.length,1,diagnostic);assert.equal(saved.accountBindings.filter(value=>value.channelId==='swarmmemo').length,2,JSON.stringify(saved));assert.deepEqual(new Set(seen.map(value=>value.target)),new Set([target,secondTarget]),diagnostic);assert.notEqual(seen[0].body,seen[1].body);assert.ok(seen.every(value=>value.accountId===accounts[0].id));assert.ok(await vault.get(`account:${accounts[0].id}`));assert.equal(seen.length,2)}finally{controller.stop();store.close();rmSync(dir,{recursive:true,force:true})}});
+test('ordinary Controller AI review binds one site draft and keeps another site away from its encrypted identity',async t=>{const dir=mkdtempSync(join(tmpdir(),'swarmmemo-controller-')),store=new Store(join(dir,'state.sqlite')),state=emptyState(),secondSiteId='55555555-5555-4555-8555-555555555555',secondTaskId='66666666-6666-4666-8666-666666666666',secondTarget='https://example.test/product',secondTitle='Keep a local publication ledger before transport',secondBody=`# ${secondTitle}\n\nA durable publication ledger records the final reviewed bytes and the one authorized dispatch before network transport. This makes a restart safe even when the remote service accepted a request but the response did not arrive.\n\nThe same flow can publish an independently reviewed note for a different product without compiling that product or target into the adapter. The [example product](${secondTarget}) is bound before review and remains the only outbound link.\n\nPublisher disclosure: The Example Product site operator prepared this article with an assistant using cited public material.`;state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='ai';state.settings.timezone='UTC';state.settings.channelOverrides={swarmmemo:true};state.sites=[{...site(),articleReviewMode:'ai'},{...site(secondSiteId,secondTarget),name:'Example Product',articleReviewMode:'ai'}];state.tasks=[{...task({accountId:undefined,status:'queued',attempts:0,articleApprovedAt:undefined,articleReview:undefined,swarmMemoInput:undefined,scheduledAt:new Date().toISOString()})},{...task({id:secondTaskId,siteId:secondSiteId,accountId:undefined,status:'queued',attempts:0,articleApprovedAt:undefined,articleReview:undefined,swarmMemoInput:undefined,scheduledAt:new Date(Date.now()+86400000).toISOString(),topicUrl:secondTarget,draft:{title:secondTitle,description:'',body:secondBody}})}];store.update(current=>Object.assign(current,state));const vault={ready:true,available:()=>true,get:async(name:string)=>{const cipher=store.getCipher(name);return cipher?.startsWith('enc:')?Buffer.from(cipher.slice(4),'base64url').toString():undefined},set:async()=>{},delete:async()=>{},encryptSecrets:(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).map(([name,value])=>[name,`enc:${Buffer.from(value).toString('base64url')}`]))} as unknown as Vault;const seen:Array<{target:string;body:string;accountId?:string}>=[],enabled=channel(true),controller=new Controller(store,vault,'isolated',{channelCatalog:[enabled],aiFactory:(()=>({json:async()=>({})})) as never,prepareTask:context=>prepareSwarmMemoIdentity(context,{now:()=>new Date(at)}),reviewArticle:async(current,currentSite,currentChannel,settings,_ai,_signal,deps)=>({status:'passed',reason:'independent fixture review',reviewedAt,evidenceUrls:[current.topicUrl!],draftRevision:current.draftRevision??0,contentHash:articleContentHash(current),contextHash:articleContextHash(currentSite,currentChannel,settings,deps?.account),reasonCode:'passed',reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'}}),executeTask:async context=>{const bound=swarmMemoTaskIdentity(context.task,context.site);assert.ok(bound);seen.push({target:bound.targetUrl,body:bound.body,accountId:context.task.accountId});return {status:'needs_input',message:'fixture stops before transport'}}});controller.runtime.aiReady=true;try{await controller.tick();t.mock.timers.setTime(Date.now()+86400000);store.update(state=>{state.tasks.find(item=>item.id===secondTaskId)!.scheduledAt=new Date().toISOString()});await controller.tick();const saved=store.read(),accounts=saved.accounts.filter(value=>value.channelId==='swarmmemo'),diagnostic=JSON.stringify(saved.tasks);assert.equal(accounts.length,1,diagnostic);assert.equal(saved.accountBindings.filter(value=>value.channelId==='swarmmemo').length,1,JSON.stringify(saved));assert.deepEqual(new Set(seen.map(value=>value.target)),new Set([target]),diagnostic);assert.equal(seen[0].body,body);assert.ok(seen.every(value=>value.accountId===accounts[0].id));assert.ok(await vault.get(`account:${accounts[0].id}`));assert.equal(seen.length,1);const blocked=saved.tasks.find(item=>item.id===secondTaskId)!;assert.equal(blocked.status,'needs_input');assert.equal(blocked.checkpoint,'account_handoff');assert.equal(blocked.articleReview,undefined);assert.equal(blocked.accountId,undefined);assert.equal(blocked.swarmMemo,undefined);assert.equal(blocked.submittedAt,undefined);assert.equal(blocked.draft?.body,secondBody)}finally{controller.stop();store.close();rmSync(dir,{recursive:true,force:true})}});
 
 
 test('entry envelope accepts exactly one public message without weakening signed content binding',()=>{
@@ -131,7 +174,7 @@ test('original entry may serve HTTP 200 only with one exact same-entry canonical
   const deps=(html:string):SwarmMemoDependencies=>({...fallback,fetch:async(url,init)=>url===base?response(url,200,html,'text/html'):fallback.fetch!(url,init)});
   const accepted=await swarmMemoPublisherTesting.acceptPublication(value,receipt,identity,deps(publicHtml()));assert.equal(accepted.publicUrl,publicUrl);
   for(const bad of [publicHtml().replace(publicUrl,'https://example.test/e/'+messageId+'/slug'),publicHtml().replace(publicUrl,publicUrl.replace(messageId,'f'.repeat(32))),publicHtml().replace(publicUrl,publicUrl+'?next=1'),publicHtml().replace('</head>','<link rel="canonical" href="'+publicUrl+'"></head>')]){
-    await assert.rejects(()=>swarmMemoPublisherTesting.acceptPublication(value,receipt,identity,deps(bad)),/canonical/);
+    await assert.rejects(()=>swarmMemoPublisherTesting.acceptPublication(value,receipt,identity,deps(bad)),/页面标注的规范网址不匹配/);
   }
 });
 

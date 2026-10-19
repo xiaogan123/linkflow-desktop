@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {Copy} from '@phosphor-icons/react';
 import {Button} from '../components';
+import {containsReferralInformation,REFERRAL_MESSAGES} from '../../shared/referral-policy';
 
 type DraftField='title'|'description'|'body';
 type CopyFeedback={kind:'success'|'error';message:string};
@@ -20,6 +21,10 @@ export async function copyDraftValue(
     if(isCurrent())commit({kind:'error',message:`${label}为空，暂无内容可复制。`});
     return;
   }
+  if(containsReferralInformation(value)){
+    if(isCurrent())commit({kind:'error',message:REFERRAL_MESSAGES.copyBlocked});
+    return;
+  }
   if(!writeText){
     if(isCurrent())commit({kind:'error',message:'当前环境不支持复制，请手动选中内容。'});
     return;
@@ -27,8 +32,11 @@ export async function copyDraftValue(
   try{
     await writeText(value);
     if(isCurrent())commit({kind:'success',message:`${label}已复制。`});
-  }catch{
-    if(isCurrent())commit({kind:'error',message:`${label}复制失败，请手动选中内容。`});
+  }catch(error){
+    const message=typeof error==='object'&&error!==null&&'reasonCode' in error&&error.reasonCode==='referral_blocked'
+      ?REFERRAL_MESSAGES.copyBlocked
+      :`${label}复制失败，请手动选中内容。`;
+    if(isCurrent())commit({kind:'error',message});
   }
 }
 

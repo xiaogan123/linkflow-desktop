@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import test from 'node:test';
+import test,{type TestContext} from 'node:test';
 import {marked} from 'marked';
 import {CHANNELS} from '../src/integrations/catalog';
 import {createPstrsPaste,pstrsPublicUrl,pstrsRequest,type PstrsIntent,type PstrsOpaqueResponse,type PstrsPersistence} from '../src/integrations/pstrs';
@@ -15,7 +15,9 @@ import {emptyState,Store} from '../src/main/store';
 import type {Vault} from '../src/main/vault';
 import type {ExecutionContext,Site,Task} from '../src/shared/types';
 
-const at='2026-10-13T03:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='Abc_def-123',publicUrl=pstrsPublicUrl(id),expiresAt=Math.floor((Date.parse(at)+365*86400000)/1000);
+test.beforeEach(t=>(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)}));
+
+const at='2026-10-13T12:34:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='Abc_def-123',publicUrl=pstrsPublicUrl(id),expiresAt=Math.floor((Date.parse(at)+365*86400000)/1000);
 const draft={title:'A safe request recovery guide',description:'Practical developer guide',body:'Before retrying a request, save its intent. The [project guide](https://example.test/guide) explains the complete recovery process.'};
 function site():Site{return {id:siteId,domain:'example.test',url:'https://example.test/',email:'owner@example.test',name:'Example software',description:'Developer software',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.test/product',developer:'https://example.test/guide'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.test/guide',discoveredAt:at}]}}
 function task(extra:Partial<Task>={}):Task{return {id:taskId,siteId,channelId:'pstrs',sourceDomain:'paster.abhicracker.com',status:'review',createdAt:at,scheduledAt:at,updatedAt:at,attempts:0,message:'fixture',topicUrl:'https://example.test/guide',draft,draftRevision:1,articleApprovedAt:at,health:'pending',...extra}}
@@ -31,7 +33,7 @@ function vault(store:Store):Vault{return {ready:true,available:()=>true,get:asyn
 
 test('PST.RS controller: failed first readback and verifier exception preserve restorable pending receipt',async()=>{
  for(const mode of ['raw-mismatch','transport','verifier-throws'] as const){const f=fixture(),v=vault(f.store),channel={...CHANNELS.find(x=>x.id==='pstrs')!,enabled:true};let posts=0;const controller=new Controller(f.store,v,'fixture',{channelCatalog:[channel],...(mode==='verifier-throws'?{verifyPstrs:async()=>{throw Error('simulated')}}:{}),pstrsDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{if(init.method==='POST'){posts++;return response()}if(mode==='transport')throw Error('network');return new Response('mismatch',{headers:{'content-type':'text/plain'}})}}});controller.runtime.aiReady=true;
- try{await controller.tick();const state=f.store.read(),t=state.tasks[0],secret=await v.get('publication:'+taskId);assert.equal(posts,1);assert.equal(t.pstrs?.stage,'api_receipt');assert.equal(t.health,'pending',mode);assert.equal(t.linkCheck,undefined,mode);assert.doesNotThrow(()=>validateBackup({state,secrets:{['publication:'+taskId]:secret!}}),mode)}finally{controller.stop();f.cleanup()}}
+ try{await controller.tick();const state=f.store.read(),t=state.tasks[0],secret=await v.get('publication:'+taskId);assert.equal(posts,1);assert.equal(t.pstrs?.stage,'api_receipt');assert.equal(t.health,'pending',mode);assert.equal(t.linkCheck,mode==='raw-mismatch'?'invalid':mode==='transport'?'unreachable':undefined,mode);assert.doesNotThrow(()=>validateBackup({state,secrets:{['publication:'+taskId]:secret!}}),mode)}finally{controller.stop();f.cleanup()}}
 });
 
 test('PST.RS controller: opaque response fresh-controller recovery is read-only and produces restorable published receipt',async()=>{const m=memory();await createPstrsPaste({operationId:intent().operationId,content:identity().content,reviewed:true},m.persistence,{now:()=>new Date(at),fetch:async()=>response()});const f=fixture(),v=vault(f.store),channel={...CHANNELS.find(x=>x.id==='pstrs')!,enabled:true},secret=JSON.stringify(m.getOpaque());f.store.updateWithCiphers(st=>{st.tasks=[task({submittedAt:at,checkpoint:'pstrs_opaque_response',pstrs:{...intent(),stage:'opaque_response'}})]},v.encryptSecrets({['publication:'+taskId]:secret}));const calls:string[]=[];const c=new Controller(f.store,v,'fixture',{channelCatalog:[channel],pstrsDependencies:{now:()=>new Date(at),fetch:async(u,i)=>{calls.push(i.method??'GET');assert.equal(i.method,'GET');return new Response(u.includes('/raw/')?identity().content:u.endsWith('/robots.txt')?'User-agent: *\nAllow: /':html(),{headers:{'content-type':u.endsWith('.md')?'text/html':'text/plain'}})}}});c.runtime.aiReady=true;try{await c.tick();const st=f.store.read();assert.equal(st.tasks[0].status,'live',JSON.stringify(st.tasks[0]));assert.equal(st.tasks[0].pstrs?.stage,'published');assert.deepEqual(calls,['GET','GET','GET']);assert.doesNotThrow(()=>validateBackup({state:st,secrets:{['publication:'+taskId]:secret}}));}finally{c.stop();f.cleanup()}});

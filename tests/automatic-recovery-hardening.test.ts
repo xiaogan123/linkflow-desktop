@@ -6,8 +6,11 @@ import { CHANNELS } from '../src/integrations/catalog';
 import { runParagraphTask, paragraphTesting } from '../src/integrations/paragraph';
 import { runBlueskyTask } from '../src/integrations/bluesky';
 import { articleContentHash, articleContextHash } from '../src/main/article-review';
+import { applyEvidencePatchResult, buildArticleEvidenceSnapshot, type ArticlePatch } from '../src/main/article-evidence';
 import type { Vault } from '../src/main/vault';
 import type { Account, ArticleReview, ExecutionContext, Site, Task } from '../src/shared/types';
+
+test.beforeEach(context=>(context as import('node:test').TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-18T12:17:00.000Z')}));
 
 const NOW = '2026-10-07T04:05:06.789Z';
 const SITE_ID = '11111111-1111-4111-8111-111111111111';
@@ -73,7 +76,7 @@ function baseTask(channelId = 'telegraph', overrides: Partial<Task> = {}): Task 
     sourceDomain: CHANNELS.find(channel => channel.id === channelId)?.domain ?? 'example.invalid',
     status: 'queued',
     createdAt: NOW,
-    scheduledAt: '2020-01-01T00:00:00.000Z',
+    scheduledAt: new Date().toISOString(),
     updatedAt: NOW,
     attempts: 0,
     message: 'Synthetic fixture',
@@ -126,69 +129,63 @@ function controllerStore(task: Task): Store {
   return store;
 }
 
-test('automatic repair is not scheduled when fewer than two task AI calls remain', async () => {
-  const originalDraft = {
-    title: 'A reviewable checklist',
-    description: 'Synthetic educational checklist',
-    body: 'Use documented checks and record the source date. We operate this educational website. guaranteed returns',
-  };
-  const task = baseTask('telegraph', { draft: originalDraft, cost: { aiCalls: 5 } });
+test('an exhausted legacy task stops before another paid review or whole-draft repair', async () => {
+  const task = baseTask('telegraph', { cost: { aiCalls: 5 } });
+  const originalDraft = structuredClone(task.draft);
   const store = controllerStore(task);
   const { vault } = memoryVault();
-  let providerCalls = 0;
-  let reviewCalls = 0;
-  const rejected = reviewFor(task, baseSite(), 'failed');
+  let providerCalls = 0, reviewCalls = 0, executions = 0;
   const controller = new Controller(store, vault, 'synthetic-memory-only', {
-    aiFactory: (_settings, _vault, onCall) => ({
-      json: async <T>() => { onCall?.(); providerCalls++; return originalDraft as T; },
-    }),
-    reviewArticle: async () => { reviewCalls++; return rejected; },
-    executeTask: async () => ({ status: 'review', message: 'unexpected fixture publication' }),
+    collectArticleEvidence: async () => [],
+    aiFactory: (_settings, _vault, onCall) => ({ json: async <T>() => { onCall?.(); providerCalls++; return {} as T; } }),
+    reviewArticle: async (_task,_site,_channel,_settings,ai) => { reviewCalls++; await ai.json('independent review',{}); throw Error('exhausted review must not reach provider'); },
+    executeTask: async () => { executions++; return { status: 'review', message: 'unexpected fixture publication' }; },
   });
   controller.runtime.aiReady = true;
   try {
     await controller.tick();
     const saved = store.read().tasks[0];
-    assert.equal(reviewCalls, 1);
     assert.equal(providerCalls, 0);
+    assert.equal(executions, 0);
+    assert.ok(reviewCalls <= 1);
     assert.equal(saved.id, TASK_ID);
     assert.equal(saved.status, 'failed');
     assert.equal(saved.checkpoint, 'system_wait');
-    assert.match(saved.message, /预算.*修稿.*复核|修稿.*复核.*预算/);
+    assert.equal(saved.reasonCode, 'ai_task_limit');
     assert.deepEqual(saved.draft, originalDraft);
-    assert.deepEqual(saved.articleReview, rejected);
-    assert.deepEqual(saved.cost, { aiCalls: 5 });
+    assert.equal(saved.cost?.aiCalls, 5);
+    assert.equal(Object.values(store.read().usage).reduce((sum, value) => sum + value, 0), 0);
   } finally { store.close(); }
 });
 
-test('queued repair rechecks its two-call budget before any provider call and never resets a full budget', async () => {
-  for (const aiCalls of [5, 6]) {
+test('queued legacy repairs at the four-call limit release capacity without resetting any history', async () => {
+  for (const aiCalls of [4, 5, 6]) {
     const site = baseSite();
     const task = baseTask('telegraph', { checkpoint: 'article_repair', cost: { aiCalls } });
     task.articleReview = reviewFor(task, site, 'failed');
     const original = structuredClone(task);
     const store = controllerStore(task);
     const { vault } = memoryVault();
-    let providerCalls = 0;
+    let providerCalls = 0, executions = 0;
     const controller = new Controller(store, vault, 'synthetic-memory-only', {
       collectArticleEvidence: async () => [],
-      aiFactory: (_settings, _vault, onCall) => ({
-        json: async <T>() => { onCall?.(); providerCalls++; return original.draft as T; },
-      }),
-      reviewArticle: async () => { throw new Error('review must not run without a two-call budget'); },
-      executeTask: async () => ({ status: 'review', message: 'unexpected fixture publication' }),
+      aiFactory: (_settings, _vault, onCall) => ({ json: async <T>() => { onCall?.(); providerCalls++; return original.draft as T; } }),
+      reviewArticle: async () => { throw new Error('review must not run at the lifetime call limit'); },
+      executeTask: async () => { executions++; return { status: 'review', message: 'unexpected fixture publication' }; },
     });
     controller.runtime.aiReady = true;
     try {
       await controller.tick();
-      const state = store.read();
-      const saved = state.tasks[0];
+      const state = store.read(), saved = state.tasks.find(item=>item.id===task.id)!;
       assert.equal(providerCalls, 0, `provider calls at task cost ${aiCalls}`);
+      assert.equal(executions, 0);
       assert.equal(Object.values(state.usage).reduce((sum, value) => sum + value, 0), 0);
       assert.equal(saved.id, original.id);
       assert.equal(saved.status, 'failed');
       assert.equal(saved.checkpoint, 'system_wait');
-      assert.match(saved.message, /预算.*修稿.*复核|修稿.*复核.*预算/);
+      assert.equal(saved.reasonCode, 'ai_task_limit');
+      assert.equal(saved.recoveryEligible, false);
+      assert.equal(saved.nextCheckAt, undefined);
       assert.deepEqual(saved.draft, original.draft);
       assert.deepEqual(saved.articleReview, original.articleReview);
       assert.deepEqual(saved.cost, { aiCalls });
@@ -198,40 +195,51 @@ test('queued repair rechecks its two-call budget before any provider call and ne
   }
 });
 
-test('exactly two remaining calls allow one repair and one independent review', async () => {
+test('an independent review applies an exact evidence-bound patch within the lifetime budget', async () => {
   const site = baseSite();
-  const task = baseTask('telegraph', { checkpoint: 'article_repair', cost: { aiCalls: 4 } });
-  task.articleReview = reviewFor(task, site, 'failed');
+  const task = baseTask('telegraph', {
+    checkpoint: 'article_review', cost: { aiCalls: 2 }, factManifest: [],
+    draft: { title: 'Documented educational workflow', description: 'Source boundaries for the workflow.', body: 'We operate this educational website. This article includes an affiliate promotional disclosure. Read the [source](https://example.com/).' },
+    evidenceSnapshot: buildArticleEvidenceSnapshot(site,undefined,[{url:site.url,kind:'site',text:site.description}]),
+  });
+  const before = structuredClone(task);
+  const patch:ArticlePatch = {field:'body',find:'We operate this educational website.',replace:'This educational website.'};
   const store = controllerStore(task);
   const { vault } = memoryVault();
-  let providerCalls = 0;
-  let executions = 0;
-  const repairedDraft = { ...task.draft!, body: `${task.draft!.body} Revised using verified evidence.` };
+  let providerCalls = 0, reviews = 0, rewrites = 0, executions = 0;
   const controller = new Controller(store, vault, 'synthetic-memory-only', {
-    collectArticleEvidence: async () => [],
-    aiFactory: (_settings, _vault, onCall) => ({
-      json: async <T>() => { onCall?.(); providerCalls++; return repairedDraft as T; },
-    }),
+    collectArticleEvidence: async () => { throw Error('saved task evidence must not be fetched again'); },
+    aiFactory: (_settings, _vault, onCall) => ({ json: async <T>() => { onCall?.(); providerCalls++; return {} as T; } }),
     reviewArticle: async (current, currentSite, currentChannel, settings, ai) => {
+      reviews++;
       await ai.json('synthetic independent review', {});
+      const result=applyEvidencePatchResult(current.draft!,current.factManifest,[patch],current.evidenceSnapshot!);
+      assert.ok(result);
+      const patched={...current,...result,draftRevision:(current.draftRevision??0)+1};
       return {
-        status: 'passed', reason: 'Independent fixture review passed.', reasonCode: 'passed', reviewedAt: NOW,
-        evidenceUrls: [currentSite.url, currentChannel.rulesUrl], draftRevision: current.draftRevision ?? 0,
-        contentHash: articleContentHash(current), contextHash: articleContextHash(currentSite, currentChannel, settings),
+        status: 'passed', reason: 'Independent fixture review passed.', reasonCode: 'passed', reviewedAt: new Date().toISOString(),
+        patches:[patch],factManifest:result.factManifest,
+        evidenceUrls: [currentSite.url, currentChannel.rulesUrl], draftRevision: patched.draftRevision,
+        contentHash: articleContentHash(patched), contextHash: articleContextHash(currentSite, currentChannel, settings),
       };
     },
-    executeTask: async () => { executions++; return { status: 'needs_input', message: 'fixture execution complete' }; },
+    executeTask: async context => { executions++;assert.equal(context.task.draftRevision,2);assert.equal(context.task.articleReview?.status,'passed');return { status: 'needs_input', message: 'fixture execution complete' }; },
   });
+  controller.generateDraft=async()=>{rewrites++;throw Error('whole-draft repair must not run');};
   controller.runtime.aiReady = true;
   try {
     await controller.tick();
     const saved = store.read().tasks[0];
-    assert.equal(providerCalls, 2);
+    assert.equal(reviews, 1);
+    assert.equal(providerCalls, 1);
+    assert.equal(rewrites, 0);
     assert.equal(executions, 1);
-    assert.equal(saved.cost?.aiCalls, 6);
-    assert.equal(saved.articleRepairAttempts, 1);
+    assert.equal(saved.cost?.aiCalls, 3);
+    assert.equal(saved.articleRepairAttempts, undefined);
     assert.equal(saved.articleReview?.status, 'passed');
     assert.equal(saved.draftRevision, 2);
+    assert.equal(saved.draft?.body, before.draft!.body.replace(patch.find,patch.replace));
+    assert.deepEqual(saved.evidenceSnapshot, before.evidenceSnapshot);
   } finally { store.close(); }
 });
 
@@ -339,7 +347,7 @@ test('Paragraph credential rejection before remote intent enters account handoff
       state.accounts[0].diagnostic = undefined;
     });
     const controller = new Controller(store, vault, 'synthetic-memory-only');
-    controller.plan();
+    controller.runtime.aiReady=true;controller.plan();
     saved = store.read().tasks[0];
     assert.equal(saved.id, before.id);
     assert.equal(saved.status, 'queued');
@@ -405,7 +413,7 @@ test('Bluesky credential rejection before remote intent enters account handoff a
       state.accounts[0].diagnostic = undefined;
     });
     const controller = new Controller(store, vault, 'synthetic-memory-only');
-    controller.plan();
+    controller.runtime.aiReady=true;controller.plan();
     saved = store.read().tasks[0];
     assert.equal(saved.id, before.id);
     assert.equal(saved.status, 'queued');

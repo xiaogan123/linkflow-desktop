@@ -21,6 +21,15 @@ const MAX_CREDENTIAL_BYTES = 16 * 1024;
 const MAX_TOKEN_BYTES = 16 * 1024;
 const MAX_RECORD_BYTES = 90 * 1024;
 const MAX_BODY_BYTES = 72 * 1024;
+const PUBLIC_VISIBILITY_GRACE_MS = 60 * 60 * 1000;
+const LEAFLET_VERIFY_MESSAGES={
+  local:'Leaflet 本地缺少可核对的原稿或已发布 DID/rkey/CID 记录；未判断平台失败',
+  pdsInvalid:'Leaflet PDS 原记录的作者、全文、链接或 CID 与本机保存的发布记录不一致',
+  pageInvalid:'Leaflet 公开页的规范网址、可见标题、完整正文、全部链接或索引状态无效',
+  pdsUnavailable:'Leaflet PDS 原记录暂无法确认；未视为不存在',
+  pageUnavailable:'Leaflet 公开页暂未可见或仍在一小时缓存宽限期；只会重查原 DID/rkey，不会重发',
+  absent:'Leaflet 已知 PDS 记录或公开页在一小时宽限期后仍不存在',
+} as const;
 
 export interface LeafletDependencies {
   fetch?: LeafletTransport;
@@ -161,7 +170,7 @@ function graphemeLength(value: string): number {
 function canonicalHttps(value: string): string {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || !url.hostname
-    || url.port && url.port !== '443') throw new Error('网址必须是无凭据、端口和片段的 HTTPS 地址');
+    || url.port && url.port !== '443') throw new Error('网址必须是无账号密码、端口和片段的 HTTPS 地址');
   return url.toString();
 }
 
@@ -205,10 +214,10 @@ function normalizeVisibleText(value: string): string {
 }
 
 function canonicalTarget(task: Task, siteUrl: string): string {
-  if (!task.topicUrl) throw new Error('Leaflet 长文缺少已核对的站内选题链接');
+  if (!task.topicUrl) throw new Error('Leaflet 长文缺少已检查的站内选题链接');
   const site = new URL(canonicalHttps(siteUrl));
   const target = canonicalHttps(task.topicUrl);
-  if (new URL(target).hostname !== site.hostname) throw new Error('Leaflet 长文只能链接当前网站的已核对选题');
+  if (new URL(target).hostname !== site.hostname) throw new Error('Leaflet 长文只能链接当前网站的已检查选题');
   return target;
 }
 
@@ -221,7 +230,7 @@ function inlinePlaintext($: CheerioAPI, root: Cheerio<any>): { plaintext: string
     if (value.type === 'text') { plaintext += value.data ?? ''; return; }
     const name = (value.name ?? value.tagName ?? '').toLowerCase();
     if (name === 'br') { plaintext += '\n'; return; }
-    if (name === 'img') throw new Error('Leaflet 自动全文暂不接受 Markdown 图片；请改为可核验的文字与链接');
+    if (name === 'img') throw new Error('Leaflet 自动全文暂不接受 Markdown 图片；请改为可检查的文字与链接');
     if (name === 'a') {
       const href = canonicalHttps(value.attribs?.href ?? '');
       const start = Buffer.byteLength(plaintext, 'utf8');
@@ -411,10 +420,10 @@ function buildArticle(task: Task, siteUrl: string, did: string, rkey: string, cr
   if (graphemeLength(description) > 3_000 || Buffer.byteLength(description, 'utf8') > 30_000) {
     throw new Error('Leaflet 摘要超过官方上限');
   }
-  if (!validDid(did) || !validTid(rkey) || !validIso(createdAt)) throw new Error('Leaflet 发布身份无效');
+  if (!validDid(did) || !validTid(rkey) || !validIso(createdAt)) throw new Error('Leaflet 记录标识无效');
   const target = canonicalTarget(task, siteUrl);
   const parsed = markdownBlocks(draft.body);
-  if (!parsed.links.includes(target)) throw new Error('Leaflet 长文必须包含已核对选题的可见链接');
+  if (!parsed.links.includes(target)) throw new Error('Leaflet 长文必须包含已检查选题的可见链接');
   const page = {
     id: deterministicPageId(did, rkey, createdAt),
     $type: 'pub.leaflet.pages.linearDocument',
@@ -532,7 +541,7 @@ async function xrpc(
   if (!allowed || options.token !== undefined && !validToken(options.token)) throw new LeafletError('invalid_response');
   const url = new URL(`/xrpc/${nsid}`, PDS_ORIGIN);
   for (const [key, value] of options.query ?? []) url.searchParams.append(key, value);
-  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Linkflow-Desktop' };
+  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Mozilla/5.0' };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   if (options.body) headers['content-type'] = 'application/json';
   const { response, bytes } = await request(url, {
@@ -551,7 +560,8 @@ async function xrpc(
   if (response.status === 401 || remoteCode === 'InvalidToken' || remoteCode === 'ExpiredToken'
     || nsid === 'com.atproto.server.createSession' && response.status === 400) throw new LeafletError('auth');
   if (response.status === 403 || remoteCode === 'AccountTakedown') throw new LeafletError('restricted');
-  if (response.status === 404 || remoteCode === 'RecordNotFound') throw new LeafletError('not_found');
+  if (response.status === 404 || remoteCode === 'RecordNotFound'
+    || nsid === 'com.atproto.repo.getRecord' && response.status === 410) throw new LeafletError('not_found');
   if (response.status === 429) throw new LeafletError('rate_limited');
   if (response.status === 408 || response.status >= 500) throw new LeafletError('network');
   if ([400, 409, 422].includes(response.status)) throw new LeafletError('rejected');
@@ -612,7 +622,7 @@ export async function connectLeafletAccount(
     const prior = priorRaw ? credentialFrom(priorRaw) : undefined;
     const session = await createSession(handle, appPassword, dependencies);
     if (prior && (prior.did !== session.did || prior.handle !== session.handle)) {
-      throw new Error('Leaflet 重连身份与原 DID/handle 不一致，未替换本机凭据');
+      throw new Error('Leaflet 重连发布账号与原 DID/handle 不一致，未替换本机登录信息');
     }
     const credential: StoredCredential = { version: 1, appPassword, ...session };
     await vault.set(`account:${accountId}`, serializeCredential(credential));
@@ -719,6 +729,15 @@ function unavailable(url: string, outcome: LinkResult['outcome'], reason: string
   return { found: false, outcome, url, rel: 'unknown', reason };
 }
 
+function beyondVisibilityGrace(receipt:LeafletReceipt,dependencies:LeafletDependencies):boolean|undefined{
+  try{
+    const supplied=dependencies.now?.(),now=supplied===undefined?new Date():supplied instanceof Date?supplied:new Date(supplied);
+    const created=new Date(receipt.recordCreatedAt),elapsed=now.getTime()-created.getTime();
+    if(!Number.isFinite(now.getTime())||!Number.isFinite(created.getTime())||elapsed<0)return;
+    return elapsed>PUBLIC_VISIBILITY_GRACE_MS;
+  }catch{return}
+}
+
 function blocksIndexing(value: string): boolean {
   return /(?:^|[,;\s])(?:noindex|none)(?=$|[,;\s])/i.test(value);
 }
@@ -748,7 +767,7 @@ export async function reconcileLeafletTask(
 function firstRunFailure(error: unknown): LeafletExecutionResult {
   if (error instanceof LeafletError && error.code === 'cancelled') return { status: 'queued', message: 'Leaflet 任务已暂停，尚未提交记录' };
   if (error instanceof LeafletError && ['network', 'timeout', 'rate_limited'].includes(error.code)) {
-    return { status: 'queued', message: 'Leaflet 身份刷新暂未完成，尚未提交记录' };
+    return { status: 'queued', message: 'Leaflet 账号信息更新暂未完成，尚未提交记录' };
   }
   if (error instanceof LeafletError && error.code === 'restricted') {
     return { status: 'needs_input', message: 'Leaflet 使用的 Bluesky 账号或发布权限受限，未提交记录' };
@@ -770,11 +789,11 @@ export async function runLeafletTask(
   const prior = taskReceipt(context.task);
   const remoteCheckpoint = ['leaflet_create_submitting', 'leaflet_create_accepted', 'leaflet_published'].includes(context.task.checkpoint ?? '');
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
-    return { status: 'needs_input', message: 'Leaflet 已有远端痕迹但缺少 DID/rkey 回执，禁止创建替代记录',
+    return { status: 'needs_input', message: 'Leaflet 已有远端痕迹但缺少 DID/rkey 记录，禁止创建替代记录',
       checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
   }
   if (prior && (!validReceipt(prior) || prior.did !== accountDid)) {
-    return { status: 'needs_input', message: 'Leaflet 保存的 DID、rkey 或回执无效；不会重新发布',
+    return { status: 'needs_input', message: 'Leaflet 保存的 DID、rkey 或记录无效；不会重新发布',
       leaflet: prior, checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
   }
   if (prior && context.task.publicUrl && context.task.publicUrl !== publicUrl(prior.did, prior.rkey)) {
@@ -786,30 +805,30 @@ export async function runLeafletTask(
     let article: BuiltArticle;
     try { article = buildArticle(context.task, context.site.url, prior.did, prior.rkey, prior.recordCreatedAt); }
     catch (error) {
-      return { status: 'needs_input', message: error instanceof Error ? error.message : 'Leaflet 原文无法安全对账',
+      return { status: 'needs_input', message: error instanceof Error ? error.message : 'Leaflet 原文无法安全核对',
         leaflet: prior, checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt,
         publicUrl: context.task.publicUrl };
     }
     if (article.recordHash !== prior.recordHash) {
-      return { status: 'needs_input', message: 'Leaflet 原稿、作者或链接已与提交意图不同；保留原 rkey 且不会重发',
+      return { status: 'needs_input', message: 'Leaflet 原稿、作者或链接已与提交信息不同；保留原 rkey 且不会重发',
         leaflet: prior, checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt,
         publicUrl: context.task.publicUrl };
     }
     const reconciled = await reconcileLeafletTask(context, dependencies);
     if (reconciled.status !== 'found') {
-      return { status: 'review', message: 'Leaflet 原 DID/rkey 暂未回读到完全相同记录；只会继续只读核验，不会重发',
+      return { status: 'review', message: 'Leaflet 原 DID/rkey 暂未回读到完全相同记录；只会继续检查，不会重发',
         leaflet: prior, checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt,
         publicUrl: context.task.publicUrl };
     }
     checkpoint(context, { leaflet: reconciled.leaflet, checkpoint: 'leaflet_published', publicUrl: reconciled.publicUrl,
       submittedAt: context.task.submittedAt });
-    return { status: 'review', message: 'Leaflet PDS 完整记录已确认，等待公开页缓存与可见性核验',
+    return { status: 'review', message: 'Leaflet PDS 完整记录已确认，等待公开页缓存与可见性检查',
       leaflet: reconciled.leaflet, checkpoint: 'leaflet_published', publicUrl: reconciled.publicUrl,
       submittedAt: context.task.submittedAt };
   }
 
   if (!articleReviewStillValid(context.task, context.site, context.channel, context.settings, account)) {
-    return { status: 'needs_input', message: 'Leaflet 长文的事实、链接与渠道独立 AI 核对未通过或已失效' };
+    return { status: 'needs_input', message: 'Leaflet 长文的事实、链接与平台 AI 复核未通过或已失效' };
   }
   if (context.signal.aborted) return { status: 'queued', message: 'Leaflet 任务已暂停，尚未提交记录' };
 
@@ -823,7 +842,7 @@ export async function runLeafletTask(
     return firstRunFailure(error);
   }
   if (!articleReviewStillValid(context.task, context.site, context.channel, context.settings, account)) {
-    return { status: 'needs_input', message: 'Leaflet 长文在身份核对期间发生变更，未提交记录' };
+    return { status: 'needs_input', message: 'Leaflet 长文在发布账号核对期间发生变更，未提交记录' };
   }
 
   const recordCreatedAt = stamp(dependencies);
@@ -837,7 +856,7 @@ export async function runLeafletTask(
   try {
     checkpoint(context, { leaflet: receipt, checkpoint: 'leaflet_create_submitting', submittedAt, draft: context.task.draft });
   } catch {
-    return { status: 'queued', message: 'Leaflet 提交意图未持久保存，未发送 createRecord' };
+    return { status: 'queued', message: 'Leaflet 提交信息未持久保存，未发送 createRecord' };
   }
 
   let accepted: RemoteReceipt;
@@ -849,7 +868,7 @@ export async function runLeafletTask(
     accepted = remoteReceipt(value, credential.did, rkey);
   } catch (error) {
     await markAccountFailure(context, account, error, dependencies);
-    return { status: 'review', message: 'Leaflet createRecord 结果无法确认；已锁定原 DID/rkey，后续只读核验且不会重发',
+    return { status: 'review', message: 'Leaflet createRecord 结果无法确认；已锁定原 DID/rkey，之后只检查原记录，不会重发',
       leaflet: receipt, checkpoint: 'leaflet_create_submitting', submittedAt };
   }
 
@@ -857,23 +876,23 @@ export async function runLeafletTask(
   try {
     checkpoint(context, { leaflet: receipt, checkpoint: 'leaflet_create_accepted', submittedAt, publicUrl: accepted.publicUrl });
   } catch {
-    return { status: 'review', message: 'Leaflet 已返回 DID/rkey/CID；待保存匹配回执后只读核验，不会重发',
+    return { status: 'review', message: 'Leaflet 已返回 DID/rkey/CID；待保存匹配记录后检查，不会重发',
       leaflet: receipt, checkpoint: 'leaflet_create_submitting', submittedAt, publicUrl: accepted.publicUrl };
   }
   if (context.signal.aborted) {
-    return { status: 'review', message: 'Leaflet 已返回发布回执；暂停后只会核验原 DID/rkey',
+    return { status: 'review', message: 'Leaflet 已返回发布记录；暂停后只会检查原 DID/rkey',
       leaflet: receipt, checkpoint: 'leaflet_create_accepted', submittedAt, publicUrl: accepted.publicUrl };
   }
   let found: RemoteReceipt | undefined;
   try { found = await getExactRecord(receipt, article.record, dependencies, context.signal); }
   catch { /* App/PDS read lag leaves the accepted identity durable for later recovery. */ }
   if (!found) {
-    return { status: 'review', message: 'Leaflet 已返回发布回执，完整 PDS 记录仍待只读核验；不会重发',
+    return { status: 'review', message: 'Leaflet 已返回发布记录，完整 PDS 记录仍待检查；不会重发',
       leaflet: receipt, checkpoint: 'leaflet_create_accepted', submittedAt };
   }
   const published: LeafletReceipt = { ...receipt, stage: 'published', uri: found.uri, cid: found.cid, url: found.publicUrl };
   checkpoint(context, { leaflet: published, checkpoint: 'leaflet_published', submittedAt, publicUrl: found.publicUrl });
-  return { status: 'review', message: 'Leaflet PDS 完整记录已确认，等待公开页缓存与可见性核验',
+  return { status: 'review', message: 'Leaflet PDS 完整记录已确认，等待公开页缓存与可见性检查',
     leaflet: published, checkpoint: 'leaflet_published', submittedAt, publicUrl: found.publicUrl };
 }
 
@@ -939,11 +958,13 @@ async function publicPage(
 ): Promise<{ rel: string }> {
   const url = new URL(publicUrl(receipt.did, receipt.rkey));
   const { response, bytes } = await request(url, {
-    method: 'GET', headers: { accept: 'text/html', 'user-agent': 'Linkflow-Desktop' }, signal: dependencies.signal,
+    method: 'GET', headers: { accept: 'text/html', 'user-agent': 'Mozilla/5.0' }, signal: dependencies.signal,
   }, dependencies, MAX_HTML_BYTES);
-  if (response.status === 404) throw new LeafletError('not_found');
+  if (response.status === 404 || response.status === 410) throw new LeafletError('not_found');
+  if (response.status === 401) throw new LeafletError('auth');
+  if (response.status === 403) throw new LeafletError('restricted');
   if (response.status === 429) throw new LeafletError('rate_limited');
-  if (response.status >= 500) throw new LeafletError('network');
+  if (response.status === 408 || response.status >= 500) throw new LeafletError('network');
   if (!response.ok || !response.headers.get('content-type')?.toLowerCase().includes('text/html')) {
     throw new LeafletError('invalid_response');
   }
@@ -965,31 +986,35 @@ export async function verifyLeafletPublication(
     ? publicUrl(receipt.did, receipt.rkey) : `${PUBLIC_ORIGIN}/`);
   if (task.channelId !== CHANNEL_ID || task.sourceDomain !== SOURCE_DOMAIN || !validReceipt(receipt)
     || receipt.stage !== 'published' || task.publicUrl !== publicUrl(receipt.did, receipt.rkey)) {
-    return unavailable(fallback, 'invalid', 'Leaflet 任务缺少一致的已发布 DID/rkey/CID 回执');
+    return unavailable(fallback, 'unreachable', LEAFLET_VERIFY_MESSAGES.local);
   }
   let article: BuiltArticle;
   try { article = buildArticle(task, targetSiteUrl, receipt.did, receipt.rkey, receipt.recordCreatedAt); }
-  catch { return unavailable(fallback, 'invalid', 'Leaflet 原文、作者或链接无法与回执匹配'); }
-  if (article.recordHash !== receipt.recordHash) return unavailable(fallback, 'invalid', 'Leaflet 原文记录哈希与回执不一致');
+  catch { return unavailable(fallback, 'unreachable', LEAFLET_VERIFY_MESSAGES.local); }
+  if (article.recordHash !== receipt.recordHash) return unavailable(fallback, 'unreachable', LEAFLET_VERIFY_MESSAGES.local);
   try {
     await getExactRecord(receipt, article.record, dependencies, dependencies.signal);
   } catch (error) {
     if (error instanceof LeafletError && error.code === 'invalid_response') {
-      return unavailable(fallback, 'invalid', 'Leaflet PDS 原记录的作者、全文、链接或 CID 与回执不一致');
+      return unavailable(fallback, 'invalid', LEAFLET_VERIFY_MESSAGES.pdsInvalid);
     }
-    return unavailable(fallback, 'unreachable', 'Leaflet PDS 原记录暂无法确认；未视为不存在');
+    if(error instanceof LeafletError&&error.code==='not_found'&&beyondVisibilityGrace(receipt,dependencies)===true)
+      return unavailable(fallback,'absent',LEAFLET_VERIFY_MESSAGES.absent);
+    return unavailable(fallback, 'unreachable', LEAFLET_VERIFY_MESSAGES.pdsUnavailable);
   }
   try {
     const page = await publicPage(receipt, article, dependencies);
     return { found: true, outcome: 'found', url: fallback, rel: page.rel,
-      reason: 'Leaflet PDS 原记录与公开页的作者、标题、完整正文、全部链接及 canonical 一致；这不保证搜索收录或排名' };
+      reason: 'Leaflet PDS 原记录与公开页的作者、标题、完整正文、全部链接及规范网址一致；这不保证搜索收录或排名' };
   } catch (error) {
     if (error instanceof LeafletError && error.code === 'invalid_response') {
-      return unavailable(fallback, 'invalid', 'Leaflet 公开页的 canonical、可见标题、完整正文、全部链接或索引状态无效');
+      return unavailable(fallback, 'invalid', LEAFLET_VERIFY_MESSAGES.pageInvalid);
     }
     // Externally-created records are not actively revalidated by Leaflet and
-    // can remain behind a cached 404 for up to one hour. Never report absent.
-    return unavailable(fallback, 'unreachable', 'Leaflet 公开页暂未可见或仍在缓存；只会重查原 DID/rkey，不会重发');
+    // can remain behind a cached 404 for up to one hour.
+    if(error instanceof LeafletError&&error.code==='not_found'&&beyondVisibilityGrace(receipt,dependencies)===true)
+      return unavailable(fallback,'absent',LEAFLET_VERIFY_MESSAGES.absent);
+    return unavailable(fallback, 'unreachable', LEAFLET_VERIFY_MESSAGES.pageUnavailable);
   }
 }
 

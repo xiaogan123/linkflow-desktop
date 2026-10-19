@@ -195,7 +195,7 @@ if(!process.versions.electron){
 
     await evaluate('window.__raindropFixture.startNew()');
     await waitFor('!document.body.innerText.includes("Reading shelf")');
-    await clickText('添加 / 连接账号');
+    await clickText('连接账号');
     await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="添加或连接账号"');
     await nativeClick(`[...document.querySelectorAll('[role=option]')].find(item=>item.innerText.includes('Raindrop'))`);
     await clickText('连接 Raindrop');

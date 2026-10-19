@@ -41,7 +41,7 @@ function fixture(fail: boolean, task: Task = original) {
     return { found: true, outcome: 'found', url: checkedUrl, rel: 'nofollow', reason: 'Verified fixture' };
   };
   const controller = new Controller(store, { available: () => true } as unknown as Vault, 'verification-fixture', {
-    verifyLink: read, verifySupanote: read,
+    verifyLink: read, verifySupanote: read, recheckLink: async()=>({...await read(),reasonCode:'link_found'}),
   });
   controller.onNotice = () => { notices++; };
   return { store, controller, ready, finish, calls: () => calls, notices: () => notices };
@@ -83,9 +83,9 @@ test('failure for the unchanged URL keeps bounded retry timing and allows a subs
     await pending;
     const saved = f.store.read().tasks[0];
     assert.equal(saved.health, 'unknown');
-    assert.match(saved.message, /核验暂时失败/);
+    assert.equal(saved.linkCheck,'unreachable');
     assert.ok(saved.lastCheckedAt);
-    assert.ok(Math.abs(Date.parse(saved.nextCheckAt!) - Date.parse(saved.lastCheckedAt!) - 7 * 86400000) < 1000);
+    assert.equal(saved.nextCheckAt, '2026-10-31T00:00:00.000Z');
     assert.equal(f.controller.hasPendingWork(), false);
     await f.controller.verify(original.id);
     assert.equal(f.store.read().tasks[0].linkCheck, 'found');
@@ -130,7 +130,7 @@ for (const changeIntent of [true, false]) test(`Supanote failure ${changeIntent 
     await pending;
     if (changeIntent) assert.deepEqual(f.store.read().tasks[0], replacement);
     else {
-      assert.match(f.store.read().tasks[0].message, /核验暂时失败/);
+      assert.equal(f.store.read().tasks[0].linkCheck,'unreachable');
       assert.ok(f.store.read().tasks[0].nextCheckAt);
     }
     assert.equal(f.controller.hasPendingWork(), false);
@@ -139,7 +139,7 @@ for (const changeIntent of [true, false]) test(`Supanote failure ${changeIntent 
 
 
 for (const fail of [false, true]) {
-  test(`a newer skip survives an earlier verification ${fail ? 'failure' : 'success'} and permits a fresh manual check`, async () => {
+  test(`a newer skip survives an earlier verification ${fail ? 'failure' : 'success'} and permits a fresh manual check without an immediate notice`, async () => {
     const f = fixture(fail);
     try {
       const pending = f.controller.verify(original.id);
@@ -158,7 +158,7 @@ for (const fail of [false, true]) {
       await f.controller.verify(original.id);
       assert.equal(f.store.read().tasks[0].status, 'live');
       assert.equal(f.calls(), 2);
-      assert.equal(f.notices(), 1);
+      assert.equal(f.notices(), 0);
     } finally { f.finish(); f.store.close(); }
   });
 }

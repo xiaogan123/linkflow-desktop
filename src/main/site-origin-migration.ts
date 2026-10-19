@@ -7,7 +7,7 @@ import type {State} from './store';
 
 export interface SiteOriginIdentity {domain:string;url:string;name:string;language:string}
 export interface SiteOriginTaskSnapshot {taskId:string;site:SiteOriginIdentity}
-export interface SiteOriginSiteSnapshot extends SiteOriginIdentity {id:string;status:SiteStatus;monthlyTarget:number;topics?:Site['topics'];topicsCheckedAt?:string;topicsAttemptedAt?:string;topicsError?:string;searchReports?:Site['searchReports']}
+export interface SiteOriginSiteSnapshot extends SiteOriginIdentity {id:string;status:SiteStatus;monthlyTarget:number;linkTargets?:Site['linkTargets'];topicOverrides?:Site['topicOverrides'];topics?:Site['topics'];topicsCheckedAt?:string;topicsAttemptedAt?:string;topicsError?:string;searchReports?:Site['searchReports']}
 export interface SiteOriginRecoverySnapshot {id:string;siteId:string;channelId:string;accountId?:string;sourceDomain:string;status:Task['status'];createdAt:string;scheduledAt:string;updatedAt:string;attempts:number;message:string;topicUrl?:string;topicContentHash?:string;topicSwitchAttempts?:number;articleAttempts?:Task['articleAttempts'];draft?:Task['draft'];draftRevision?:number;articleRepairAttempts?:number;draftUpdatedAt?:string;articleApprovedAt?:string;articleReview?:Task['articleReview'];history?:Task['history'];cost?:Task['cost'];checkpoint?:string;reason?:string}
 export interface SiteOriginRecoveryGrant {taskId:string;grantedAt:string;consumedAt?:string;before:SiteOriginRecoverySnapshot}
 export interface SiteOriginMigration {
@@ -30,13 +30,31 @@ export interface SiteOriginMigrationInput {
   resumeStatus?:Extract<SiteStatus,'ready'>;
 }
 
-type MigrationState=Pick<State,'sites'|'tasks'|'accountBindings'|'siteOriginMigrations'>;
+type MigrationState=Pick<State,'sites'|'tasks'|'accounts'|'accountBindings'|'siteOriginMigrations'>;
 const exactDate=(value:string)=>Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
 const identity=(site:Pick<Site,'domain'|'url'|'name'|'language'>):SiteOriginIdentity=>({domain:site.domain,url:site.url,name:site.name,language:site.language});
-const siteSnapshot=(site:Site):SiteOriginSiteSnapshot=>structuredClone({id:site.id,...identity(site),status:site.status,monthlyTarget:site.monthlyTarget,...(site.topics?{topics:site.topics}:{}),...(site.topicsCheckedAt?{topicsCheckedAt:site.topicsCheckedAt}:{}),...(site.topicsAttemptedAt?{topicsAttemptedAt:site.topicsAttemptedAt}:{}),...(site.topicsError?{topicsError:site.topicsError}:{}),...(site.searchReports?{searchReports:site.searchReports}:{})});
+const siteSnapshot=(site:Site):SiteOriginSiteSnapshot=>structuredClone({id:site.id,...identity(site),status:site.status,monthlyTarget:site.monthlyTarget,...(site.linkTargets?{linkTargets:site.linkTargets}:{}),...(site.topicOverrides?{topicOverrides:site.topicOverrides}:{}),...(site.topics?{topics:site.topics}:{}),...(site.topicsCheckedAt?{topicsCheckedAt:site.topicsCheckedAt}:{}),...(site.topicsAttemptedAt?{topicsAttemptedAt:site.topicsAttemptedAt}:{}),...(site.topicsError?{topicsError:site.topicsError}:{}),...(site.searchReports?{searchReports:site.searchReports}:{})});
 const recoverySnapshot=(task:Task):SiteOriginRecoverySnapshot=>structuredClone({id:task.id,siteId:task.siteId,channelId:task.channelId,...(task.accountId?{accountId:task.accountId}:{}),sourceDomain:task.sourceDomain,status:task.status,createdAt:task.createdAt,scheduledAt:task.scheduledAt,updatedAt:task.updatedAt,attempts:task.attempts,message:task.message,...(task.topicUrl?{topicUrl:task.topicUrl}:{}),...(task.topicContentHash?{topicContentHash:task.topicContentHash}:{}),...(task.topicSwitchAttempts===undefined?{}:{topicSwitchAttempts:task.topicSwitchAttempts}),...(task.articleAttempts?{articleAttempts:task.articleAttempts}:{}),...(task.draft?{draft:task.draft}:{}),...(task.draftRevision===undefined?{}:{draftRevision:task.draftRevision}),...(task.articleRepairAttempts===undefined?{}:{articleRepairAttempts:task.articleRepairAttempts}),...(task.draftUpdatedAt?{draftUpdatedAt:task.draftUpdatedAt}:{}),...(task.articleApprovedAt?{articleApprovedAt:task.articleApprovedAt}:{}),...(task.articleReview?{articleReview:task.articleReview}:{}),...(task.history?{history:task.history}:{}),...(task.cost?{cost:task.cost}:{}),...(task.checkpoint?{checkpoint:task.checkpoint}:{}),...(task.reason?{reason:task.reason}:{})});
 const exactIdentity=(left:SiteOriginIdentity,right:SiteOriginIdentity)=>left.domain===right.domain&&left.url===right.url&&left.name===right.name&&left.language===right.language;
 const serializedWithoutConsumption=(value:SiteOriginMigration)=>JSON.stringify({...value,recovery:value.recovery?{...value.recovery,consumedAt:undefined}:undefined});
+const MIGRATION_BLOCKER_MESSAGES={
+  external:'该站有 Telegraph 以外的外部提交或发布记录，暂不能更换域名',
+  batch5Identity:'该站已在 Rant 或 SlopIt 注册过发布账号，或注册请求可能已经发出；为避免旧来源重复注册，暂不能更换域名',
+} as const;
+const BATCH5_IDENTITY_CHANNELS=new Set(['rant','slopit']);
+const BATCH5_IDENTITY_STAGES=new Set(['registered','reserved','request_unknown']);
+const BATCH5_SAFE_STAGES=new Set(['rejected','not_sent']);
+
+function hasBatch5IdentityLock(state:MigrationState,siteId:string):boolean{
+  const tasks=state.tasks.filter(task=>task.siteId===siteId&&BATCH5_IDENTITY_CHANNELS.has(task.channelId));
+  if(tasks.some(task=>!!task.batch5Registration&&task.batch5Registration.channelId===task.channelId&&BATCH5_IDENTITY_STAGES.has(task.batch5Registration.stage)))return true;
+  return state.accountBindings.some(binding=>{
+    if(binding.siteId!==siteId||!BATCH5_IDENTITY_CHANNELS.has(binding.channelId))return false;
+    const account=state.accounts.find(value=>value.id===binding.accountId&&value.channelId===binding.channelId);
+    if(account?.source!=='generated'||account.registrationAttempts!==1)return false;
+    return !tasks.some(task=>task.channelId===binding.channelId&&task.accountId===account.id&&task.batch5Registration?.channelId===binding.channelId&&BATCH5_SAFE_STAGES.has(task.batch5Registration.stage));
+  });
+}
 
 function mappedUrl(value:string|undefined,from:SiteOriginIdentity,to:SiteOriginIdentity):string|undefined{
   if(!value)return;
@@ -77,7 +95,7 @@ function assertRecord(state:MigrationState,record:SiteOriginMigration):void{
 
 export function assertSiteOriginMigrationState(state:MigrationState):void{
   const records=state.siteOriginMigrations??[],ids=new Set<string>();
-  for(const record of records){if(ids.has(record.siteId))throw Error('同一站点只能保留一条有限来源迁移记录');ids.add(record.siteId);assertRecord(state,record)}
+  for(const record of records){if(ids.has(record.siteId))throw Error('同一站点只能保留一条更换域名记录');ids.add(record.siteId);assertRecord(state,record)}
 }
 
 export function assertSiteOriginMigrationTransition(previous:MigrationState,next:MigrationState,allowImported=false):void{
@@ -86,6 +104,7 @@ export function assertSiteOriginMigrationTransition(previous:MigrationState,next
     if((previous.siteOriginMigrations??[]).some(value=>value.siteId===after.siteId))continue;
     const site=previous.sites.find(value=>value.id===after.siteId),external=previous.tasks.filter(task=>task.siteId===after.siteId&&hasExternalAttempt(task));
     if(!site&&allowImported)continue;
+    if(hasBatch5IdentityLock(previous,after.siteId))throw Error(MIGRATION_BLOCKER_MESSAGES.batch5Identity);
     if(!site||JSON.stringify(siteSnapshot(site))!==JSON.stringify(after.before)||external.some(task=>task.channelId!=='telegraph')||external.length!==after.telegraphTasks.length||external.some(task=>!after.telegraphTasks.some(frozen=>frozen.taskId===task.id)))throw Error('网站来源迁移前置快照或外部历史不一致');
     if(after.recovery){const task=previous.tasks.find(value=>value.id===after.recovery!.taskId);if(!task||JSON.stringify(recoverySnapshot(task))!==JSON.stringify(after.recovery.before))throw Error('网站迁移恢复任务快照不一致')}
   }
@@ -101,14 +120,15 @@ export function applySiteOriginMigration(state:MigrationState,input:SiteOriginMi
   if(input.operatorAuthorized!==true)throw Error('网站来源迁移需要操作员明确授权');
   const stamp=now.toISOString();if(!exactDate(stamp))throw Error('网站来源迁移时间无效');
   const site=state.sites.find(value=>value.id===input.siteId);if(!site)throw Error('网站不存在');
-  if((state.siteOriginMigrations??[]).some(value=>value.siteId===site.id))throw Error('该站点已经完成过有限来源迁移');
+  if((state.siteOriginMigrations??[]).some(value=>value.siteId===site.id))throw Error('该站点已经更换过一次域名');
   if(site.domain!==input.expectedDomain||site.url!==input.expectedUrl)throw Error('网站来源已改变，请重新核对后再迁移');
   const parsed=publicUrl(input.newUrl),guarded=normalizePublicUrl(parsed.href),next=normalizeDomain(guarded.href);
   if(guarded.protocol!=='https:'||guarded.pathname!=='/'||guarded.search||guarded.hash)throw Error('网站迁移目标必须是公开 HTTPS 根地址');
   if(next.domain===site.domain||next.url===site.url)throw Error('新旧网站来源相同');
   if(state.sites.some(value=>value.id!==site.id&&(value.domain===next.domain||value.url===next.url)))throw Error('新网站来源已被其他站点使用');
   const tasks=state.tasks.filter(task=>task.siteId===site.id),external=tasks.filter(hasExternalAttempt);
-  if(external.some(task=>task.channelId!=='telegraph'))throw Error('该站存在非 Telegraph 外部提交或回执，不能使用有限来源迁移');
+  if(hasBatch5IdentityLock(state,site.id))throw Error(MIGRATION_BLOCKER_MESSAGES.batch5Identity);
+  if(external.some(task=>task.channelId!=='telegraph'))throw Error(MIGRATION_BLOCKER_MESSAGES.external);
   if(input.resumeStatus&&(site.status!=='paused'||input.resumeStatus!=='ready'))throw Error('只有已暂停站点可在迁移成功后恢复为就绪');
   const before=siteSnapshot(site),after:SiteOriginIdentity={...identity(site),domain:next.domain,url:next.url};
   let recovery:SiteOriginRecoveryGrant|undefined;
@@ -118,15 +138,32 @@ export function applySiteOriginMigration(state:MigrationState,input:SiteOriginMi
     recovery={taskId:task.id,grantedAt:stamp,before:recoverySnapshot(task)};
   }
   const record:SiteOriginMigration={version:1,siteId:site.id,migratedAt:stamp,before,after,telegraphTasks:external.map(task=>({taskId:task.id,site:identity(before)})),...(recovery?{recovery}:{})};
+  // Current content configuration follows the new origin; the before snapshot stays immutable.
+  const mapCurrentUrl=(value:string)=>{
+    const exact=mappedUrl(value,identity(before),after);if(exact)return exact;
+    try{
+      const parsed=publicUrl(value),oldOrigin=publicUrl(before.url);
+      // The content editor accepts the same site's www alias. Do not widen task migration.
+      if(parsed.hostname.replace(/^www\./,'')!==oldOrigin.hostname.replace(/^www\./,''))return value;
+      const target=publicUrl(after.url);target.pathname=parsed.pathname;target.search=parsed.search;target.hash='';
+      return target.href;
+    }catch{return value}
+  };
+  if(site.linkTargets)site.linkTargets=site.linkTargets.map(mapCurrentUrl);
+  if(site.topicOverrides)site.topicOverrides={
+    added:site.topicOverrides.added.map(topic=>({...topic,url:mapCurrentUrl(topic.url)})),
+    excluded:site.topicOverrides.excluded.map(mapCurrentUrl),
+  };
   site.domain=next.domain;site.url=next.url;
   delete site.topics;delete site.topicsCheckedAt;delete site.topicsAttemptedAt;delete site.topicsError;delete site.searchReports;
   if(input.resumeStatus)site.status=input.resumeStatus;
   for(const task of tasks){
     const replacement=mappedUrl(task.topicUrl,identity(before),after);if(!replacement)continue;
-    if(pristineFutureTask(task)){task.topicUrl=replacement;task.topicContentHash=undefined;task.updatedAt=stamp;continue}
+    // Evidence taken from the old domain no longer matches the remapped topic; it is gathered again before the next draft.
+    if(pristineFutureTask(task)){task.topicUrl=replacement;task.topicContentHash=undefined;task.evidenceSnapshot=undefined;task.factManifest=undefined;task.updatedAt=stamp;continue}
     if(task.id!==input.recoveryTaskId)continue;
     task.history=[...(task.history??[]),{at:stamp,status:task.status,message:task.message,linkCheck:task.linkCheck}].slice(-50);
-    task.topicUrl=replacement;task.topicContentHash=undefined;task.draft=undefined;task.draftUpdatedAt=undefined;task.articleReview=undefined;task.articleApprovedAt=undefined;
+    task.topicUrl=replacement;task.topicContentHash=undefined;task.evidenceSnapshot=undefined;task.factManifest=undefined;task.draft=undefined;task.draftUpdatedAt=undefined;task.articleReview=undefined;task.articleApprovedAt=undefined;
     task.status='failed';task.checkpoint='site_origin_migration_recovery';task.updatedAt=stamp;task.message='网站来源已迁移；原任务、稿件快照、累计成本、重试和换题记录均已保留，等待一次显式迁移恢复。';
   }
   state.siteOriginMigrations??=[];state.siteOriginMigrations.push(record);assertSiteOriginMigrationState(state);return record;

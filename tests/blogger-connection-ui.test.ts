@@ -113,7 +113,7 @@ test('Blogger connect and reconnect reuse the verified blogs without a second li
   const result:BloggerConnectionResult={account,blogs:[{id:'blog-new',name:'New Blog',url:'https://new.blogspot.com/'}]};
   const mounted=mount(BloggerConnection,{data:snapshot(),disabled:false,onClose:()=>{},onAction:async(command:string)=>{calls.push(command);return command==='account:connect-blogger'?result:undefined}});
   try{
-    (mounted.fixture.button('选择桌面客户端 JSON 并连接').props.onClick as ()=>void)();
+    (mounted.fixture.button('导入授权配置并连接').props.onClick as ()=>void)();
     await settle();
     assert.deepEqual(calls,['account:connect-blogger']);
     assert.equal(mounted.fixture.select('Blogger 博客').props.value,'blog-new');
@@ -128,11 +128,12 @@ test('Blogger connect and reconnect reuse the verified blogs without a second li
     await settle();
     assert.deepEqual(reconnectCalls,['account:blogger-blogs']);
     reconnectCalls.length=0;
-    (reconnected.fixture.button('重新授权此身份').props.onClick as ()=>void)();
+    (reconnected.fixture.button('重新授权此发布账号').props.onClick as ()=>void)();
     await settle();
     assert.deepEqual(reconnectCalls,['account:reconnect-blogger']);
-    assert.equal(reconnected.fixture.select('Blogger 博客').props.value,'','different existing blog bindings must not be overwritten by a default');
-    assert.deepEqual(reconnected.fixture.inputs().map(input=>input.props.checked),[true,true]);
+    // One blog per site: the drawer manages one site at a time and shows the blog that site already uses.
+    assert.equal(reconnected.fixture.select('Blogger 博客').props.value,'blog-one');
+    assert.deepEqual(reconnected.fixture.inputs().map(input=>input.props.checked),[true,false]);
   }finally{reconnected.restore()}
 });
 
@@ -142,7 +143,7 @@ test('Blogger late OAuth results stay inert after close and empty snapshots show
   const calls:string[]=[];let closed=0;
   const mounted=mount(BloggerConnection,{data:snapshot(),disabled:false,onClose:()=>{closed++},onAction:async(command:string)=>{calls.push(command);if(command==='account:connect-blogger')return pending.promise;return {cancelled:true}}});
   try{
-    (mounted.fixture.button('选择桌面客户端 JSON 并连接').props.onClick as ()=>void)();
+    (mounted.fixture.button('导入授权配置并连接').props.onClick as ()=>void)();
     await settle();
     (mounted.fixture.button('取消连接').props.onClick as ()=>void)();
     pending.resolve({account:{...existing,id:'late-account'},blogs:[{id:'late-blog',name:'Late',url:'https://late.blogspot.com/'}]});
@@ -154,7 +155,7 @@ test('Blogger late OAuth results stay inert after close and empty snapshots show
 
   const empty=mount(BloggerConnection,{data:snapshot(),disabled:false,onClose:()=>{},onAction:async(command:string)=>command==='account:connect-blogger'?{account:{...existing,id:'empty-account'},blogs:[]}:undefined});
   try{
-    (empty.fixture.button('选择桌面客户端 JSON 并连接').props.onClick as ()=>void)();
+    (empty.fixture.button('导入授权配置并连接').props.onClick as ()=>void)();
     await settle();
     assert.ok(empty.fixture.contains('还没有 Blogger 博客'));
     assert.ok(empty.fixture.contains('去 Blogger 创建博客'));

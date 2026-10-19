@@ -26,7 +26,7 @@ export type MataroaReconcileResult = { status: 'found'; publicUrl: string; matar
 export type MataroaErrorCode = 'auth' | 'verification_required' | 'forbidden' | 'conflict' | 'rate_limited' | 'not_found' | 'timeout' | 'cancelled' | 'network' | 'rejected' | 'invalid_response';
 export class MataroaError extends Error {
   constructor(readonly code: MataroaErrorCode) {
-    super(code === 'verification_required' ? 'Mataroa 要求在浏览器完成人工验证；原身份已保留。' : `Mataroa request failed (${code})`);
+    super(code === 'verification_required' ? 'Mataroa 要求在浏览器完成人工验证；原账号已保留。' : `Mataroa request failed (${code})`);
     this.name = 'MataroaError';
   }
 }
@@ -69,7 +69,7 @@ function targetUrl(value: string): string {
     if (url.protocol !== 'https:' || url.username || url.password || !url.hostname || url.port && url.port !== '443') throw Error('invalid');
     url.hash = '';
     return url.toString();
-  } catch { throw new Error('Mataroa 全文目标必须是不含凭据的 HTTPS 网址'); }
+  } catch { throw new Error('Mataroa 全文目标必须是不含账号密码的 HTTPS 网址'); }
 }
 function validPassword(value: unknown): value is string {
   return typeof value === 'string' && Buffer.byteLength(value, 'utf8') >= 8 && Buffer.byteLength(value, 'utf8') <= 128
@@ -102,7 +102,7 @@ function approvedArticle(task: Task, site: Pick<Site, 'url'>, requireApproval = 
     .replace(/[#>*_`~|\-]/g, ' ').replace(/\s+/g, ' ').trim();
   if (paragraphs.length < 2 || visible.replace(/\s/g, '').length < 200) throw Error('Mataroa 需要至少两个段落及有实质信息的原创全文');
   const target = targetUrl(task.topicUrl ?? site.url);
-  if (!draft.body.includes(target)) throw Error('Mataroa 全文缺少已核对目标页的 HTTPS 链接');
+  if (!draft.body.includes(target)) throw Error('Mataroa 全文缺少已检查目标页的 HTTPS 链接');
   return { title: draft.title, body: draft.body, target, contentHash: sha(JSON.stringify({ title: draft.title, body: draft.body, target })) };
 }
 function receipt(value: unknown): value is MataroaReceipt {
@@ -161,7 +161,7 @@ async function request(url: URL, init: RequestInit, deps: MataroaDependencies, m
   let response: Response | undefined;
   try {
     response = await abortable((deps.fetch ?? fetch)(url.toString(), {
-      ...init, headers: { 'user-agent': 'Linkflow/1.2.12 (single-account publisher)', ...(init.headers as Record<string, string> | undefined) },
+      ...init, headers: { 'user-agent': 'Mozilla/5.0', ...(init.headers as Record<string, string> | undefined) },
       redirect: 'manual', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal,
     }), controller.signal);
     if (response.redirected || response.url && response.url !== url.toString()) throw new MataroaError('invalid_response');
@@ -383,9 +383,9 @@ function diagnostic(code: AccountDiagnostic['code'], message: string, deps: Mata
   return { code, message, at: stamp(deps), retryable: false };
 }
 function accountMessage(error: unknown): string {
-  if (!(error instanceof MataroaError)) return 'Mataroa 原账号状态未能确认，保留原身份并暂停';
+  if (!(error instanceof MataroaError)) return 'Mataroa 原账号状态未能确认，保留原账号并暂停';
   if (error.code === 'verification_required') return 'Mataroa 要求人工完成验证，请在平台处理后连接同一用户名；不会重复注册。';
-  if (error.code === 'auth') return 'Mataroa 原账号凭据未通过，请连接同一用户名。';
+  if (error.code === 'auth') return 'Mataroa 原账号登录信息未通过，请连接同一用户名。';
   if (error.code === 'forbidden') return 'Mataroa 账号的 Newsletter 仍开启或账号不可用，请在平台关闭后连接原账号。';
   return 'Mataroa 原账号或通知设置尚未确认，已暂停且不会重复注册或投稿。';
 }
@@ -415,7 +415,7 @@ async function readyAccount(context: ExecutionContext, deps: MataroaDependencies
   let account = context.getAccount();
   if (!account) {
     if (context.task.accountId || context.task.mataroa || context.task.submittedAt || context.task.publicUrl || context.signal.aborted) {
-      return { status: 'needs_input', message: 'Mataroa 原账号或投稿意图需要核对，不会创建替代身份' };
+      return { status: 'needs_input', message: 'Mataroa 原账号或投稿计划需要核对，不会创建替代账号' };
     }
     const username = generatedUsername(context.site);
     const credential: Credential = { version: 1, username, password: randomBytes(32).toString('base64url'), initialSetupPending: true };
@@ -424,7 +424,7 @@ async function readyAccount(context: ExecutionContext, deps: MataroaDependencies
       credentialKind: 'api_token', status: 'draft', hasPassword: true, source: 'generated', registrationAttempts: 0,
       createdAt: at, updatedAt: at };
     try { await context.saveAccount(account, JSON.stringify(credential)); }
-    catch { return { status: 'queued', message: 'Mataroa 凭据未能保存，未提交注册' }; }
+    catch { return { status: 'queued', message: 'Mataroa 登录信息未能保存，未提交注册' }; }
   }
   if (account.channelId !== 'mataroa' || !!context.task.accountId && account.id !== context.task.accountId
     || account.credentialKind !== 'api_token' || !USERNAME.test(account.username) || !account.hasPassword
@@ -433,14 +433,14 @@ async function readyAccount(context: ExecutionContext, deps: MataroaDependencies
   }
   let credential: Credential;
   try { credential = credentialFrom(await context.secrets.get(`account:${account.id}`), account.username); }
-  catch { return { status: 'needs_input', message: 'Mataroa 本机保险箱缺少原账号凭据' }; }
+  catch { return { status: 'needs_input', message: 'Mataroa 本机保险箱缺少原账号登录信息' }; }
   const session = new Session(deps);
   if (account.source === 'generated' && account.status === 'draft' && account.registrationAttempts === 0) {
     const at = stamp(deps);
     const pending: Account = { ...account, status: 'unknown', registrationAttempts: 1, updatedAt: at,
-      diagnostic: diagnostic('registration_unknown', 'Mataroa 注册意图已保存；以后仅登录原身份，不再次注册。', deps) };
+      diagnostic: diagnostic('registration_unknown', 'Mataroa 注册计划已保存；以后仅登录原账号，不再次注册。', deps) };
     try { await context.saveAccount(pending); context.checkpoint({ checkpoint: 'mataroa_account_create_pending' }); }
-    catch { return { status: 'queued', message: 'Mataroa 注册意图未能安全保存，未执行注册' }; }
+    catch { return { status: 'queued', message: 'Mataroa 注册计划未能安全保存，未执行注册' }; }
     account = pending;
     try { await signup(session, credential); }
     catch (error) {
@@ -504,12 +504,12 @@ export async function connectMataroaAccount(vault: SecretStore, accountId: strin
 }
 export async function prepareMataroaIdentity(context: ExecutionContext, deps: MataroaDependencies = {}): Promise<ExecutionResult | undefined> {
   if (context.channel.id !== 'mataroa' || context.task.channelId !== 'mataroa' || context.task.sourceDomain !== 'mataroa.blog') {
-    return { status: 'needs_input', message: '当前任务不属于 Mataroa 出版渠道' };
+    return { status: 'needs_input', message: '当前任务不属于 Mataroa 出版平台' };
   }
   const result = await readyAccount(context, { ...deps, signal: context.signal });
   if ('status' in result) return result;
   if (result.account.status !== 'registered' || result.account.publicationUrl !== home(result.account.username)) {
-    return { status: 'needs_input', message: 'Mataroa 作者身份或通知设置尚未验证' };
+    return { status: 'needs_input', message: 'Mataroa 作者账号或通知设置尚未验证' };
   }
   return undefined;
 }
@@ -520,7 +520,7 @@ export async function verifyMataroaPublication(task: Task, target: string, deps:
   const saved = task.mataroa;
   const fallback = task.publicUrl ?? `${ORIGIN}/`;
   if (!saved || !receipt(saved) || saved.stage !== 'published' || !saved.slug || !task.publicUrl) {
-    return unavailable(fallback, 'Mataroa 任务缺少有效已发布回执', 'invalid');
+    return unavailable(fallback, 'Mataroa 任务缺少有效已发布记录', 'invalid');
   }
   try {
     const article = approvedArticle(task, { url: target }, false);
@@ -528,13 +528,13 @@ export async function verifyMataroaPublication(task: Task, target: string, deps:
     const url = publicPostUrl(saved.username, saved.slug, task.publicUrl);
     const post: Post = { title: article.title, body: article.body, publishedDate: saved.publishedDate, slug: saved.slug, url };
     const rel = await visiblePost(post, article, deps);
-    return { found: true, outcome: 'found', url, rel, reason: 'Mataroa 原文回执及匿名页面完整正文、目标 href 一致。' };
+    return { found: true, outcome: 'found', url, rel, reason: 'Mataroa 原文记录及匿名页面完整正文、目标 href 一致。' };
   } catch (error) {
     if (error instanceof MataroaError && error.code === 'not_found') return unavailable(fallback, 'Mataroa 原文章尚未公开', 'absent');
     if (error instanceof MataroaError && ['network', 'timeout', 'rate_limited', 'verification_required', 'cancelled'].includes(error.code)) {
-      return unavailable(fallback, 'Mataroa 公开页面暂时无法核验');
+      return unavailable(fallback, 'Mataroa 公开页面暂时无法检查');
     }
-    return unavailable(fallback, 'Mataroa 回执或匿名页面与原文、公开链接不一致', 'invalid');
+    return unavailable(fallback, 'Mataroa 记录或匿名页面与原文、公开链接不一致', 'invalid');
   }
 }
 export async function reconcileMataroaTask(context: ExecutionContext, deps: MataroaDependencies = {}): Promise<MataroaReconcileResult> {
@@ -558,24 +558,24 @@ export async function runMataroaTask(context: ExecutionContext, deps: MataroaDep
   if (context.channel.id !== 'mataroa' || context.task.channelId !== 'mataroa' || context.task.sourceDomain !== 'mataroa.blog'
     || context.channel.domain !== 'mataroa.blog' || context.channel.automation !== 'api' || context.channel.kind !== 'article'
     || !context.channel.articleRequired || !context.channel.accountRequired || context.channel.contentFormat === 'social') {
-    return { status: 'needs_input', message: '当前渠道规格不支持 Mataroa 原创全文 API 投稿' };
+    return { status: 'needs_input', message: '当前平台规格不支持 Mataroa 原创全文 API 投稿' };
   }
   let article: Article;
   try { article = approvedArticle(context.task, context.site, !context.task.mataroa); }
   catch (error) { return { status: 'needs_input', message: error instanceof Error ? error.message : 'Mataroa 原创全文草稿无效' }; }
   const prior = context.task.mataroa;
   if (prior && (!receipt(prior) || prior.contentHash !== article.contentHash || context.getAccount()?.username !== prior.username)) {
-    return { status: 'needs_input', message: 'Mataroa 原发布回执与当前全文或账号不一致，禁止再次投稿' };
+    return { status: 'needs_input', message: 'Mataroa 原发布记录与当前全文或账号不一致，禁止再次投稿' };
   }
   if (!prior && (context.task.submittedAt || context.task.publicUrl || ['mataroa_publish_submitting', 'mataroa_published'].includes(context.task.checkpoint ?? ''))) {
-    return { status: 'needs_input', message: 'Mataroa 已有投稿痕迹但缺少原回执，禁止创建替代文章' };
+    return { status: 'needs_input', message: 'Mataroa 已有投稿痕迹但缺少原记录，禁止创建替代文章' };
   }
   if (prior) {
     const found = await reconcileMataroaTask(context, deps);
-    if (found.status === 'unknown') return { status: 'review', message: 'Mataroa 原投稿结果未能唯一确认；只读对账，不会再次 POST', mataroa: prior };
+    if (found.status === 'unknown') return { status: 'review', message: 'Mataroa 原投稿结果未能唯一确认；检查原记录，不会重复提交', mataroa: prior };
     try { context.checkpoint({ mataroa: found.mataroa, checkpoint: 'mataroa_published', publicUrl: found.publicUrl,
       submittedAt: context.task.submittedAt }); } catch { /* original intent remains durable */ }
-    return { status: 'review', message: 'Mataroa 原全文和匿名页面已核验', publicUrl: found.publicUrl,
+    return { status: 'review', message: 'Mataroa 原全文和匿名页面已检查', publicUrl: found.publicUrl,
       mataroa: found.mataroa, checkpoint: 'mataroa_published', submittedAt: context.task.submittedAt };
   }
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未投稿' };
@@ -583,7 +583,7 @@ export async function runMataroaTask(context: ExecutionContext, deps: MataroaDep
   const access = await readyAccount(context, { ...deps, signal: context.signal });
   if ('status' in access) return access;
   if (!accountAtStart || accountAtStart.status !== 'registered' || accountAtStart.publicationUrl !== home(access.account.username)) {
-    return { status: 'queued', message: 'Mataroa 作者身份已建立，请以该账号重新核对全文后继续' };
+    return { status: 'queued', message: 'Mataroa 作者账号已建立，请以该账号重新核对全文后继续' };
   }
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未投稿' };
   const date = stamp(deps).slice(0, 10);
@@ -593,10 +593,10 @@ export async function runMataroaTask(context: ExecutionContext, deps: MataroaDep
     const priorMatches = (await posts(access.credential.token!, access.account.username, { ...deps, signal: context.signal }))
       .filter(post => post.title === article.title && post.body === article.body);
     if (priorMatches.length) return { status: 'needs_input', message: 'Mataroa 已存在同日相同全文，需人工核对后再继续' };
-  } catch { return { status: 'needs_input', message: 'Mataroa 投稿前文章清单未能确认，未执行 POST' }; }
+  } catch { return { status: 'needs_input', message: 'Mataroa 投稿前文章清单未能确认，未提交' }; }
   const submittedAt = stamp(deps);
   try { context.checkpoint({ mataroa: pending, checkpoint: 'mataroa_publish_submitting', submittedAt, draft: context.task.draft }); }
-  catch { return { status: 'queued', message: 'Mataroa 投稿意图未能持久保存，未执行 POST' }; }
+  catch { return { status: 'queued', message: 'Mataroa 投稿计划未能持久保存，未提交' }; }
   let slug: string | undefined;
   try {
     const result = await api('POST', access.credential.token!, { title: article.title, body: article.body, published_at: date },
@@ -605,7 +605,7 @@ export async function runMataroaTask(context: ExecutionContext, deps: MataroaDep
     publicPostUrl(access.account.username, result.slug, result.url);
     slug = result.slug;
   } catch {
-    return { status: 'review', message: 'Mataroa 投稿结果不确定；只读对账且不会重发',
+    return { status: 'review', message: 'Mataroa 投稿结果不确定；检查原记录且不会重发',
       mataroa: pending, checkpoint: 'mataroa_publish_submitting', submittedAt };
   }
   const identified: MataroaReceipt = { ...pending, slug };
@@ -614,12 +614,12 @@ export async function runMataroaTask(context: ExecutionContext, deps: MataroaDep
   let found: Post | undefined;
   try { found = await findPublished(article, identified, access.credential.token!, { ...deps, signal: context.signal }); }
   catch { /* original intent remains durable */ }
-  if (!found) return { status: 'review', message: 'Mataroa 已返回文章 slug，匿名全文仍待核验；不会重发',
+  if (!found) return { status: 'review', message: 'Mataroa 已返回文章 slug，匿名全文仍待检查；不会重发',
     mataroa: identified, checkpoint: 'mataroa_publish_submitting', submittedAt };
   const published: MataroaReceipt = { ...identified, stage: 'published' };
   try { context.checkpoint({ mataroa: published, checkpoint: 'mataroa_published', publicUrl: found.url, submittedAt }); }
   catch { /* original intent remains durable */ }
-  return { status: 'review', message: 'Mataroa 原文、账号和匿名页面目标 href 已核验', publicUrl: found.url,
+  return { status: 'review', message: 'Mataroa 原文、账号和匿名页面目标 href 已检查', publicUrl: found.url,
     mataroa: published, checkpoint: 'mataroa_published', submittedAt };
 }
 

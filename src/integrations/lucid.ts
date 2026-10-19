@@ -115,7 +115,7 @@ async function request(path: string, method: 'GET' | 'POST', deps: LucidDependen
     const accept = publish ? 'application/json' : path.startsWith('/raw/') ? 'text/markdown' : 'text/html';
     response = await abortable((deps.fetch ?? fetch)(url, {
       method, redirect: 'manual', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal,
-      headers: { accept, 'user-agent': 'Linkflow (reviewed original-article publisher)',
+      headers: { accept, 'user-agent': 'Mozilla/5.0',
         ...(publish ? { 'content-type': 'application/json' } : {}) },
       ...(publish ? { body: JSON.stringify(payload) } : {}),
     }), controller.signal);
@@ -342,21 +342,21 @@ export async function verifyLucidPublication(task: Task, target: string, deps: L
     const saved = task.lucid;
     if (task.channelId !== 'lucid-page' || task.sourceDomain !== 'lucid.page' || !receipt(saved)
       || saved.stage !== 'published' || !saved.slug || task.publicUrl !== pageUrl(saved.slug))
-      return failed('invalid', 'Lucid 缺少一致的已发布回执');
+      return failed('invalid', 'Lucid 缺少一致的已发布记录');
     const expected = article(task, target, false);
-    if (saved.contentHash !== expected.contentHash) return failed('invalid', 'Lucid 原文摘要与回执不符');
+    if (saved.contentHash !== expected.contentHash) return failed('invalid', 'Lucid 原文摘要与记录不符');
     const result = await found(saved, expected, deps);
     return { found: true, outcome: 'found', url: result.url, rel: result.rel,
       reason: 'Lucid 公开页的标题、完整 Markdown、可见正文及目标链接一致；这不保证搜索收录或排名' };
   } catch (error) {
     return failed(error instanceof LucidError && error.code === 'absent' ? 'absent'
       : error instanceof LucidError && ['network', 'timeout', 'cancelled', 'challenge', 'rate'].includes(error.code)
-        ? 'unreachable' : 'invalid', 'Lucid 原公开全文暂未核验通过');
+        ? 'unreachable' : 'invalid', 'Lucid 原公开全文暂未检查通过');
   }
 }
 
 export async function runLucidTask(context: ExecutionContext, deps: LucidDependencies = {}): Promise<LucidExecutionResult> {
-  if (!contextMatches(context)) return { status: 'needs_input', message: '当前渠道不支持 Lucid 全文 API' };
+  if (!contextMatches(context)) return { status: 'needs_input', message: '当前平台不支持 Lucid 全文 API' };
   const prior = context.task.lucid;
   let expected: Article;
   try { expected = article(context.task, context.site.url, !prior); }
@@ -365,7 +365,7 @@ export async function runLucidTask(context: ExecutionContext, deps: LucidDepende
     const priorUrl = receipt(prior) && prior.slug ? pageUrl(prior.slug) : undefined;
     const priorCheckpoint = receipt(prior) && prior.stage === 'published' ? 'lucid_published' : 'lucid_publish_submitting';
     if (priorUrl && context.task.publicUrl && context.task.publicUrl !== priorUrl)
-      return { status: 'needs_input', message: 'Lucid 原回执与公开地址不一致，禁止重发', lucid: prior,
+      return { status: 'needs_input', message: 'Lucid 原记录与公开地址不一致，禁止重发', lucid: prior,
         checkpoint: priorCheckpoint, submittedAt: context.task.submittedAt };
     const result = await reconcileLucidTask(context, deps);
     if (result.status === 'found') {
@@ -375,29 +375,29 @@ export async function runLucidTask(context: ExecutionContext, deps: LucidDepende
     return result.status === 'found'
       ? { status: 'review', message: 'Lucid 原投稿已找到，未再次发送；搜索收录不保证', publicUrl: result.publicUrl,
         lucid: result.lucid, checkpoint: 'lucid_published', submittedAt: context.task.submittedAt }
-      : { status: 'review', message: 'Lucid 原投稿结果不明，只读核验且不会重发', lucid: prior,
+      : { status: 'review', message: 'Lucid 原投稿结果不明；只检查原记录，不会重发', lucid: prior,
         checkpoint: priorCheckpoint, submittedAt: context.task.submittedAt,
         ...(priorUrl ? { publicUrl: priorUrl } : {}) };
   }
   if (context.task.submittedAt || context.task.publicUrl
     || ['lucid_publish_submitting', 'lucid_published'].includes(context.task.checkpoint ?? ''))
-    return { status: 'needs_input', message: 'Lucid 投稿痕迹缺少匹配回执，禁止重发' };
+    return { status: 'needs_input', message: 'Lucid 投稿痕迹缺少匹配记录，禁止重发' };
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未投稿' };
   const pending: LucidReceipt = { contentHash: expected.contentHash, stage: 'submitting' };
   const submittedAt = stamp(deps);
   try { context.checkpoint({ lucid: pending, checkpoint: 'lucid_publish_submitting', submittedAt }); }
-  catch { return { status: 'queued', message: 'Lucid 投稿意图未保存，未提交' }; }
+  catch { return { status: 'queued', message: 'Lucid 投稿计划未保存，未提交' }; }
   let data: Json;
   try { data = await publish(expected, { ...deps, signal: context.signal }); }
   catch (error) {
     const stopped = error instanceof LucidError && ['challenge', 'rate', 'cancelled', 'timeout'].includes(error.code);
     return { status: 'review', message: stopped
       ? 'Lucid 要求验证、限流或请求中断，已停止且不会重发'
-      : 'Lucid 投稿结果不明；平台无匿名幂等找回接口，不会重发',
+      : 'Lucid 投稿结果不明；平台不提供免登录查回原投稿的方式，不会重发',
       lucid: pending, checkpoint: 'lucid_publish_submitting', submittedAt };
   }
   const identity = responseIdentity(data);
-  if (!identity) return { status: 'review', message: 'Lucid 返回结果无法安全确认，保留单次投稿意图且不会重发',
+  if (!identity) return { status: 'review', message: 'Lucid 返回结果无法安全确认，保留单次投稿计划且不会重发',
     lucid: pending, checkpoint: 'lucid_publish_submitting', submittedAt };
   const identified: LucidReceipt = { ...pending, slug: identity.slug };
   let identitySaved = false;
@@ -411,7 +411,7 @@ export async function runLucidTask(context: ExecutionContext, deps: LucidDepende
     try { await context.secrets.set(`publication:${context.task.id}`, token); tokenSaved = true; }
     catch { /* The already published URL must remain recoverable even when Vault is unavailable. */ }
   }
-  if (!identitySaved) return { status: 'review', message: 'Lucid 已返回公开地址；待本机保存匹配回执后只读核验，不会重发',
+  if (!identitySaved) return { status: 'review', message: 'Lucid 已返回公开地址；待本机保存匹配记录后检查，不会重发',
     publicUrl: identity.url, lucid: identified, checkpoint: 'lucid_publish_submitting', submittedAt };
   try {
     const result = await found(identified, expected, { ...deps, signal: context.signal });
@@ -419,13 +419,13 @@ export async function runLucidTask(context: ExecutionContext, deps: LucidDepende
     try { context.checkpoint({ lucid: publishedReceipt, checkpoint: 'lucid_published', publicUrl: result.url, submittedAt }); }
     catch { /* The matched slug is already durable and can be reconciled read-only. */ }
     return { status: 'review', message: tokenSaved
-      ? 'Lucid 匿名公开全文已核验；人工认领前软件无法修改或删除，搜索收录不保证'
-      : 'Lucid 匿名公开全文已核验；一次性认领凭据未保存，软件无法修改或删除，搜索收录不保证',
+      ? 'Lucid 匿名公开全文已检查；人工认领前外链助手无法修改或删除，搜索收录不保证'
+      : 'Lucid 匿名公开全文已检查；一次性认领密钥未保存，外链助手无法修改或删除，搜索收录不保证',
       publicUrl: result.url, lucid: publishedReceipt, checkpoint: 'lucid_published', submittedAt };
   } catch {
     return { status: 'review', message: tokenSaved
-      ? 'Lucid 已返回公开地址，完整全文仍待只读核验；不会重发'
-      : 'Lucid 已返回公开地址，但一次性认领凭据未保存；地址已保留且不会重发',
+      ? 'Lucid 已返回公开地址，完整全文仍待检查；不会重发'
+      : 'Lucid 已返回公开地址，但一次性认领密钥未保存；地址已保留且不会重发',
       publicUrl: identity.url, lucid: identified, checkpoint: 'lucid_publish_submitting', submittedAt };
   }
 }

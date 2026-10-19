@@ -30,7 +30,7 @@ test('public URL validation rejects credentials, HTTP and unrelated hosts',()=>{
   assert.match(raindropPublicUrlError('https://reading.raindrop.page:444/resources'),/端口/);
   assert.match(raindropPublicUrlError('https://reading.raindrop.page/resources?view=list'),/查询参数/);
   assert.match(raindropPublicUrlError('http://reading.raindrop.page/resources'),/HTTPS/);
-  assert.match(raindropPublicUrlError('https://token@reading.raindrop.page/resources'),/凭据/);
+  assert.match(raindropPublicUrlError('https://token@reading.raindrop.page/resources'),/用户名或密码/);
   assert.match(raindropPublicUrlError('https://raindrop.page.example/resources'),/Public Page/);
 });
 
@@ -55,7 +55,7 @@ test('catalog and connection directory expose setup while live acceptance remain
   assert.match(channelOnboardingView(channel).setup,/开启描述\/摘要/);
   const snapshot={accounts:[],accountBindings:[],sites:[],tasks:[],channels:[channel]} as unknown as Snapshot;
   const row=connectionOverview(snapshot).find(item=>item.id==='raindrop');assert.ok(row);
-  assert.equal(row.state,'unavailable');assert.match(row.detail,/可连接本人账号.*首篇真实发布/);
+  assert.equal(row.state,'unavailable');assert.match(row.detail,/平台目前停用.*记录都会保留/);
   assert.deepEqual(connectionAction(row),{kind:'connect',label:'连接 Raindrop'});
 });
 

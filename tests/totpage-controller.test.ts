@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import test from 'node:test';
+import test,{type TestContext} from 'node:test';
 import {CHANNELS} from '../src/integrations/catalog';
 import {createTotpagePage,totpagePublicUrl,totpageCreateUrl,type TotpageIntent,type TotpageOpaqueResponse,type TotpagePersistence,type TotpageReceipt} from '../src/integrations/totpage';
 import {validateBackup} from '../src/main/backup-validation';
@@ -13,7 +13,9 @@ import {totpageTaskIdentity} from '../src/main/totpage-publication';
 import type {Vault} from '../src/main/vault';
 import type {Site,Task} from '../src/shared/types';
 
-const at='2026-10-13T03:00:00.000Z',late='2026-10-13T03:02:00.000Z',created=Date.parse(at),taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='AbCdEfGhIjKlMnOpQrStUv',publicUrl=totpagePublicUrl(id);
+test.beforeEach(t=>(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)}));
+
+const at='2026-10-13T12:34:00.000Z',late='2026-10-13T12:36:00.000Z',created=Date.parse(at),taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='AbCdEfGhIjKlMnOpQrStUv',publicUrl=totpagePublicUrl(id);
 const draft={title:'A safe backup recovery guide',description:'Practical developer guide',body:'## Save\nKeep the original backup.\n\n## Restore\nRestore settings with the [project guide](https://example.com/guide).\n\n## Verify\nCheck the complete recovery process.'};
 function site():Site{return {id:siteId,domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'Example software',description:'Developer software',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.com/product',developer:'https://example.com/guide'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.com/guide',discoveredAt:at}]}}
 function task(extra:Partial<Task>={}):Task{return {id:taskId,siteId,channelId:'totpage',sourceDomain:'tot.page',status:'review',createdAt:at,scheduledAt:at,updatedAt:at,attempts:0,message:'fixture',topicUrl:'https://example.com/guide',draft:{...draft},draftRevision:1,articleApprovedAt:at,health:'pending',...extra}}

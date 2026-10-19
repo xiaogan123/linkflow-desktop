@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {draftCorpus,scanStoredDraft} from '../src/main/draft-corpus';
+import type {Task,Site} from '../src/shared/types';
+const stamp='2026-10-18T10:17:00.000Z';
+const draft={title:'文档目录的组织方法',description:'文档目录',body:'文档目录需要按照资料的用途进行组织。不同的索引方式可以帮助读者找到相应的章节与完整上下文。'};
+const task:Task={id:'candidate',siteId:'site-a',channelId:'example',sourceDomain:'publisher.example.com',status:'queued',createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'',draft};
+const sites=[{id:'site-a',name:'Example A'},{id:'site-b',name:'Example B'}] as Site[];
+test('full corpus includes retained attempts and discarded drafts with their evidence dates',()=>{
+  const archived={...task,id:'archive',siteId:'site-b',draft:undefined,articleAttempts:[{recordedAt:stamp,reason:'prior review',draft}],draftHistory:[{at:stamp,draft}]} as Task;
+  const rows=draftCorpus([task,archived],sites);
+  assert.equal(rows.length,3);
+  assert.equal(scanStoredDraft(task,[task,archived],sites,new Date(stamp)).duplicate,true);
+  archived.articleAttempts![0].recordedAt='2026-01-01T10:17:00.000Z';archived.draftHistory![0].at='2026-01-01T10:17:00.000Z';
+  const aged=scanStoredDraft(task,[task,archived],sites,new Date(stamp));
+  assert.equal(aged.duplicate,true);
+  assert.ok(aged.matches.some(match=>match.id==='archive:attempt:0'&&match.siteId==='site-b'&&match.metrics.includes('shared_sentence')));
+  assert.ok(aged.sharedSentences.length>0);
+  archived.siteId=task.siteId;
+  assert.equal(scanStoredDraft(task,[task,archived],sites,new Date(stamp)).duplicate,true);
+});

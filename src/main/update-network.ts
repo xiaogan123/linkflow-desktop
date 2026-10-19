@@ -25,7 +25,7 @@ function linkedSignal(signal:AbortSignal|undefined,timeoutMs:number):AbortSignal
 export async function fetchWithPinnedRedirects(input:string,options:UpdateRequestOptions={}):Promise<Response>{
   const request=options.request??fetch,maxRedirects=options.maxRedirects??5,signal=linkedSignal(options.signal,options.timeoutMs??30_000);let url=allowedUrl(input);
   for(let redirects=0;;redirects++){
-    const response=await request(url,{method:'GET',redirect:'manual',signal,headers:{Accept:'application/octet-stream','User-Agent':'Linkflow-Desktop-Updater'}});
+    const response=await request(url,{method:'GET',redirect:'manual',signal,headers:{Accept:'application/octet-stream','User-Agent':'Desktop-Updater'}});
     if(response.status<300||response.status>=400)return response;
     if(redirects>=maxRedirects)throw updateError('更新下载重定向过多');
     const location=response.headers.get('location');if(!location)throw updateError('更新下载重定向无效');await response.body?.cancel();url=allowedUrl(new URL(location,url).href);
@@ -56,7 +56,7 @@ export function parseUpdateManifest(bytes:Buffer):UpdateManifest{
 }
 export function verifyManifestSignature(bytes:Buffer,signatureText:Buffer,publicKey:string|Buffer|KeyObject):void{
   let signature:Buffer;try{const text=signatureText.toString('ascii').trim();if(!/^[A-Za-z0-9+/]{86}==$/.test(text))throw Error();signature=Buffer.from(text,'base64');if(signature.length!==64)throw Error()}catch{throw updateError('更新签名格式无效')}
-  let key:KeyObject;try{key=typeof publicKey==='string'?createPublicKey(publicKey):Buffer.isBuffer(publicKey)?createPublicKey({key:publicKey,format:'der',type:'spki'}):publicKey}catch{throw updateError('应用未配置有效的更新验签公钥')}
+  let key:KeyObject;try{key=typeof publicKey==='string'?createPublicKey(publicKey):Buffer.isBuffer(publicKey)?createPublicKey({key:publicKey,format:'der',type:'spki'}):publicKey}catch{throw updateError('外链助手缺少有效的更新签名验证密钥')}
   if(key.asymmetricKeyType!=='ed25519'||!verify(null,bytes,key,signature))throw updateError('更新清单签名验证失败');
 }
 export async function fetchVerifiedManifest(publicKey:string|Buffer|KeyObject,options:UpdateRequestOptions={}):Promise<{manifest:UpdateManifest;manifestBytes:Buffer;signature:Buffer}>{

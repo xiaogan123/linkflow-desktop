@@ -149,7 +149,7 @@ function publicHttpsUrl(value: string): string {
     || ip === 4 && privateIpv4(host) || ip === 6
     || !ip && !PUBLIC_DNS_NAME.test(host)
     || [...url.searchParams.keys()].some(key => SENSITIVE_QUERY_KEY.test(key))) {
-    throw new Error('Notion Markdown 链接必须是无凭据的公开 HTTPS 地址');
+    throw new Error('Notion Markdown 链接必须是无账号密码的公开 HTTPS 地址');
   }
   url.hostname = host;
   const canonical = url.href;

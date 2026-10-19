@@ -72,25 +72,22 @@ test('saved, connected, bound, disabled, and read-only identities expose distinc
   assert.equal(accountNextStep(account('product-hunt',{status:'unknown'}),0,true),'已保存 · 下一步：确认平台账号状态');
   assert.equal(accountNextStep(account('hive'),0,true),'下一步：关联至少一个网站');
   assert.equal(accountNextStep(account('hive'),2,true),'已连接 · 已关联 2 个网站，待任务检查');
-  assert.equal(accountNextStep(account('paragraph'),1,false),'连接已保存 · 渠道当前未启用');
-  assert.equal(accountNextStep(account('product-hunt',{hasPassword:false}),0,true),'下一步：恢复或重新连接凭据');
+  assert.equal(accountNextStep(account('paragraph'),1,false),'连接已保存 · 平台当前未启用');
+  assert.equal(accountNextStep(account('product-hunt',{hasPassword:false}),0,true),'下一步：恢复或重新连接发布账号');
   assert.equal(accountNextStep(account('product-hunt',{status:'credentials_invalid',hasPassword:false,diagnostic:{code:'password_missing',message:'fixture',at:stamp,retryable:true}}),0,true),'下一步：处理原连接或平台限制');
-  assert.equal(accountNextStep(account('product-hunt',{status:'credentials_invalid',hasPassword:false,diagnostic:{code:'password_missing',message:'fixture',at:stamp,retryable:true}}),0,false),'连接需处理 · 渠道当前未启用');
-  assert.equal(accountNextStep(account('product-hunt',{hasPassword:false}),0,false),'凭据需恢复 · 渠道当前未启用');
+  assert.equal(accountNextStep(account('product-hunt',{status:'credentials_invalid',hasPassword:false,diagnostic:{code:'password_missing',message:'fixture',at:stamp,retryable:true}}),0,false),'连接需处理 · 平台当前未启用');
+  assert.equal(accountNextStep(account('product-hunt',{hasPassword:false}),0,false),'发布账号需恢复 · 平台当前未启用');
   const deno=account('deno',{status:'unknown',credentialKind:'api_token',username:'11111111-1111-4111-8111-111111111111',denoReadAccess:{version:1,checkedAt:stamp,appId:'11111111-1111-4111-8111-111111111111',appSlug:'fixture',declaredOrgSlug:'owner',tokenFingerprint:'a'.repeat(64),identity:'app_verified_org_declared'}});
   assert.equal(accountNextStep(deno,1,false),'只读验证完成 · 发布未启用');
 });
 
 test('empty accounts page keeps a no-account path and labels secondary channels as non-publishing',()=>{
   const markup=renderToStaticMarkup(createElement(AccountsPage,{data:snapshot(),disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
-  assert.match(markup,/添加 \/ 连接账号/);
-  assert.match(markup,/现在不用注册所有平台/);
-  assert.match(markup,/需要本人首次连接/);
-  assert.match(markup,/任务会自动准备/);
-  assert.match(markup,/只读验证或当前未启用/);
-  assert.match(markup,/这里的连接不代表可发布/);
+  assert.match(markup,/连接账号/);
+  // Which platforms need a first connection is shown on the platforms tab and in the connection guide.
+  assert.match(markup,/不必先注册所有平台/);
   assert.match(markup,/先添加网站/);
-  assert.doesNotMatch(markup,/逐项连接发布身份/);
+  assert.doesNotMatch(markup,/逐项连接发布账号/);
 });
 
 test('a saved here.now identity has explicit management actions and summary routing to that account',()=>{
@@ -98,7 +95,7 @@ test('a saved here.now identity has explicit management actions and summary rout
   const saved=account('here-now',{id:localId,credentialKind:'api_token',username:remoteId,displayName:'here.now owner',hereNow:{version:1,checkedAt:stamp,accountId:remoteId,keyFingerprint:'a'.repeat(64),identity:'verified_personal'}});
   const data=snapshot([saved]),row=connectionOverview(data).find(item=>item.id==='here-now');assert.ok(row);assert.equal(row.state,'connected');assert.equal(row.attentionAccountId,localId);assert.deepEqual(connectionAction(row),{kind:'connect',label:'管理现有连接'});
   const markup=renderToStaticMarkup(createElement(AccountsPage,{data,disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
-  assert.match(markup,/管理 here\.now 页面与网站绑定/);assert.match(markup,/使用已保存 key 重新验证 here\.now/);
+  assert.match(markup,/管理 here\.now 页面与网站关联/);assert.match(markup,/使用已保存 key 重新验证 here\.now/);
   const drawer=renderToStaticMarkup(createElement(HereNowConnection,{data,disabled:false,account:saved,onClose:()=>{},onAction:noop}));assert.match(drawer,/用已保存 key 验证并更新/);assert.doesNotMatch(drawer,/disabled=""[^>]*>用已保存 key 验证并更新/);
 });
 
@@ -107,7 +104,7 @@ test('a saved Plopino identity exposes account-row management and email-password
   const saved=account('plopino',{id:localId,credentialKind:'api_token',username:'publisher_1',displayName:'Plopino publisher',publicationUrl:'https://plopino.com/b'});
   const data=snapshot([saved]),row=connectionOverview(data).find(item=>item.id==='plopino');assert.ok(row);assert.equal(row.state,'connected');assert.equal(row.attentionAccountId,localId);assert.deepEqual(connectionAction(row),{kind:'connect',label:'管理现有连接'});
   const markup=renderToStaticMarkup(createElement(AccountsPage,{data,disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
-  assert.match(markup,/管理 Plopino 网站绑定/);assert.match(markup,/用邮箱和密码重新验证 Plopino/);assert.doesNotMatch(markup,/更新 Plopino 令牌/);
+  assert.match(markup,/管理 Plopino 网站关联/);assert.match(markup,/用邮箱和密码重新验证 Plopino/);assert.doesNotMatch(markup,/更新 Plopino 令牌/);
 });
 
 test('connection guide starts with platform search and contains no credential field',()=>{
@@ -121,6 +118,20 @@ test('connection guide starts with platform search and contains no credential fi
 
 test('Hive connector contains only Hive credentials after platform selection',()=>{
   const markup=renderToStaticMarkup(createElement(ArticleConnection,{data:snapshot(),disabled:false,initialChannel:'hive',onClose:()=>{},onAction:noop}));
-  assert.match(markup,/aria-label="Hive 凭据"/);
-  assert.doesNotMatch(markup,/aria-label="Paper\.wf 凭据"/);
+  assert.match(markup,/aria-label="Hive 发布专用密钥"/);
+  assert.doesNotMatch(markup,/aria-label="Paper\.wf 发布账号"/);
+});
+
+
+test('an account shared by three websites is marked without changing its connections',()=>{
+ const owner=account('product-hunt');
+ const sites=Array.from({length:3},(_,index)=>({id:`site-${index}`,domain:`site-${index}.example.com`,url:`https://site-${index}.example.com/`,email:'owner@example.com',name:`Site ${index}`,description:'fixture',category:'general' as const,language:'zh',monthlyTarget:2,status:'ready' as const,createdAt:stamp}));
+ const data=snapshot([owner],sites);
+ data.accountBindings=sites.map(site=>({id:`binding-${site.id}`,accountId:owner.id,channelId:owner.channelId,siteId:site.id,createdAt:stamp,updatedAt:stamp}));
+ const render=()=>renderToStaticMarkup(createElement(AccountsPage,{data,disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
+ assert.match(render(),/class="account-shared-warning"/);
+ assert.match(render(),/这个账号用于 3 个网站，容易被平台关联/);
+ data.accountBindings=data.accountBindings.slice(0,2);
+ assert.doesNotMatch(render(),/class="account-shared-warning"/);
+ assert.equal(data.accounts[0].id,owner.id);
 });

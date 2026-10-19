@@ -169,7 +169,8 @@ test('publishes one fixed static HTML document and verifies the complete public 
   assert.equal(payload.lab, undefined);
   assert.equal(typeof payload.html, 'string');
   assert.ok(Buffer.byteLength(String(payload.html), 'utf8') < 2_000_000);
-  assert.match(String(payload.html), /<main id="linkflow-article"><article><h1>A careful source record<\/h1>/);
+  assert.match(String(payload.html), /<main id="article"><article><h1>A careful source record<\/h1>/);
+  assert.doesNotMatch(String(payload.html),/linkflow/i);
   assert.match(String(payload.html), new RegExp(`href="${TARGET}"`));
   assert.doesNotMatch(String(payload.html), /<(?:script|iframe|img|video|audio|object|embed|form|link)\b/i);
   assert.doesNotMatch(String(payload.html), /\b(?:src|srcset)\s*=/i);
@@ -593,7 +594,7 @@ test('verification rejects noindex, hidden or active content, wrong titles, inco
   const cases: Array<{ name: string; transform?: (html: string) => string; headers?: Record<string, string> }> = [
     { name: 'robots meta noindex', transform: html => html.replace('content="index,follow"', 'content="noindex,follow"') },
     { name: 'x-robots-tag none', headers: { 'x-robots-tag': 'none' } },
-    { name: 'hidden article', transform: html => html.replace('<main id="linkflow-article">', '<main id="linkflow-article" hidden>') },
+    { name: 'hidden article', transform: html => html.replace('<main id="article">', '<main id="article" hidden>') },
     { name: 'active script in body', transform: html => html.replace('</div></article>', '<script>document.body.textContent="changed"</script></div></article>') },
     { name: 'wrong title', transform: html => html.replace(`<h1>${TITLE}</h1>`, '<h1>Different title</h1>') },
     { name: 'incomplete body', transform: html => html.replace('Before drawing a conclusion', 'A shortened ending') },

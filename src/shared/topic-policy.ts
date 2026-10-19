@@ -1,3 +1,5 @@
+import {hasReferralParameters} from './referral-policy';
+
 const ADMINISTRATIVE_SEGMENT = /^(?:index|about(?:-us)?|contact(?:-us)?|privacy(?:-policy)?|terms(?:-of-(?:use|service)|-and-conditions)?|legal|disclosures?|affiliate-disclosure|advertising-disclosure|disclaimers?|cookies?(?:-policy)?|login|log-in|signin|sign-in|signup|sign-up|register|account|profile|authors?|tags?|categories?|archives?|search|feed|rss|sitemap|wp-json|cart|checkout|page)$/i;
 const NON_CONTENT_EXTENSION = /\.(?:xml|json|txt|pdf|jpe?g|png|gif|webp|svg|ico|css|js|mjs|map|zip|gz|tar|mp[34]|m4[av]|avi|mov|webm|wav|ogg|woff2?|ttf|eot)$/i;
 const ROUTE_EXTENSION = /\.(?:html?|php)$/i;
@@ -40,7 +42,13 @@ function isLocaleOnlySegment(segment: string): boolean {
  * It intentionally treats language-prefixed article paths like /fr/guides/x as
  * content; only a path whose sole segment is a locale is a landing page.
  */
-export function isArticleTopicUrl(input: string, site: { url: string; domain: string }): boolean {
+export function isReferralTopicTitle(title: string): boolean {
+  // Sign-up, account-opening, invitation and code pages are funnels; ordinary rebate explainers are not.
+  // Compound words such as 注册资本 / 注册地 / 未注册 / 开户行 / 邀请函 are not sign-up pages.
+  return /(?<!未)注册(?!资本|地|表|商标|会计|号码)|(?<!未)註冊(?!資本|地|表|商標)|开户(?!行)|開戶(?!行)|邀请(?!函)|邀請(?!函)|推荐码|推薦碼|返佣码|返傭碼|\b(?:zhuce|kaihu|yaoqing|tuijianma|fanyongma|register|registration|sign[ -]?up|open[ -]+(?:an?[ -]+)?account|invite|invitation|referral)[ -]?(?:code)?\b/i.test(title.normalize('NFKC'));
+}
+
+export function isArticleTopicUrl(input: string, site: { url: string; domain: string; topics?: {url:string;title?:string}[] }): boolean {
   const expectedHost = siteHost(site);
   const candidate = parseHttpUrl(input);
   if (!expectedHost || !candidate || normalizedHost(candidate) !== expectedHost) return false;
@@ -51,7 +59,10 @@ export function isArticleTopicUrl(input: string, site: { url: string; domain: st
   } catch {
     return false;
   }
-  if (NON_CONTENT_EXTENSION.test(decodedPath)) return false;
+  if (NON_CONTENT_EXTENSION.test(decodedPath) || hasReferralParameters(candidate.href,expectedHost)) return false;
+  if (isReferralTopicTitle(decodedPath.replace(/[-_/]/g, ' '))) return false;
+  const title = site.topics?.find(topic => topic.url.replace(/\/$/, '') === candidate.href.replace(/\/$/, ''))?.title;
+  if (title && isReferralTopicTitle(title)) return false;
 
   const segments = decodedPath.split('/').filter(Boolean);
   if (!segments.length || (segments.length === 1 && isLocaleOnlySegment(segments[0]))) return false;

@@ -22,7 +22,7 @@ export function parseGscLinksCsv(csv:string,now=new Date()):SearchReport{
  if(quoted)throw Error('CSV 引号不完整');row.push(cell);if(row.some(Boolean))rows.push(row);
  const headers=rows.shift()?.map(x=>x.trim().toLowerCase())??[];
  const column=headers.findIndex(h=>['linking page','linking pages','source url','source','链接页面','链接网页','引荐网页','最常见的引荐网页','链接页','来源网址'].includes(h));
- if(column<0)throw Error('请选择 GSC 导出的外部链接来源网页 CSV；目标网页或来源域名汇总不能核验具体外链');
+ if(column<0)throw Error('请选择 GSC 导出的外部链接来源网页 CSV；目标网页或来源域名汇总不能检查具体外链');
  const values=rows.map(r=>r[column]?.trim()).filter(Boolean);
  const normalized=values.map(canonicalSource);if(normalized.some(source=>source&&source.length>4096))throw Error('CSV 中的来源网页 URL 超过 4096 个字符');
  const sources=[...new Set(normalized.filter((s):s is string=>!!s))];
@@ -46,11 +46,11 @@ export function mergeGscImport(previous:SearchReport|undefined,incoming:SearchRe
  for(const source of incoming.sources)if(published.has(source)&&!Object.hasOwn(firstSeenAt,source)){firstSeenAt[source]=incoming.checkedAt;newlyDiscovered.push(source)}
  if(Object.keys(firstSeenAt).length>50000)throw Error('GSC 已发现历史超过 50000 条，无法继续导入');
  const discovered=Object.keys(firstSeenAt).length;
- return {report:{...incoming,firstSeenAt,message:`导入 ${incoming.sources.length} 条 GSC 来源网页记录。${discovered?`GSC 报告已发现 ${discovered} 个已发布页面；`:''}报告仅为样本，本次未出现不代表失效。`},newlyDiscovered};
+ return {report:{...incoming,firstSeenAt,message:`导入 ${incoming.sources.length} 条 GSC 来源网页记录。${discovered?`GSC 报告已发现 ${discovered} 个外链；`:''}报告仅为样本，本次未出现不代表失效。`},newlyDiscovered};
 }
 export function gscDiscoveryNotice(enabled:boolean,siteDomain:string,newlyDiscovered:string[]):{title:string;body:string}|undefined{
  if(!enabled||!newlyDiscovered.length)return;
- return {title:'GSC 报告已发现',body:`${siteDomain} · 本次导入首次确认 ${newlyDiscovered.length} 个已发布页面`};
+ return {title:'GSC 报告已发现',body:`${siteDomain} · 本次导入首次确认 ${newlyDiscovered.length} 个外链`};
 }
 export type BingCall=(method:'GetUserSites'|'GetUrlLinks',params:Record<string,string|number>,key:string,signal?:AbortSignal)=>Promise<unknown>;
 export const callBing:BingCall=async(method,params,key,signal)=>{
@@ -69,7 +69,7 @@ export const callBing:BingCall=async(method,params,key,signal)=>{
   });
   const abort=()=>{done(Error('搜索报告检查已取消'));req.destroy()};
   const timer=setTimeout(()=>{done(Error('Bing 报告请求超时'));req.destroy()},15000);
-  signal?.addEventListener('abort',abort,{once:true});req.on('error',()=>done(Error('Bing 报告连接失败，请检查网络与凭据')));
+  signal?.addEventListener('abort',abort,{once:true});req.on('error',()=>done(Error('Bing 报告连接失败，请检查网络连接')));
  });
 };
 function unwrap(value:unknown):unknown{if(!value||typeof value!=='object'||!('d'in value)||'ErrorCode'in value)throw Error('Bing 拒绝报告请求，请检查 API Key 和网站权限');return (value as {d:unknown}).d}
@@ -90,4 +90,20 @@ export async function readBingLinks(siteUrl:string,key:string,signal?:AbortSigna
   if(sources.length>20000)throw Error('Bing 报告记录过多');page++;
  }while(page<totalPages&&page<10);
  return {checkedAt:new Date().toISOString(),method:'api',targetUrl:target.href,sources:[...new Set(sources)],complete:false,message:sources.length?`Bing 已报告 ${new Set(sources).size} 条指向该首页的来源网页${totalPages>10?'（仅取前 10 页）':''}；报告可能不完整。`:'Bing 暂无可报告的首页外链数据；不代表全网没有外链。'};
+}
+
+/**
+ * GSC "linking pages" exports never name the property they came from. Each file goes to the site whose
+ * published pages it lists most; a file that lists none of them cannot be placed and is reported back.
+ */
+export function assignGscFiles(files:ReadonlyArray<{name:string;csv:string}>,sites:ReadonlyArray<{id:string;publishedUrls:readonly string[]}>,now=new Date()):{bySite:Map<string,string[]>;unassigned:string[]}{
+  const published=sites.map(site=>({id:site.id,urls:new Set(site.publishedUrls.map(canonicalSource).filter((url):url is string=>!!url))}));
+  const bySite=new Map<string,string[]>(),unassigned:string[]=[];
+  for(const file of files){
+    const sources=parseGscLinksCsv(file.csv,now).sources;
+    let best:{id:string;hits:number}|undefined;
+    for(const site of published){const hits=sources.filter(source=>site.urls.has(source)).length;if(hits&&(!best||hits>best.hits))best={id:site.id,hits}}
+    if(best)bySite.set(best.id,[...(bySite.get(best.id)??[]),file.csv]);else unassigned.push(file.name);
+  }
+  return {bySite,unassigned};
 }

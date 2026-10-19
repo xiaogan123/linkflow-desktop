@@ -29,10 +29,10 @@ test('source URL search works even without published hits and respects engine/si
   assert(matchesTrackingRow(row,'/a','one','gsc','all'));assert(!matchesTrackingRow(row,'/a','two','gsc','all'));assert(!matchesTrackingRow(row,'/a','one','bing','all'));assert(!matchesTrackingRow(row,'','one','all','discovered'));assert(!matchesTrackingRow(row,'','one','all','missing'));
 });
 test('current page verification failure remains distinct from historical or search-report evidence',()=>{
-  assert.equal(pageLinkLabel(task('1','one',a,{verifiedAt:stamp,linkCheck:'absent'})),'本次网页未发现链接');
-  assert.equal(pageLinkLabel(task('1','one',a,{verifiedAt:stamp,linkCheck:'unreachable'})),'本次网页暂不可达');
-  assert.equal(pageLinkLabel(task('1','one',a,{verifiedAt:stamp})),'曾核验存在，当前待检查');
-  assert.equal(pageLinkLabel(task('1','one',a,{linkCheck:'found'})),'公开页链接已核验');
+  assert.equal(pageLinkLabel(task('1','one',a,{verifiedAt:stamp,linkCheck:'absent'})),'找不到了');
+  assert.equal(pageLinkLabel(task('1','one',a,{verifiedAt:stamp,linkCheck:'unreachable'})),'页面打不开');
+  assert.equal(pageLinkLabel(task('1','one',a,{verifiedAt:stamp})),'待复查');
+  assert.equal(pageLinkLabel(task('1','one',a,{linkCheck:'found'})),'有效');
 });
 test('100 sites and a maximum 20000-source report retain exact counts without changing snapshots',()=>{
   const sites=Array.from({length:100},(_,i)=>site('s'+i,{gsc:report(i===0?Array.from({length:20000},(_,j)=>a+'/'+j):[a])}));

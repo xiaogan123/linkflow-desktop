@@ -1,3 +1,4 @@
+import {pinPublicationFixtures} from './helpers/publication-snapshot';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {Controller} from '../src/main/controller';
@@ -20,15 +21,15 @@ for(const outcome of ['invalid','unreachable','absent'] as const)test(`Tantive r
  context.mock.timers.enable({apis:['Date'],now:new Date('2026-10-03T00:00:00.000Z')});
  const {store,task}=fixture();let reads=0;
  try{
-  const controller=new Controller(store,vault,'fixture',{verifyLink:async()=>{throw Error('must not downgrade to generic link verification')},verifyTantive:async()=>({found:++reads===1,outcome:reads===1?'found':outcome,url:publicUrl,rel:'unknown',reason:'Current page no longer matches'} satisfies LinkResult)});
+  const controller=new Controller(pinPublicationFixtures(store),vault,'fixture',{recheckLink:async()=>({found:false,outcome,url:publicUrl,rel:'unknown',reason:'Current public link state',reasonCode:'link_absent'}),verifyTantive:async()=>({found:++reads===1,outcome:reads===1?'found':outcome,url:publicUrl,rel:'unknown',reason:'Current page no longer matches'} satisfies LinkResult)});
   await controller.verify(taskId);const first=store.read().tasks[0];assert.equal(first.health,'healthy');assert.equal(first.linkCheck,'found');assert.equal(first.tantive?.stage,'published');assert.ok(first.firstLiveAt);
   context.mock.timers.tick(1000);await controller.verify(taskId);const second=store.read().tasks[0];
-  assert.equal(reads,2);assert.equal(second.linkCheck,outcome);assert.equal(second.health,outcome==='absent'?'missing':'unknown');assert.equal(second.status,outcome==='absent'?'needs_input':'live');assert.equal(second.lastCheckedAt,'2026-10-03T00:00:01.000Z');assert.equal(second.updatedAt,second.lastCheckedAt);assert.equal(second.firstLiveAt,first.firstLiveAt);assert.equal(second.verifiedAt,first.verifiedAt);assert.equal(second.tantive?.stage,'published');assert.equal(second.tantive?.requestHash,task.tantive?.requestHash);assert.equal(second.attempts,1);assert.equal(second.reconcileAttempts,2);assert.equal(second.publicUrl,publicUrl);assert.equal(store.read().tasks.length,1);
+  assert.equal(reads,1);assert.equal(second.linkCheck,outcome);assert.equal(second.health,outcome==='absent'?'missing':'unknown');assert.equal(second.status,'live');assert.equal(second.lastCheckedAt,'2026-10-03T00:00:01.000Z');assert.equal(second.updatedAt,second.lastCheckedAt);assert.equal(second.firstLiveAt,first.firstLiveAt);assert.equal(second.verifiedAt,first.verifiedAt);assert.equal(second.tantive?.stage,'published');assert.equal(second.tantive?.requestHash,task.tantive?.requestHash);assert.equal(second.attempts,1);assert.equal(second.reconcileAttempts,2);assert.equal(second.publicUrl,publicUrl);assert.equal(store.read().tasks.length,1);
  }finally{store.close()}
 });
 test('Tantive receipt never verified remains pending and retains reconciliation on failed read',async()=>{
  const {store,task}=fixture();try{
-  await new Controller(store,vault,'fixture',{verifyTantive:async()=>({found:false,outcome:'invalid',url:publicUrl,rel:'unknown',reason:'Incomplete page'})}).verify(taskId);
+  await new Controller(pinPublicationFixtures(store),vault,'fixture',{verifyTantive:async()=>({found:false,outcome:'invalid',url:publicUrl,rel:'unknown',reason:'Incomplete page'})}).verify(taskId);
   const saved=store.read().tasks[0];assert.equal(saved.status,'review');assert.equal(saved.health,'pending');assert.equal(saved.firstLiveAt,undefined);assert.equal(saved.linkCheck,undefined);assert.equal(saved.tantive?.stage,'api_receipt');assert.equal(saved.reconcileAfter,task.reconcileAfter);assert.equal(saved.reconcileAttempts,2);assert.equal(saved.attempts,1);
  }finally{store.close()}
 });

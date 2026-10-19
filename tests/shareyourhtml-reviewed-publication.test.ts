@@ -1,8 +1,11 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["stale review, draft, site, channel, settings and disabled override fail before claim or dispatch", "final synchronous guard blocks draft, review, site, channel and settings changes after claim"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-09T10:17:00.000Z')});});
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { publicIdentitySlug } from '../src/integrations/public-identity';
 import { renderShareYourHtmlArticle } from '../src/integrations/shareyourhtml-article';
 import {
   submitReviewedShareYourHtmlPublication,
@@ -21,7 +24,7 @@ const SITE_ID = '22222222-2222-4222-8222-222222222222';
 const NOW = '2026-10-09T10:00:00.000Z';
 const TOPIC = 'https://example.com/guides/reviewed-topic';
 const OPERATION = 'shareyourhtml_11111111111141118111111111111111';
-const SLUG = 'lf-11111111111141118111111111111111';
+const SLUG = publicIdentitySlug(site(), TASK_ID, 40);
 const EDIT_KEY = '01234567-89ab-cdef-0123-456789abcdef';
 const SECRET_MARKER = 'must-not-escape-in-diagnostics';
 
@@ -131,6 +134,7 @@ test('trusted helper renders the current reviewed Store draft and persists only 
     assert.equal(requests, 1);
     assert.equal(result.status, 'created');
     const submitted = JSON.parse(requestBody) as { slug: string; html: string; expiry: string };
+    assert.doesNotMatch(requestBody, /linkflow|"slug":"lf-/i);
     const state = f.store.read();
     const expected = renderShareYourHtmlArticle({ draft: task().draft!, targetUrl: TOPIC,
       language: 'en', slug: SLUG });
@@ -154,8 +158,8 @@ test('stale review, draft, site, channel, settings and disabled override fail be
     store => store.update(state => { state.tasks[0].articleReview!.checks!.channelRules = 'unknown'; }),
     store => store.update(state => { state.tasks[0].draft!.body += '\nChanged after review.'; }),
     store => store.update(state => { state.sites[0].description = 'Changed context.'; }),
-    store => store.update(state => { state.customChannels![0].notes = 'Changed rules context.'; }),
-    store => store.update(state => { state.settings.model = 'different-review-model'; }),
+    store => store.update(state => { state.customChannels![0].rulesUrl = 'https://example.com/changed-rules'; }),
+    store => store.update(state => { state.sites[0].articleReviewMode = 'manual'; }),
     store => store.update(state => { state.settings.channelOverrides.shareyourhtml = false; }),
   ];
   for (const mutate of mutations) {
@@ -178,8 +182,8 @@ test('final synchronous guard blocks draft, review, site, channel and settings c
     store => store.update(state => { state.tasks[0].articleReview!.checks!.channelRules = 'unknown'; }),
     store => store.update(state => { state.sites[0].url = 'https://changed.example/';
       state.sites[0].domain = 'changed.example'; }),
-    store => store.update(state => { state.customChannels![0].notes = 'Revoked context.'; }),
-    store => store.update(state => { state.settings.model = 'revoked-model'; }),
+    store => store.update(state => { state.customChannels![0].rulesUrl = 'https://example.com/revoked-rules'; }),
+    store => store.update(state => { state.sites[0].articleReviewMode = 'manual'; }),
   ];
   for (const mutate of mutations) {
     const f = fixture();

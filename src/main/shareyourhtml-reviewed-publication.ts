@@ -1,3 +1,4 @@
+import {publicIdentitySlug} from '../integrations/public-identity';
 import type { Channel, Site, Task } from '../shared/types';
 import { eligibilityFor } from '../integrations/eligibility';
 import {
@@ -68,7 +69,7 @@ function resolveCurrentChannel(
   try {
     channel = resolver(structuredClone(state), 'shareyourhtml');
   } catch {
-    throw Error('ShareYourHTML 当前渠道解析失败');
+    throw Error('ShareYourHTML 当前平台解析失败');
   }
   if (!channel || channel.id !== 'shareyourhtml' || channel.domain !== 'shareyourhtml.com'
     || channel.kind !== 'article' || channel.automation !== 'api'
@@ -76,7 +77,7 @@ function resolveCurrentChannel(
     || channel.emailRequired !== false || channel.free !== 'yes'
     || channel.provenance !== 'built-in' || channel.enabled !== true
     || state.settings.channelOverrides[channel.id] === false) {
-    throw Error('ShareYourHTML 当前渠道不符合自动文章发布条件');
+    throw Error('ShareYourHTML 当前平台不符合自动文章发布条件');
   }
   return structuredClone(channel);
 }
@@ -199,7 +200,8 @@ export function submitReviewedShareYourHtmlPublication(
   const fixedNow = new Date(now.getTime());
   const compactId = options.taskId.toLowerCase().replaceAll('-', '');
   const operationId = `shareyourhtml_${compactId}`;
-  const slug = `lf-${compactId}`;
+  const snapshot=store.read(),task=snapshot.tasks.find(value=>value.id===options.taskId),site=snapshot.sites.find(value=>value.id===task?.siteId);
+  const slug = task?.shareYourHtml?.slug??publicIdentitySlug(site??{},options.taskId,40);
   const initial = trustedSnapshot(store, options.taskId, options.resolveChannel,
     fixedNow, operationId, slug, 'initial');
   const persistence = createShareYourHtmlPublicationPersistence(store, vault, {

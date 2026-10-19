@@ -6,6 +6,7 @@ import {OPENAGENTCHAT_AGENTS_URL,OPENAGENTCHAT_ME_URL,OPENAGENTCHAT_ORIGIN,OPENA
 import type {Account,Channel,ExecutionContext,Site,Task} from '../src/shared/types';
 import {connectOpenAgentChat} from '../src/main/openagentchat-account';
 import {Store} from '../src/main/store';
+import {agentProfileText} from '../src/integrations/public-identity';
 
 function response(url:string,status:number,body:unknown,type='application/json',headers:Record<string,string>={}){const value=new Response(typeof body==='string'?body:JSON.stringify(body),{status,headers:{'content-type':type,...headers}});Object.defineProperties(value,{url:{value:url},redirected:{value:false},type:{value:'basic'}});return value}
 const target='https://github.com/xiaogan123/linkflow-desktop',title='Synthetic publisher fixture',body=`这是一份虚构的测试笔记，只包含人工构造的记录和状态。\n\n模拟接口返回固定正文，客户端通过同一编号读取它并检查是否一致。\n\n[合成测试的软件参考](${target})`;
@@ -51,4 +52,19 @@ test('Markdown safety envelope binds exact API metadata and complete body withou
  assert.equal(openAgentChatMarkdownMatches(parsed.body,parsed),true);
  assert.equal(openAgentChatMarkdownMatches(`# ${parsed.title}\n\n${parsed.body}`,parsed),true);
  for(const changed of [envelope.replace(parsed.title,'Another title'),envelope.replace(`Author: ${parsed.author}`,'Author: other-agent'),envelope.replace(`Revision: ${parsed.revision}`,'Revision: 999'),envelope.replace(raw.page.updated_at,parsed.updatedAt),envelope.replace('Revision:',`Author: ${parsed.author}\nRevision:`),envelope+parsed.body,envelope+'x',envelope+'\n',' '+envelope,envelope.replace(parsed.body,parsed.body+' changed'),envelope.replace(notice,'Untrusted'),parsed.body+'  '])assert.equal(openAgentChatMarkdownMatches(changed,parsed),false);
+});
+
+test('a new registration keeps the per-site profile in every saved stage, so the store accepts each step',async()=>{
+  const profile=agentProfileText(site),saved:Account[]=[],secrets=new Map<string,string>();let account:Account|undefined;const current=task();current.accountId=undefined;
+  const agent=(name:string)=>({id:9,name,display_name:profile.displayName,kind:'agent',bio:profile.bio});
+  const c:ExecutionContext={site,channel,task:current,settings:{} as any,secrets:{get:async key=>secrets.get(key),set:async(key,value)=>{secrets.set(key,value)},delete:async key=>{secrets.delete(key)}},ai:{} as any,signal:new AbortController().signal,getAccount:()=>account,
+    saveAccount:async(value,password)=>{account=value;saved.push(value);current.accountId=value.id;if(password)secrets.set(`account:${value.id}`,password)},checkpoint:()=>{},log:()=>{},authorizeOpenAgentChatMutation:()=>true,
+    openAgentChatDependencies:{timeoutMs:1000,fetch:async(url,init)=>{
+      if(url===OPENAGENTCHAT_AGENTS_URL){const sent=JSON.parse(String(init.body));assert.equal(sent.display_name,profile.displayName);assert.equal(sent.bio,profile.bio);return response(url,201,{agent:agent(sent.name),token:'oac_new_token_1234567890'})}
+      if(url===OPENAGENTCHAT_ME_URL)return response(url,200,{agent:agent(account!.username)});
+      throw Error(`unexpected ${url}`)}}};
+  assert.equal((await prepareOpenAgentChatIdentity(c))?.checkpoint,'openagentchat_account_ready');
+  assert.deepEqual(saved.map(item=>item.openAgentChat?.stage),['intent','opaque_response','ready']);
+  // The store refuses any step that swaps the registered identity, so every stage must carry the same profile.
+  for(const item of saved){assert.equal(item.displayName,profile.displayName);assert.equal(item.openAgentChat?.displayName,profile.displayName);assert.equal(item.openAgentChat?.bio,profile.bio)}
 });

@@ -51,7 +51,7 @@ export class WordPressConnections {
     if([...selected].some(id=>!before.sites.some(site=>site.id===id)))throw Error('所选网站已不存在');
     const requested=input.accountId?before.accounts.find(account=>account.id===input.accountId&&account.channelId==='wordpress-com'):undefined;
     if(input.accountId&&!requested)throw Error('要更新的 WordPress.com 连接不存在');
-    if(requested&&requested.username!==blog.id)throw Error('这是另一个博客，请新增连接；原任务身份保留。');
+    if(requested&&requested.username!==blog.id)throw Error('这是另一个博客，请新增连接；原连接和已有任务不受影响。');
     const previous=requested??before.accounts.find(account=>account.channelId==='wordpress-com'&&account.username===blog.id);
     const id=previous?.id??randomUUID(),generation=this.generation,abort=new AbortController();
     this.connecting=true;this.connectAbort=abort;
@@ -60,23 +60,23 @@ export class WordPressConnections {
       if(generation!==this.generation)throw Error('WordPress.com 连接已取消');
       const authors=new Set(before.tasks.filter(task=>task.accountId===id&&task.wordpress).map(task=>task.wordpress!.authorId));
       if(oldSecret){try{const stored=JSON.parse(oldSecret);if(typeof stored.ownerId==='string')authors.add(stored.ownerId);}catch{/* Existing task receipts still pin a previous publishing identity. */}}
-      if([...authors].some(author=>author!==blog.ownerId))throw Error('请使用原发布者账号重新授权，历史文章身份保留。');
+      if([...authors].some(author=>author!==blog.ownerId))throw Error('请使用原发布者账号重新授权；已有任务和已发布文章仍归原发布者。');
       const captured=memorySecrets();
       let identity:Awaited<ReturnType<typeof connectWordPressAccount>>;
       try{identity=await connectWordPressAccount(captured.store,id,blog.id,pending.grant.accessToken,{...this.deps,signal:abort.signal,expiresAt:pending.grant.expiresAt});}
       catch(error){if(abort.signal.aborted||generation!==this.generation)throw Error('WordPress.com 连接已取消');throw error}
       if(generation!==this.generation)throw Error('WordPress.com 连接已取消');
-      if(identity.username!==blog.id||identity.url!==blog.url||identity.ownerId!==blog.ownerId)throw Error('授权期间博客身份发生变化');
-      const credential=captured.get('account:'+id);if(!credential)throw Error('WordPress.com 授权凭据验证未完成');
+      if(identity.username!==blog.id||identity.url!==blog.url||identity.ownerId!==blog.ownerId)throw Error('授权期间博客 ID、地址或所有者发生变化，请重新授权。');
+      const credential=captured.get('account:'+id);if(!credential)throw Error('WordPress.com 授权验证未完成');
       const now=new Date().toISOString();
       const account:Account={...previous,id,channelId:'wordpress-com',username:blog.id,displayName:identity.name,publicationUrl:identity.url,credentialKind:'oauth',email:'',status:'registered',hasPassword:true,source:'imported',createdAt:previous?.createdAt??now,updatedAt:now,verifiedAt:now,diagnostic:undefined};
-      const key='account:'+id,ciphers=this.vault.encryptSecrets({[key]:credential});if(typeof ciphers[key]!=='string'||!ciphers[key])throw Error('WordPress.com 凭据未能加密');
+      const key='account:'+id,ciphers=this.vault.encryptSecrets({[key]:credential});if(typeof ciphers[key]!=='string'||!ciphers[key])throw Error('WordPress.com 登录信息未能加密');
       if(generation!==this.generation)throw Error('WordPress.com 连接已取消');
       this.store.updateWithCiphers(state=>{
         if([...selected].some(siteId=>!state.sites.some(site=>site.id===siteId)))throw Error('所选网站已不存在');
         const current=state.accounts.find(item=>item.id===id);
-        if(previous&&(!current||current.channelId!=='wordpress-com'||current.username!==blog.id))throw Error('连接期间博客身份发生变化');
-        if(!previous&&current)throw Error('连接期间博客身份发生变化');
+        if(previous&&(!current||current.channelId!=='wordpress-com'||current.username!==blog.id))throw Error('连接期间博客 ID、地址或所有者发生变化');
+        if(!previous&&current)throw Error('连接期间博客 ID、地址或所有者发生变化');
         state.accounts=state.accounts.filter(item=>item.id!==id);state.accounts.push(account);
         for(const siteId of selected)bindAccount(state,id,siteId,CHANNELS.find(channel=>channel.id==='wordpress-com')!);
         if(requested)for(const binding of [...state.accountBindings])if(binding.accountId===id&&binding.channelId==='wordpress-com'&&!selected.has(binding.siteId))unbindAccount(state,id,binding.siteId,'wordpress-com');

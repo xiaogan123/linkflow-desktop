@@ -40,10 +40,10 @@ const recoveryStageCopy:Record<RecoverySupersedeStage,{progress:string;failure:s
   archive:{progress:'正在建立受控恢复验证空间…',failure:'无法建立受控恢复验证空间；恢复副本和原事务已保留'},
   artifact:{progress:'正在下载并校验当前正式版本安装包…',failure:'无法下载或校验当前正式版本安装包；恢复副本和原事务已保留'},
   extraction:{progress:'正在安全解包当前正式版本…',failure:'无法安全解包当前正式版本；恢复副本和原事务已保留'},
-  'identity-process':{progress:'正在确认当前运行进程的安装来源…',failure:'无法确认当前运行进程对应真实安装应用；恢复副本和原事务已保留'},
-  'identity-official':{progress:'正在核对官方安装包内的应用身份…',failure:'官方安装包内的应用身份未通过验证；恢复副本和原事务已保留'},
-  'identity-installed':{progress:'正在核对“应用程序”中的当前应用身份…',failure:'“应用程序”中的当前应用身份未通过验证；恢复副本和原事务已保留'},
-  'identity-runtime':{progress:'正在核对当前运行应用副本的身份…',failure:'当前运行应用副本的身份未通过验证；恢复副本和原事务已保留'},
+  'identity-process':{progress:'正在确认当前运行进程的安装来源…',failure:'无法确认当前运行的是已安装的外链助手；恢复副本和原事务已保留'},
+  'identity-official':{progress:'正在核对官方安装包内的外链助手安装标识…',failure:'官方安装包内的外链助手安装标识未通过验证；恢复副本和原事务已保留'},
+  'identity-installed':{progress:'正在核对“应用程序”中的外链助手安装标识…',failure:'“应用程序”中的外链助手安装标识未通过验证；恢复副本和原事务已保留'},
+  'identity-runtime':{progress:'正在核对当前运行的外链助手副本标识…',failure:'当前运行的外链助手副本标识未通过验证；恢复副本和原事务已保留'},
   commit:{progress:'正在安全归档上次更新事务…',failure:'当前正式版本已通过验证，但旧更新事务未能安全归档；恢复副本和原事务已保留'}
 };
 class RecoveryCommandFailure extends Error {}
@@ -114,9 +114,9 @@ export class UpdateManager {
     const manifest=this.verified?.manifest;return {phase,currentVersion:this.options.currentVersion,targetVersion:manifest?.version,releaseNotes:manifest?.releaseNotes,publishedAt:manifest?.publishedAt,checkedAt:this.current.targetVersion===manifest?.version?this.current.checkedAt:undefined,...extra};
   }
   private supported():boolean{
-    if(!this.options.packaged){this.set({phase:'unsupported',currentVersion:this.options.currentVersion,error:'更新安装仅在已安装的正式客户端中可用'});return false}
+    if(!this.options.packaged){this.set({phase:'unsupported',currentVersion:this.options.currentVersion,error:'更新安装仅在正式版外链助手中可用'});return false}
     if(this.options.unsupportedReason){this.set({phase:'unsupported',currentVersion:this.options.currentVersion,error:this.options.unsupportedReason});return false}
-    if(!this.platform){this.set({phase:'unsupported',currentVersion:this.options.currentVersion,error:`当前系统架构 ${this.options.platform}/${this.options.arch} 暂不支持应用内更新`});return false}return true;
+    if(!this.platform){this.set({phase:'unsupported',currentVersion:this.options.currentVersion,error:`当前系统架构 ${this.options.platform}/${this.options.arch} 暂不支持在外链助手里直接更新`});return false}return true;
   }
   async initialize():Promise<UpdateState>{
     if(!this.supported())return this.status();try{await this.files.mkdir(this.options.updatesDirectory,{recursive:true,mode:0o700});
@@ -128,8 +128,8 @@ export class UpdateManager {
     if(failure?.schemaVersion===1&&!failure.recoveryJobPath)await this.cleanupRuntime(failure.cleanupPath);
     if(prepared){if(failure?.schemaVersion===1&&failure.targetVersion===this.verified?.manifest.version)this.set(this.targetState('prepared',{retryable:true,error:'上次安装未完成，已保留经过验证的安装包'}));return this.status()}
     if(receipt?.schemaVersion===1&&receipt.targetVersion===this.options.currentVersion&&!Number.isNaN(Date.parse(receipt.installedAt))){const recoveryPathValid=!receipt.recoveryJobCleanupPath||this.validRecoveryPath(receipt.recoveryJobCleanupPath);if(recoveryPathValid&&await this.cleanupRuntime(receipt.cleanupPath)&&await this.cleanupBackup(receipt.backupCleanupPath)&&await this.cleanupRecoveryJob(receipt.recoveryJobCleanupPath)){await Promise.allSettled([this.files.rm(join(this.options.updatesDirectory,'startup-request.json'),{force:true}),this.files.rm(join(this.options.updatesDirectory,'startup-ack'),{force:true})]);await this.files.rm(join(this.options.updatesDirectory,'installed.json'),{force:true})}return this.set({phase:'installed',currentVersion:this.options.currentVersion,targetVersion:receipt.targetVersion})}
-    if(receipt?.schemaVersion===1&&/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(receipt.targetVersion)&&compareVersions(receipt.targetVersion,this.options.currentVersion)>0)return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion:receipt.targetVersion,retryable:true,error:'安装助手已运行，但当前应用版本没有更新'});
-    if(failure?.schemaVersion===1&&typeof failure.targetVersion==='string'&&typeof failure.message==='string')return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion:failure.targetVersion,retryable:!failure.recoveryJobPath,error:failure.recoveryJobPath?'新版本启动身份未能确认，已保留恢复副本；请重新打开应用，如仍提示失败请联系支持':'安装未能完成，旧版本已保留'});
+    if(receipt?.schemaVersion===1&&/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(receipt.targetVersion)&&compareVersions(receipt.targetVersion,this.options.currentVersion)>0)return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion:receipt.targetVersion,retryable:true,error:'安装助手已运行，但当前外链助手版本没有更新'});
+    if(failure?.schemaVersion===1&&typeof failure.targetVersion==='string'&&typeof failure.message==='string')return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion:failure.targetVersion,retryable:!failure.recoveryJobPath,error:failure.recoveryJobPath?'无法确认新版本已正常启动，已保留恢复副本；请重新打开外链助手，如仍提示失败请联系支持':'安装未能完成，旧版本已保留'});
     return this.set({phase:'idle',currentVersion:this.options.currentVersion})}catch{return this.set({phase:'failed',currentVersion:this.options.currentVersion,retryable:true,error:'无法读取本机更新状态，其他功能可继续使用'})}
   }
   async acknowledgeStartup():Promise<boolean>{
@@ -145,7 +145,7 @@ export class UpdateManager {
     if(this.recoverySupersedePromise)return this.recoverySupersedePromise;
     if(this.downloadPromise||['checking','downloading','installing'].includes(this.current.phase))return Promise.reject(Error('更新操作正在进行'));
     if(!this.recoveryPending)return Promise.reject(Error('当前没有待归档的 macOS 恢复事务'));
-    if(!this.options.packaged||this.options.unsupportedReason||this.platform!=='darwin-arm64')return Promise.reject(Error('只能在已安装的 Apple Silicon macOS 正式客户端中恢复'));
+    if(!this.options.packaged||this.options.unsupportedReason||this.platform!=='darwin-arm64')return Promise.reject(Error('只能在已安装的 Apple Silicon macOS 正式版外链助手中恢复'));
     const targetVersion=this.current.targetVersion,operation=this.performSupersedeRecovery().catch(error=>{const message=error instanceof RecoverySupersedeFailure?error.message:'无法安全恢复更新；恢复副本和原事务已保留';this.recoveryPending=true;this.lockRecovery(targetVersion,message);throw Error(message)});
     this.recoverySupersedePromise=operation;const clear=()=>{if(this.recoverySupersedePromise===operation)this.recoverySupersedePromise=undefined};void operation.then(clear,clear);return operation;
   }
@@ -245,7 +245,7 @@ export class UpdateManager {
   private validStartupRequest(value:StartupRequest|undefined):value is StartupRequest{return !!value&&value.schemaVersion===1&&value.targetVersion===this.options.currentVersion&&typeof value.token==='string'&&/^[a-f0-9-]{16,64}$/i.test(value.token)}
   private validInstallError(value:InstallError|undefined):value is InstallError{return !!value&&value.schemaVersion===1&&typeof value.targetVersion==='string'&&/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(value.targetVersion)&&typeof value.failedAt==='string'&&!Number.isNaN(Date.parse(value.failedAt))&&typeof value.message==='string'&&(!value.cleanupPath||typeof value.cleanupPath==='string')&&(!value.recoveryJobPath||typeof value.recoveryJobPath==='string')}
   private setRecoveryProgress(stage:RecoverySupersedeStage):UpdateState{return this.set({phase:'checking',currentVersion:this.options.currentVersion,targetVersion:this.current.targetVersion,retryable:false,recoveryPending:true,error:recoveryStageCopy[stage].progress})}
-  private lockRecovery(targetVersion?:string,error='新版本启动身份未能确认，已保留恢复副本；请重新打开应用，如仍提示失败请联系支持'):UpdateState{return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion,retryable:false,recoveryPending:true,error})}
+  private lockRecovery(targetVersion?:string,error='无法确认新版本已正常启动，已保留恢复副本；请重新打开外链助手，如仍提示失败请联系支持'):UpdateState{return this.set({phase:'failed',currentVersion:this.options.currentVersion,targetVersion,retryable:false,recoveryPending:true,error})}
   private async stateFilePresent(name:string):Promise<boolean>{try{await this.files.lstat(join(this.options.updatesDirectory,name));return true}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT'}}
   private async pathPresent(path:string):Promise<boolean>{try{await this.files.lstat(path);return true}catch(error){return (error as NodeJS.ErrnoException).code!=='ENOENT'}}
   private async verifyRecoveryBundle(applicationPath:string,executablePath:string,targetVersion:string,treeSha256:string):Promise<boolean>{
@@ -319,14 +319,14 @@ export class UpdateManager {
     }catch(error){try{await handle?.close()}catch{}try{await this.files.rm(partial,{force:true})}catch{}if(abort.signal.aborted)return this.set(this.targetState('available',{retryable:true,error:'下载已取消'}));return this.set(this.targetState('failed',{retryable:true,error:error instanceof UpdateError?error.message:'下载或验证更新失败，请重试'}))}
   }
   cancel():UpdateState{if(this.current.phase!=='downloading'||!this.downloadAbort)throw Error('当前没有可取消的下载');this.downloadAbort.abort(Error('用户取消下载'));return this.status()}
-  dispose():void{this.downloadAbort?.abort(Error('应用正在退出'))}
+  dispose():void{this.downloadAbort?.abort(Error('外链助手正在退出'))}
   async install():Promise<UpdateInstallHandoff>{
     if(this.recoveryPending)throw Error('上次 macOS 更新仍保留恢复副本');if(this.current.phase!=='prepared'||!this.verified||!this.platform||!this.artifactPath)throw Error('请先完成下载和验证');if(!isAbsolute(this.options.helperPath))throw Error('更新助手路径无效');const asset=this.verified.manifest.assets[this.platform];if(!asset)throw Error('当前平台没有可安装的更新');const artifactInfo=await this.files.lstat(this.artifactPath);if(!artifactInfo.isFile()||artifactInfo.isSymbolicLink()||artifactInfo.size!==asset.size||await hashFile(this.artifactPath,this.files.createReadStream)!==asset.sha256){await this.clearPrepared();this.set(this.targetState('failed',{retryable:true,error:'安装包在准备安装前发生变化，请重新下载'}));throw Error('安装包完整性验证失败')}this.set(this.targetState('installing'));
     try{
       const previousFailure=await this.readOptional<InstallError>('install-error.json',32*1024);if(previousFailure?.recoveryJobPath)throw Error('上次 macOS 更新仍保留恢复副本');if(previousFailure?.cleanupPath&&!(await this.cleanupRuntime(previousFailure.cleanupPath)))throw Error('上次更新助手尚未退出');await Promise.all(['install-error.json','installed.json','startup-request.json','startup-ack'].map(name=>this.files.rm(join(this.options.updatesDirectory,name),{force:true})));const {job,jobPath,launchExecutablePath,launchHelperPath}=await prepareInstallJob({platform:this.platform,oldPid:this.options.pid??process.pid,targetVersion:this.verified.manifest.version,updatesDirectory:this.options.updatesDirectory,artifactPath:this.artifactPath,artifactSize:asset.size,artifactSha256:asset.sha256,applicationPath:this.options.applicationPath,executablePath:this.options.executablePath,helperPath:this.options.helperPath},this.options.installPorts);
       let launchError:Error|undefined;const child=(this.options.launchHelper??defaultLaunch)(launchExecutablePath,[launchHelperPath,jobPath],{...process.env,ELECTRON_RUN_AS_NODE:'1',LINKFLOW_UPDATE_HELPER:'1'});if(!child.pid)throw Error('无法启动更新助手');child.once?.('error',error=>{launchError=error});const deadline=Date.now()+5000;
       for(;;){if(launchError)throw launchError;try{if((await this.files.readFile(job.readyPath,'utf8'))===job.token)break}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error}if(Date.now()>=deadline)throw Error('更新助手未能安全接手');await new Promise(done=>setTimeout(done,50))}await this.files.rm(job.readyPath,{force:true});const armTemporary=job.armPath+'.tmp';try{await this.files.rm(armTemporary,{force:true});await this.files.writeFile(armTemporary,job.token,{mode:0o600,flag:'wx'});await this.files.rename(armTemporary,job.armPath)}catch(error){await this.files.rm(armTemporary,{force:true}).catch(()=>{});throw error}return {accepted:true,targetVersion:job.targetVersion};
-    }catch{const message='无法安全启动更新安装，请检查应用所在位置的写入权限';this.set(this.targetState('prepared',{retryable:true,error:message}));throw Error(message)}
+    }catch{const message='无法安全启动更新安装，请检查外链助手所在位置的写入权限';this.set(this.targetState('prepared',{retryable:true,error:message}));throw Error(message)}
   }
   private async writeAtomic(name:string,value:unknown){const path=join(this.options.updatesDirectory,name),temporary=path+'.tmp';await this.files.rm(temporary,{force:true});await this.files.writeFile(temporary,JSON.stringify(value),{mode:0o600,flag:'wx'});await this.files.rename(temporary,path)}
   private async cleanupRuntime(path:string|undefined):Promise<boolean>{if(!path)return true;if(!inside(this.options.updatesDirectory,path)||!basename(path).startsWith('helper-runtime-'))return false;try{await this.files.rm(path,{recursive:true,force:true});return true}catch{return false}}

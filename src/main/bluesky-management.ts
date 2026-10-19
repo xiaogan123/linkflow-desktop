@@ -15,6 +15,10 @@ type StateStore = Pick<Store, 'read' | 'update'>;
 export interface BlueskyManagementDependencies extends BlueskyDependencies {}
 export interface BlueskyBindingSelection {siteIds:string[];mailboxId?:string|null}
 
+class BlueskyManagementError extends Error{
+  constructor(readonly code:'identity_mismatch'|'state_changed',message:string){super(message);this.name='BlueskyManagementError'}
+}
+
 function stamp(dependencies?: BlueskyDependencies): string {
   const supplied = dependencies?.now?.();
   const value = supplied instanceof Date ? supplied : typeof supplied === 'string' ? new Date(supplied) : new Date();
@@ -23,19 +27,16 @@ function stamp(dependencies?: BlueskyDependencies): string {
 
 function connectionMessage(error: unknown): string {
   if (error instanceof BlueskyError) {
+    if (error.code === 'invalid_handle' || error.code === 'invalid_app_password') return error.message;
     if (error.code === 'auth') return 'Bluesky 拒绝了 handle 或应用专用密码；请勿输入主密码';
     if (error.code === 'restricted') return 'Bluesky 账号已停用、受限或不允许当前连接';
     if (error.code === 'rate_limited') return 'Bluesky 已触发速率限制，请稍后重试';
-    if (error.code === 'timeout' || error.code === 'network') return '暂时无法连接 Bluesky，原凭据与账号记录未改变';
+    if (error.code === 'timeout' || error.code === 'network') return '暂时无法连接 Bluesky，原登录信息与账号记录未改变';
     if (error.code === 'cancelled') return 'Bluesky 连接已取消';
-    return 'Bluesky 返回了无法安全确认的身份数据';
+    return 'Bluesky 返回了无法安全确认的发布账号数据';
   }
-  const local = error instanceof Error ? error.message : '';
-  if (local === 'Bluesky handle 格式无效'
-    || local === '请使用 Bluesky 设置中创建的应用专用密码；不接受主密码'
-    || local.startsWith('新的 Bluesky 应用专用密码属于不同 DID')
-    || local === 'Bluesky 账号身份在连接期间发生变化') return local;
-  return 'Bluesky 连接失败，未更改原账号凭据';
+  if(error instanceof BlueskyManagementError)return error.message;
+  return 'Bluesky 连接失败，未更改原发布账号登录信息';
 }
 
 /**
@@ -70,7 +71,7 @@ export async function connectBluesky(
   try {
     await createBlueskyCredential(handle, appPassword, dependencies, requested?.id, async authenticated => {
       if (requested && requested.username !== authenticated.did) {
-        throw new Error('新的 Bluesky 应用专用密码属于不同 DID，不会覆盖已有账号；请新增连接。');
+        throw new BlueskyManagementError('identity_mismatch','新的 Bluesky 应用专用密码属于不同 DID，不会覆盖已有账号；请新增连接。');
       }
 
       const currentState = store.read();
@@ -103,7 +104,7 @@ export async function connectBluesky(
           validateSelection(state);
           const current = state.accounts.find(item => item.id === accountId);
           if (current && (current.channelId !== 'bluesky' || current.username !== authenticated.did)) {
-            throw new Error('Bluesky 账号身份在连接期间发生变化');
+            throw new BlueskyManagementError('state_changed','Bluesky 发布账号在连接期间发生变化');
           }
           state.accounts = state.accounts.filter(item => item.id !== accountId);
           state.accounts.push(account);
@@ -125,6 +126,6 @@ export async function connectBluesky(
   } catch (error) {
     throw new Error(connectionMessage(error));
   }
-  if (!savedAccount) throw new Error('Bluesky 连接未能保存已验证身份');
+  if (!savedAccount) throw new Error('Bluesky 连接未能保存已验证发布账号');
   return savedAccount;
 }

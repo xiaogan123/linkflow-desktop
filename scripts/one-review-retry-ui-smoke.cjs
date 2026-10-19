@@ -24,7 +24,7 @@ if(!process.versions.electron){
   const stamp='2026-10-17T01:00:00.000Z';
   const site={id:'11111111-1111-4111-8111-111111111111',domain:'site.synthetic.example',url:'https://site.synthetic.example',email:'owner@synthetic.example',publicEmail:'public@synthetic.example',name:'Synthetic Site',description:'Isolated native UI fixture.',category:'content',language:'en',monthlyTarget:1,articleReviewMode:'ai',status:'ready',createdAt:stamp};
   const channel={id:'synthetic-review',name:'Synthetic Review',domain:'channel.synthetic.example',url:'https://channel.synthetic.example',submitUrl:'https://channel.synthetic.example/submit',categories:['content'],languages:['en'],kind:'article',emailRequired:false,accountRequired:false,articleRequired:true,free:'yes',freeNote:'Isolated fixture',automation:'api',quality:'C',qualityReason:'Isolated fixture',rulesUrl:'https://channel.synthetic.example/rules',checkedAt:'2026-10-17',notes:'',allowedHosts:['channel.synthetic.example'],enabled:true};
-  const task={id:'22222222-2222-4222-8222-222222222222',siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:'needs_input',createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'Restored review requires one new independent review.',checkpoint:'article_review',draftRevision:3,draft:{title:'Synthetic draft',description:'Synthetic summary',body:'Synthetic article body.'},cost:{aiCalls:6},articleReview:{status:'failed',reason:'Restored approval is expired; a new review is required.',reasonCode:'passed',reviewContractVersion:4,reviewedAt:stamp,evidenceUrls:[],draftRevision:3,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
+  const task={id:'22222222-2222-4222-8222-222222222222',siteId:site.id,channelId:channel.id,sourceDomain:channel.domain,status:'needs_input',createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'Restored review requires one new independent review.',checkpoint:'article_review',draftRevision:3,draft:{title:'Synthetic draft',description:'Synthetic summary',body:'Synthetic article body.'},cost:{aiCalls:2},articleReview:{status:'failed',reason:'Restored approval is expired; a new review is required.',reasonCode:'passed',reviewContractVersion:4,reviewedAt:stamp,evidenceUrls:[],draftRevision:3,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
   const state={sites:[site],tasks:[task],channels:[channel],accounts:[],mailboxes:[],accountBindings:[],events:[],settings:{provider:'codex',codexPath:'codex',model:'synthetic-review-model',apiBase:'https://api.synthetic.example/v1',hasApiKey:false,autoRun:false,articleReviewMode:'ai',launchAtLogin:false,notify:false,timezone:'UTC',maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},mail:{host:'mail.synthetic.example',port:993,user:'fixture@synthetic.example',secure:true,hasPassword:false}},runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:process.platform,dataPath:dir,aiCallsToday:0}};
   const clone=value=>JSON.parse(JSON.stringify(value));
   const actions=[];
@@ -32,6 +32,7 @@ if(!process.versions.electron){
   ipcMain.handle('fixture',async(_event,name,payload)=>{
     if(name==='snapshot')return clone(state);
     if(name==='app:update-status')return {phase:'idle',currentVersion:'fixture'};
+    if(name==='app:ready')return true;
     if(name!=='task:review-once')return {ok:true};
     actions.push({name,payload:clone(payload)});
     oneShotInvocations++;
@@ -40,7 +41,7 @@ if(!process.versions.electron){
     inFlight=true;
     await new Promise(resolve=>setTimeout(resolve,220));
     task.oneReviewRetry={version:1,purpose:'independent_article_review',operationTokenHash:'c'.repeat(64),grantedAt:stamp,siteId:task.siteId,channelId:task.channelId,accountId:null,draftRevision:3,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64),provider:'codex',model:'synthetic-review-model',status:'consumed',consumedAt:'2026-10-17T01:01:00.000Z'};
-    task.cost.aiCalls=7;
+    task.cost.aiCalls=3;
     task.status='failed';
     task.message='The sole synthetic review call was consumed and stopped.';
     task.updatedAt='2026-10-17T01:01:00.000Z';
@@ -56,38 +57,50 @@ if(!process.versions.electron){
   const evaluate=source=>win.webContents.executeJavaScript(source,true);
   const waitFor=async source=>{const deadline=Date.now()+8000;while(Date.now()<deadline){if(await evaluate(source))return;await delay(40)}throw Error(`UI readiness deadline: ${source}`)};
   const clickText=async text=>{const clicked=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.trim()===${JSON.stringify(text)}&&!item.disabled);if(!button)return false;button.click();return true})()`);assert(clicked,`button: ${text}`);await delay(100)};
-  const clickReviewTwice=()=>evaluate(`(()=>{const button=document.querySelector('button[aria-label="追加 1 次 AI 审核"]');if(!button||button.disabled)return false;button.click();button.click();return true})()`);
+  const reviewOnceLabel='追加 1 次 AI 复核';
+  const reviewButtonsJs=`[...document.querySelectorAll('button')].filter(item=>item.innerText.trim()===${JSON.stringify(reviewOnceLabel)})`;
+  const clickReviewTwice=()=>evaluate(`(()=>{const button=${reviewButtonsJs}[0];if(!button||button.disabled)return false;button.click();button.click();return true})()`);
   const capture=async name=>{const image=await win.capturePage();writeFileSync(join(evidence,name),image.toPNG())};
 
   app.whenReady().then(async()=>{try{
     const mainSource=readFileSync(join(process.cwd(),'src/main/main.ts'),'utf8');
-    check('main confirmation preserves six calls and discloses one possible paid call',mainSource.includes('原有 6 次 AI 调用记录会完整保留')&&mainSource.includes('最多新增 1 次可能产生费用的 AI 调用'));
+    const messageSource=readFileSync(join(process.cwd(),'src/shared/batch9b-messages.ts'),'utf8');
+    const reviewOnceEntry=mainSource.slice(mainSource.indexOf("case 'task:review-once'"),mainSource.indexOf("case 'task:retry'"));
+    const retryDetail=(messageSource.match(/reviewRetryDetail:\(revision:number\)=>`([^`]*)`/)||[])[1]||'';
+    check('main confirmation preserves the two prior calls and discloses one possible paid call (counted as call three)',reviewOnceEntry.includes('detail:BATCH9B_MESSAGES.reviewRetryDetail(summary.draftRevision)')&&retryDetail.includes('原有 2 次调用记录会保留')&&retryDetail.includes('再调用一次复核')&&retryDetail.includes('可能产生费用')&&retryDetail.includes('请求开始即计为第 3 次')&&retryDetail.includes('失败或中断也不能再次追加'));
     check('main confirmation has explicit cancel and confirm choices',mainSource.includes("buttons:['取消','确认追加 1 次审核']")&&mainSource.includes('if(confirm.response!==1)return {cancelled:true}'));
-    check('main entry guards overlapping commands before and after confirmation',(mainSource.slice(mainSource.indexOf("case 'task:review-once'"),mainSource.indexOf("case 'task:retry'")).match(/activeCommands\.size>1/g)||[]).length===2);
+    check('main entry guards overlapping commands before and after confirmation',(reviewOnceEntry.match(/activeCommands\.size>1/g)||[]).length===2);
 
     win=new BrowserWindow({width:1180,height:760,useContentSize:true,show:false,webPreferences:{preload:join(dir,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
     await win.loadFile(join(dir,'index.html'));
     await waitFor('document.body.innerText.includes("site.synthetic.example")');
-    await clickText('任务');
-    await clickText('需你处理');
-    await waitFor('!!document.querySelector(\'button[aria-label="追加 1 次 AI 审核"]\')');
-    check('restored needs-input review exposes the explicit one-shot action',await evaluate('document.querySelectorAll(\'button[aria-label="追加 1 次 AI 审核"]\').length===1'));
-    check('ordinary AI retry is absent',await evaluate('![...document.querySelectorAll("button")].some(button=>button.innerText.includes("重新 AI 核对"))'));
+    // The one-shot action lives on the task card in the site's 排期 tab (网站 → site → 排期 → 其他任务 → expand the task).
+    await clickText('网站');
+    await clickText('site.synthetic.example');
+    await clickText('排期');
+    await waitFor('!!document.querySelector(".task-card .task-summary")');
+    await evaluate('document.querySelector(".task-card .task-summary").click()');
+    await waitFor(`${reviewButtonsJs}.length>0`);
+    check('restored needs-input review exposes the explicit one-shot action',await evaluate(`${reviewButtonsJs}.length===1&&!${reviewButtonsJs}[0].disabled`));
+    check('ordinary AI retry is absent',await evaluate('![...document.querySelectorAll("button")].some(button=>button.innerText.includes("重新 AI 复核"))'));
+    await evaluate(`${reviewButtonsJs}[0].scrollIntoView({block:'center'})`);
     await capture('one-review-action.png');
 
-    await evaluate('document.querySelector(\'button[aria-label="追加 1 次 AI 审核"]\').click()');
+    await evaluate(`${reviewButtonsJs}[0].click()`);
     await delay(180);
-    check('cancel leaves the six-call task and authorization untouched',oneShotInvocations===1&&oneShotCommits===0&&task.cost.aiCalls===6&&!task.oneReviewRetry);
-    check('cancel does not show a false completion notice',await evaluate('!document.querySelector("[role=status].banner.success")?.innerText.includes("唯一一次追加独立审核已完成")'));
-    check('cancel keeps the one-shot action available for the still-unspent authorization',await evaluate('!!document.querySelector(\'button[aria-label="追加 1 次 AI 审核"]\')'));
+    check('cancel leaves the two-call task and authorization untouched',oneShotInvocations===1&&oneShotCommits===0&&task.cost.aiCalls===2&&!task.oneReviewRetry);
+    check('cancel does not show a false completion notice',await evaluate('!document.querySelector("[role=status].banner.success")?.innerText.includes("追加 AI 复核已完成")'));
+    check('cancel keeps the one-shot action available for the still-unspent authorization',await evaluate(`${reviewButtonsJs}.length===1`));
 
     check('rapid repeat click reaches at most one committed operation',await clickReviewTwice());
-    await waitFor('!document.querySelector(\'button[aria-label="追加 1 次 AI 审核"]\')');
-    check('confirmed action consumes exactly call seven once',oneShotCommits===1&&task.cost.aiCalls===7&&task.oneReviewRetry?.status==='consumed');
+    await waitFor(`${reviewButtonsJs}.length===0&&!!document.querySelector("[role=status].banner.success")`);
+    check('confirmed action reports completion only after the committed call',await evaluate('document.querySelector("[role=status].banner.success").innerText.includes("追加 AI 复核已完成")'));
+    check('confirmed action consumes exactly call three once',oneShotCommits===1&&task.cost.aiCalls===3&&task.oneReviewRetry?.status==='consumed');
     check('repeat click never creates a second grant or a second committed call',oneShotInvocations<=3&&oneShotCommits===1&&(oneShotInvocations===2||duplicateRejections===1));
-    await evaluate('document.querySelector(".work-identity")?.click()');
+    if(!await evaluate('!!document.querySelector(".task-card.selected .task-detail")'))await evaluate('document.querySelector(".task-card .task-summary")?.click()');
     await delay(100);
-    check('consumed history remains visible while the action is removed',await evaluate('document.body.innerText.includes("已使用（第 7 次）")&&!document.querySelector(\'button[aria-label="追加 1 次 AI 审核"]\')'));
+    check('consumed history remains visible while the action is removed',await evaluate(`(()=>{const detail=document.querySelector('.task-card.selected .task-detail');if(!detail)return false;const term=[...detail.querySelectorAll('dt')].find(item=>item.innerText.trim()==='追加审核');return term?.nextElementSibling?.innerText.trim()==='已使用'&&${reviewButtonsJs}.length===0})()`));
+    await evaluate('document.querySelector(".task-card.selected .task-actions")?.scrollIntoView({block:"center"})');
     await capture('one-review-consumed.png');
 
     const result={passed:true,viewport:{width:1180,height:760},checks,actions,oneShotInvocations,oneShotCommits,duplicateRejections};

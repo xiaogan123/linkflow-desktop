@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["Controller completes one POST plus fixed readback and exposes only the bound result URL"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});});
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -15,7 +17,7 @@ import {emptyState,Store} from '../src/main/store';
 import type {Vault} from '../src/main/vault';
 import type {ExecutionContext,Site,Task} from '../src/shared/types';
 
-const at='2026-10-13T03:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='Abc_def-123',publicUrl=pstrsPublicUrl(id),expiresAt=Math.floor((Date.parse(at)+365*86400000)/1000);
+const at='2026-10-13T10:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='Abc_def-123',publicUrl=pstrsPublicUrl(id),expiresAt=Math.floor((Date.parse(at)+365*86400000)/1000);
 const draft={title:'A safe request recovery guide',description:'Practical developer guide',body:'Before retrying a request, save its intent. The [project guide](https://example.test/guide) explains the complete recovery process.'};
 function site():Site{return {id:siteId,domain:'example.test',url:'https://example.test/',email:'owner@example.test',name:'Example software',description:'Developer software',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.test/product',developer:'https://example.test/guide'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.test/guide',discoveredAt:at}]}}
 function task(extra:Partial<Task>={}):Task{return {id:taskId,siteId,channelId:'pstrs',sourceDomain:'paster.abhicracker.com',status:'review',createdAt:at,scheduledAt:at,updatedAt:at,attempts:0,message:'fixture',topicUrl:'https://example.test/guide',draft,draftRevision:1,articleApprovedAt:at,health:'pending',...extra}}

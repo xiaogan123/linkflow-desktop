@@ -56,7 +56,7 @@ function validGistId(value: unknown): value is string {
 function canonicalHttps(value: string): string {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || !url.hostname || (url.port && url.port !== '443') || url.hash) {
-    throw new Error('目标网址必须是不含凭据和片段的 HTTPS 网址');
+    throw new Error('目标网址必须是不含账号密码和片段的 HTTPS 网址');
   }
   return url.toString();
 }
@@ -131,7 +131,7 @@ async function githubRequest(
   const headers: Record<string, string> = {
     accept: 'application/vnd.github+json',
     'x-github-api-version': API_VERSION,
-    'user-agent': 'Linkflow-Desktop',
+    'user-agent': 'Mozilla/5.0',
   };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   if (options.body) headers['content-type'] = 'application/json';
@@ -298,21 +298,21 @@ export async function verifyGistPublication(context:ExecutionContext,dependencie
     expected=identity;approved=approvedReadme(context,false);
     const account=context.getAccount();
     if(account&&(account.channelId!=='github-gist'||account.username.toLowerCase()!==expected.login.toLowerCase()))throw Error();
-  }catch{return fail('invalid','Gist 原发布身份或完整稿件无效，保留记录且不重发');}
+  }catch{return fail('invalid','Gist 原发布账号或完整稿件无效，保留记录且不重发');}
   try{
     const data=await githubRequest(`/gists/${expected.id}`,{signal:context.signal},dependencies);
     if(!verifyGist(data,expected.login,approved.content,expected.id))return fail('invalid','Gist 匿名 API 的公开性、作者或完整 README 与原稿不一致');
     const page=await fetchPublicText(expected.url,context.signal,dependencies.publicFetch,{allowRedirect:(_from,to)=>to.href===expected.url});
     if(page.url!==expected.url)return fail('invalid','Gist 公开地址与原记录不一致');
     const rendered=inspectRenderedArticle(page.text,approved.content,approved.target,'.file .markdown-body',{pageUrl:page.url,robotsHeader:page.robotsHeader});
-    if(!rendered.found)return fail('invalid','Gist 可见全文、全部链接或页面索引规则未通过核验；原投稿仍保留');
+    if(!rendered.found)return fail('invalid','Gist 可见全文、全部链接或页面索引规则未通过检查；原投稿仍保留');
     return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Gist 匿名 API 原文及可见完整 README、全部链接一致；不代表搜索收录'};
-  }catch{return fail('unreachable','Gist 原发布的匿名 API 或页面暂时无法核验；不会重发');}
+  }catch{return fail('unreachable','Gist 原发布的匿名 API 或页面暂时无法检查；不会重发');}
 }
 
 export async function runGistTask(context: ExecutionContext, dependencies?: GistDependencies): Promise<ExecutionResult> {
   if (context.channel.id !== 'github-gist' || context.channel.automation !== 'api') {
-    return { status: 'needs_input', message: '该渠道没有启用 GitHub Gist API 自动化', publicUrl: context.task.publicUrl };
+    return { status: 'needs_input', message: '该平台没有启用 GitHub Gist API 自动化', publicUrl: context.task.publicUrl };
   }
   if ((context.task.checkpoint === 'submitting' || context.task.submittedAt) && !context.task.publicUrl) {
     return { status: 'needs_input', message: '上次 Gist 提交结果无法确认，不会自动重复创建；请先检查 GitHub Gists', checkpoint: 'submitting', submittedAt: context.task.submittedAt };
@@ -327,9 +327,9 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
     return { status: 'needs_input', message: '请先连接已有 GitHub 账号和 Gist 访问令牌', publicUrl: context.task.publicUrl };
   }
   if (account.status === 'restricted') return { status: 'needs_input', message: 'GitHub 账号或访问已受限，已停止自动操作', publicUrl: context.task.publicUrl };
-  if (account.status === 'credentials_invalid') return { status: 'needs_input', message: 'GitHub 访问令牌不可用，请人工更新凭据', publicUrl: context.task.publicUrl };
+  if (account.status === 'credentials_invalid') return { status: 'needs_input', message: 'GitHub 访问令牌不可用，请重新填写 GitHub 访问令牌', publicUrl: context.task.publicUrl };
   if (account.status !== 'registered' || account.credentialKind !== 'api_token' || !account.hasPassword) {
-    return { status: 'needs_input', message: 'GitHub Gist 需要已连接的 API 令牌，不会自动创建 GitHub 身份', publicUrl: context.task.publicUrl };
+    return { status: 'needs_input', message: 'GitHub Gist 需要已连接的 API 令牌，不会自动创建 GitHub 发布账号', publicUrl: context.task.publicUrl };
   }
   const token = await context.secrets.get(`account:${account.id}`);
   if (!token || !validToken(token)) {
@@ -344,7 +344,7 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
   } catch (error) {
     if (error instanceof GitHubAuthError) {
       await markInvalidCredential(context, account, dependencies);
-      return { status: 'needs_input', message: 'GitHub 访问令牌无效或不属于已连接账号，请更新凭据', publicUrl: context.task.publicUrl };
+      return { status: 'needs_input', message: 'GitHub 访问令牌无效或不属于已连接账号，请重新填写 GitHub 访问令牌', publicUrl: context.task.publicUrl };
     }
     if (error instanceof GitHubAccessError) return { status: 'needs_input', message: 'GitHub 当前拒绝访问或触发速率限制；不会创建替代账号', publicUrl: context.task.publicUrl };
     return { status: 'failed', message: '暂时无法验证 GitHub 账号，尚未创建 Gist', publicUrl: context.task.publicUrl };
@@ -359,8 +359,8 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
     try {
       const value = await githubRequest(`/gists/${expected.id}`, { token, signal: context.signal }, dependencies);
       const identity = verifyGist(value, login, approved.content, expected.id);
-      if (!identity || identity.url !== expected.url) return { status: 'needs_input', message: '已保存的 Gist 不是预期账号下含批准 README.md 的公开结果', publicUrl: context.task.publicUrl };
-      return { status: 'review', message: '已回读并确认公开 Gist，等待匿名页面外链核验', publicUrl: identity.url, checkpoint: 'gist_published', submittedAt: context.task.submittedAt };
+      if (!identity || identity.url !== expected.url) return { status: 'needs_input', message: '已保存的 Gist 不是预期账号下含批准 README.md 的外链', publicUrl: context.task.publicUrl };
+      return { status: 'review', message: '已回读并确认公开 Gist，等待匿名页面外链检查', publicUrl: identity.url, checkpoint: 'gist_published', submittedAt: context.task.submittedAt };
     } catch (error) {
       if (error instanceof GitHubAuthError) {
         await markInvalidCredential(context, account, dependencies);
@@ -388,7 +388,7 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
     if (error instanceof GitHubAuthError) {
       await markInvalidCredential(context, account, dependencies);
       context.checkpoint({ checkpoint: 'gist_rejected', submittedAt: undefined });
-      return { status: 'needs_input', message: 'GitHub 访问令牌无效，Gist 未创建；请更新凭据', checkpoint: 'gist_rejected' };
+      return { status: 'needs_input', message: 'GitHub 访问令牌无效，Gist 未创建；请重新填写 GitHub 访问令牌', checkpoint: 'gist_rejected' };
     }
     if (error instanceof GitHubAccessError || error instanceof GitHubRejectedError) {
       context.checkpoint({ checkpoint: 'gist_rejected', submittedAt: undefined });
@@ -398,9 +398,9 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
   }
 
   const identity = verifyGist(created, login, approved.content);
-  if (!identity) return { status: 'needs_input', message: 'GitHub 已响应创建请求，但结果身份、公开性或 README.md 无法确认；不会重复创建', checkpoint: 'submitting', submittedAt };
+  if (!identity) return { status: 'needs_input', message: 'GitHub 已响应创建请求，但结果归属、公开性或 README.md 无法确认；不会重复创建', checkpoint: 'submitting', submittedAt };
   try { context.checkpoint({ checkpoint: 'gist_published', submittedAt, publicUrl: identity.url }); }
-  catch { return { status: 'review', message: '公开 Gist 已创建，等待匿名页面外链核验', publicUrl: identity.url, checkpoint: 'gist_published', submittedAt }; }
+  catch { return { status: 'review', message: '公开 Gist 已创建，等待匿名页面外链检查', publicUrl: identity.url, checkpoint: 'gist_published', submittedAt }; }
   if(context.signal.aborted)return {status:'review',message:'公开 Gist 已创建；已保留返回网址，暂停后不会继续回读或重复创建',publicUrl:identity.url,checkpoint:'gist_published',submittedAt};
 
   let confirmed = false;
@@ -410,7 +410,7 @@ export async function runGistTask(context: ExecutionContext, dependencies?: Gist
   } catch { /* the known result URL is retained; anonymous verification remains the controller's job */ }
   return {
     status: 'review',
-    message: confirmed ? '公开 Gist 已创建并通过 API 回读，等待匿名页面外链核验' : '公开 Gist 已创建，API 回读待确认；等待匿名页面外链核验',
+    message: confirmed ? '公开 Gist 已创建并通过 API 回读，等待匿名页面外链检查' : '公开 Gist 已创建，API 回读待确认；等待匿名页面外链检查',
     publicUrl: identity.url,
     checkpoint: 'gist_published',
     submittedAt,

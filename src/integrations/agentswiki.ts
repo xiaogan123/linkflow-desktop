@@ -71,14 +71,14 @@ export function parseAgentsWikiArticleReceipt(v:unknown):AgentsWikiArticleReceip
 async function readAgentsWikiJson(url:string,key:string|undefined,deps:OpenAgentChatDependencies){
  const headers:Record<string,string>={accept:'application/json'};if(key)headers.authorization=`Bearer ${key}`;
  const raw=await openAgentChatStreamingMutation(url,{method:'GET',headers},async()=>{},()=>true,deps),value=raw&&parseOpenAgentChatOpaque(raw,url,200);
- if(value===undefined)throw Error('Agents Wiki 只读核对未完成');return value;
+ if(value===undefined)throw Error('Agents Wiki 检查未完成');return value;
 }
 export async function readAgentsWikiMeta(deps:OpenAgentChatDependencies={}){
  const v=await readAgentsWikiJson(AGENTSWIKI_META,undefined,deps);
  if(!record(v)||v.name!=='Agents Wiki'||v.license!=='CC-BY-4.0'||v.rule_version!==AGENTSWIKI_RULE_VERSION||v.writes_enabled!==true||v.registration_enabled!==true||!record(v.registration)||v.registration.url!==AGENTSWIKI_REGISTER||v.registration.method!=='POST'||v.registration.key_shown_once!==true)throw Error('Agents Wiki 当前贡献规则或开放状态已变更');return v;
 }
 async function mutate<T>(kind:AgentsWikiIntent['kind'],url:string,body:string,input:{accountId:string;taskId:string},p:AgentsWikiPersistence<T>,parse:(v:unknown)=>T|undefined,deps:OpenAgentChatDependencies,apiKey?:string,idempotencyKey?:string){
- if(!UUID.test(input.accountId)||!UUID.test(input.taskId))throw Error('Agents Wiki 本地身份无效');
+ if(!UUID.test(input.accountId)||!UUID.test(input.taskId))throw Error('Agents Wiki 本地发布账号无效');
  if(await p.loadPriorRaw()!==undefined)return {status:'prior_intent' as const};
  const requestHash=agentsWikiHash(`POST\n${url}\nidempotency-key:${idempotencyKey??''}\ncontent-type:application/json\n\n${body}`),intent:AgentsWikiIntent={version:1,kind,...input,createdAt:(deps.now?.()??new Date()).toISOString(),requestHash,sourceHash:agentsWikiHash(body),...(idempotencyKey?{idempotencyKey}:{})};
  await readAgentsWikiMeta(deps);
@@ -89,7 +89,7 @@ async function mutate<T>(kind:AgentsWikiIntent['kind'],url:string,body:string,in
  try{await p.persistReceipt(intent,receipt);return {status:'receipt' as const,intent,receipt}}catch{return {status:'persistence_unknown' as const,intent}}
 }
 export async function registerAgentsWiki(input:{accountId:string;taskId:string;draft:AgentsWikiRegistration},p:AgentsWikiPersistence<{account:AgentsWikiAccount;apiKey:string}>,deps:OpenAgentChatDependencies={}){
- const d=input.draft;if(!validAgentsWikiRegistration(d))throw Error('Agents Wiki 注册需要真实身份披露及当前投稿权利确认');
+ const d=input.draft;if(!validAgentsWikiRegistration(d))throw Error('Agents Wiki 注册需要真实发布者披露及当前投稿权利确认');
  return mutate('registration',AGENTSWIKI_REGISTER,JSON.stringify(d),{accountId:input.accountId,taskId:input.taskId},p,v=>parseAgentsWikiRegistration(v,d),deps);
 }
 export async function publishAgentsWiki(input:{accountId:string;taskId:string;draft:AgentsWikiDraft;targetUrl:string;apiKey:string;idempotencyKey:string;validation:{sourceHash:string;remoteAccountId:string};account:AgentsWikiAccount},p:AgentsWikiPersistence<AgentsWikiArticleReceipt>,deps:OpenAgentChatDependencies={}){
@@ -99,7 +99,7 @@ export async function publishAgentsWiki(input:{accountId:string;taskId:string;dr
  return mutate('publication',AGENTSWIKI_ARTICLES,r.body,{accountId:input.accountId,taskId:input.taskId},p,parseAgentsWikiArticleReceipt,deps,input.apiKey,input.idempotencyKey);
 }
 export async function readAgentsWikiOwnAccount(expected:AgentsWikiAccount,apiKey:string,deps:OpenAgentChatDependencies={}){if(!KEY.test(apiKey))throw Error('Agents Wiki 密钥无效');const account=parseAgentsWikiAccount(await readAgentsWikiJson(AGENTSWIKI_ME,apiKey,deps));if(!account||JSON.stringify(account)!==JSON.stringify(expected))throw Error('Agents Wiki 原账号不匹配');return account}
-export async function readAgentsWikiCurrentAccount(apiKey:string,deps:OpenAgentChatDependencies={}){if(!KEY.test(apiKey))throw Error('Agents Wiki 密钥无效');const account=parseAgentsWikiAccount(await readAgentsWikiJson(AGENTSWIKI_ME,apiKey,deps));if(!account)throw Error('Agents Wiki 密钥未返回可核对的 agent 身份');return account}
+export async function readAgentsWikiCurrentAccount(apiKey:string,deps:OpenAgentChatDependencies={}){if(!KEY.test(apiKey))throw Error('Agents Wiki 密钥无效');const account=parseAgentsWikiAccount(await readAgentsWikiJson(AGENTSWIKI_ME,apiKey,deps));if(!account)throw Error('Agents Wiki 密钥未返回可核对的 agent 发布账号');return account}
 
 export async function validateAgentsWikiDraft(input:{draft:AgentsWikiDraft;targetUrl:string;account:AgentsWikiAccount;apiKey:string;reviewedSimilarIds:string[]},authorize:()=>true,deps:OpenAgentChatDependencies={}){
  const r=agentsWikiDraftRequest(input.draft,input.targetUrl);await readAgentsWikiOwnAccount(input.account,input.apiKey,deps);
@@ -172,12 +172,12 @@ export function agentsWikiRobotsAllows(text:string,path:string,agent:string){
  return winner?.allow??true;
 }
 export async function readAgentsWikiRobots(publicUrl:string,deps:OpenAgentChatDependencies={}){
- if(!ownPage(publicUrl))throw Error('Agents Wiki robots 核验地址无效');
+ if(!ownPage(publicUrl))throw Error('Agents Wiki 抓取规则检查地址无效');
  const url=AGENTSWIKI_ORIGIN+'/robots.txt',raw=await openAgentChatStreamingMutation(url,{method:'GET',headers:{accept:'text/plain'}},async()=>{},()=>true,deps);
- if(!raw||raw.status!==200||raw.redirected||raw.responseUrl!==url||!raw.bodyComplete||raw.contentType.split(';',1)[0].trim().toLowerCase()!=='text/plain')throw Error('Agents Wiki robots 读取未完成');
- const body=Buffer.from(raw.bodyBase64,'base64');if(body.length>131072)throw Error('Agents Wiki robots 超过大小上限');
+ if(!raw||raw.status!==200||raw.redirected||raw.responseUrl!==url||!raw.bodyComplete||raw.contentType.split(';',1)[0].trim().toLowerCase()!=='text/plain')throw Error('Agents Wiki 抓取规则读取未完成');
+ const body=Buffer.from(raw.bodyBase64,'base64');if(body.length>131072)throw Error('Agents Wiki 抓取规则超过大小上限');
  const rules=new TextDecoder('utf-8',{fatal:true}).decode(body),pathname=new URL(publicUrl).pathname;
- if(!['googlebot','bingbot','*'].every(agent=>agentsWikiRobotsAllows(rules,pathname,agent)))throw Error('Agents Wiki robots 不允许搜索引擎抓取该页');
+ if(!['googlebot','bingbot','*'].every(agent=>agentsWikiRobotsAllows(rules,pathname,agent)))throw Error('Agents Wiki 抓取规则不允许搜索引擎抓取该页');
  return true as const;
 }
 export async function readAgentsWikiArticle(input:{receipt:AgentsWikiArticleReceipt;account:AgentsWikiAccount;apiKey:string;draft:AgentsWikiDraft},deps:OpenAgentChatDependencies={}){

@@ -82,7 +82,7 @@ function kindOf(info:Stats):EntrySnapshot['kind']|undefined{
 }
 
 function snapshot(path:string,relativePath:string,info:Stats):EntrySnapshot{
-  const kind=kindOf(info);if(!kind)throw Error('更新应用含有不支持的文件类型');
+  const kind=kindOf(info);if(!kind)throw Error('外链助手更新文件包含不支持的类型');
   return {path,relativePath,dev:info.dev,ino:info.ino,nlink:info.nlink,mode:info.mode,size:info.size,mtimeMs:info.mtimeMs,ctimeMs:info.ctimeMs,kind};
 }
 
@@ -103,24 +103,24 @@ async function verifyArchive(input:VerifiedMacStage,expected:EntrySnapshot):Prom
 
 async function verifyBundle(input:VerifiedMacApplication,ports:MacQuarantinePorts):Promise<void>{
   const appInfo=await files.lstat(input.applicationPath),executableInfo=await files.lstat(input.executablePath),plist=join(input.applicationPath,'Contents','Info.plist'),plistInfo=await files.lstat(plist);
-  if(!appInfo.isDirectory()||appInfo.isSymbolicLink()||!executableInfo.isFile()||executableInfo.isSymbolicLink()||!plistInfo.isFile()||plistInfo.isSymbolicLink()||!inside(input.applicationPath,input.executablePath)||!inside(input.applicationPath,plist))throw Error('macOS 更新应用路径无效');
+  if(!appInfo.isDirectory()||appInfo.isSymbolicLink()||!executableInfo.isFile()||executableInfo.isSymbolicLink()||!plistInfo.isFile()||plistInfo.isSymbolicLink()||!inside(input.applicationPath,input.executablePath)||!inside(input.applicationPath,plist))throw Error('macOS 外链助手更新路径无效');
   await ports.execute('/usr/bin/codesign',['--verify','--deep','--strict',input.applicationPath]);
   const identifier=(await ports.execute('/usr/bin/plutil',['-extract','CFBundleIdentifier','raw','-o','-',plist])).trim(),version=(await ports.execute('/usr/bin/plutil',['-extract','CFBundleShortVersionString','raw','-o','-',plist])).trim(),architectures=(await ports.execute('/usr/bin/lipo',['-archs',input.executablePath])).trim().split(/\s+/);
-  if(identifier!=='com.linkflow.personal'||version!==input.targetVersion||architectures.length!==1||architectures[0]!=='arm64')throw Error('macOS 更新应用身份不匹配');
-  if(await ports.hashTree(input.applicationPath)!==input.treeSha256)throw Error('macOS 更新应用树与已验证安装包不匹配');
+  if(identifier!=='com.linkflow.personal'||version!==input.targetVersion||architectures.length!==1||architectures[0]!=='arm64')throw Error('macOS 外链助手安装标识不匹配');
+  if(await ports.hashTree(input.applicationPath)!==input.treeSha256)throw Error('macOS 外链助手更新文件与已验证安装包不匹配');
 }
 
 async function snapshotTree(root:string):Promise<EntrySnapshot[]>{
-  const rootReal=await files.realpath(root),rootSnapshot=await entryAt(root);if(rootSnapshot.kind!=='directory')throw Error('macOS 更新应用树根目录无效');
+  const rootReal=await files.realpath(root),rootSnapshot=await entryAt(root);if(rootSnapshot.kind!=='directory')throw Error('macOS 外链助手更新目录无效');
   const entries=[rootSnapshot];
   async function walk(directory:string,prefix:string):Promise<void>{
     const children=(await files.readdir(directory,{withFileTypes:true})).map(value=>value.name).sort((a,b)=>Buffer.from(a).compare(Buffer.from(b)));
     for(const name of children){
-      if(entries.length>=maximumEntries)throw Error('macOS 更新应用文件数过多');
+      if(entries.length>=maximumEntries)throw Error('macOS 外链助手更新文件过多');
       const path=join(directory,name),relativePath=prefix?`${prefix}/${name}`:name,entry=await entryAt(path,relativePath);entries.push(entry);
-      if(entry.kind!=='directory'&&entry.nlink!==1)throw Error('macOS 更新应用含有多重硬链接');
+      if(entry.kind!=='directory'&&entry.nlink!==1)throw Error('macOS 外链助手更新文件含有多重硬链接');
       if(entry.kind==='symlink'){
-        const targetReal=await files.realpath(path).catch(()=>undefined);if(!targetReal||!inside(rootReal,targetReal,true))throw Error('macOS 更新应用含有越界符号链接');
+        const targetReal=await files.realpath(path).catch(()=>undefined);if(!targetReal||!inside(rootReal,targetReal,true))throw Error('macOS 外链助手更新文件含有越界符号链接');
       }else if(entry.kind==='directory')await walk(path,relativePath);
     }
   }
@@ -128,25 +128,25 @@ async function snapshotTree(root:string):Promise<EntrySnapshot[]>{
 }
 
 async function assertSnapshotStable(entries:EntrySnapshot[]):Promise<void>{
-  for(const entry of entries)if(!sameEntry(entry,await entryAt(entry.path,entry.relativePath)))throw Error('macOS 更新应用路径在验证期间发生变化');
+  for(const entry of entries)if(!sameEntry(entry,await entryAt(entry.path,entry.relativePath)))throw Error('macOS 外链助手更新路径在验证期间发生变化');
 }
 
 async function withStableEntry<T>(entry:EntrySnapshot,action:(descriptor:number)=>Promise<T>):Promise<T>{
-  const symbolicLinkFlag=(fsConstants as typeof fsConstants&{O_SYMLINK?:number}).O_SYMLINK;if(entry.kind==='symlink'&&!symbolicLinkFlag)throw Error('当前系统无法安全打开更新应用符号链接');
+  const symbolicLinkFlag=(fsConstants as typeof fsConstants&{O_SYMLINK?:number}).O_SYMLINK;if(entry.kind==='symlink'&&!symbolicLinkFlag)throw Error('当前操作系统无法安全打开外链助手更新文件中的符号链接');
   const flags=entry.kind==='symlink'?symbolicLinkFlag!:fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW|(entry.kind==='directory'?fsConstants.O_DIRECTORY:0),handle=await files.open(entry.path,flags);
-  try{const current=snapshot(entry.path,entry.relativePath,await handle.stat());if(!sameEntry(entry,current)||current.kind!=='directory'&&current.nlink!==1)throw Error('macOS 更新应用路径在处理期间发生变化');return await action(handle.fd)}finally{await handle.close()}
+  try{const current=snapshot(entry.path,entry.relativePath,await handle.stat());if(!sameEntry(entry,current)||current.kind!=='directory'&&current.nlink!==1)throw Error('macOS 外链助手更新路径在处理期间发生变化');return await action(handle.fd)}finally{await handle.close()}
 }
 
 async function hasQuarantine(entry:EntrySnapshot,probe:(descriptor:number,verifiedIdentity:MacQuarantineProbeIdentity)=>Promise<boolean>,verifiedIdentity:MacQuarantineProbeIdentity):Promise<boolean>{return withStableEntry(entry,descriptor=>probe(descriptor,verifiedIdentity))}
 
 async function assertNoQuarantine(entries:EntrySnapshot[],probe:(descriptor:number,verifiedIdentity:MacQuarantineProbeIdentity)=>Promise<boolean>,verifiedIdentity:MacQuarantineProbeIdentity):Promise<void>{
-  for(const entry of entries)if(await hasQuarantine(entry,probe,verifiedIdentity))throw Error('macOS 更新应用仍带有隔离属性');
+  for(const entry of entries)if(await hasQuarantine(entry,probe,verifiedIdentity))throw Error('macOS 外链助手更新文件仍带有隔离属性');
 }
 
 async function applicationPathShape(input:VerifiedMacApplication):Promise<void>{
-  if(!isAbsolute(input.applicationPath)||!isAbsolute(input.executablePath)||!input.applicationPath.endsWith('.app')||!inside(input.applicationPath,input.executablePath)||!/^[a-f0-9]{64}$/.test(input.treeSha256)||!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(input.targetVersion))throw Error('macOS 更新应用参数无效');
+  if(!isAbsolute(input.applicationPath)||!isAbsolute(input.executablePath)||!input.applicationPath.endsWith('.app')||!inside(input.applicationPath,input.executablePath)||!/^[a-f0-9]{64}$/.test(input.treeSha256)||!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(input.targetVersion))throw Error('macOS 外链助手更新参数无效');
   const parent=dirname(input.applicationPath),parentInfo=await entryAt(parent),appInfo=await entryAt(input.applicationPath),parentReal=await files.realpath(parent),appReal=await files.realpath(input.applicationPath);
-  if(parentInfo.kind!=='directory'||appInfo.kind!=='directory'||appReal!==join(parentReal,basename(input.applicationPath)))throw Error('macOS 更新应用不在受控真实路径');
+  if(parentInfo.kind!=='directory'||appInfo.kind!=='directory'||appReal!==join(parentReal,basename(input.applicationPath)))throw Error('macOS 外链助手更新文件不在指定的真实路径');
 }
 
 async function controlledStage(input:VerifiedMacStage):Promise<ControlledStage>{

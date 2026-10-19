@@ -75,7 +75,7 @@ export async function createAgentsGatherDiscussion(input:{taskId:string;requestI
 }
 export async function readAgentsGatherDiscussion(receipt:AgentsGatherReceipt,draft:AgentsGatherDraft,deps:OpenAgentChatDependencies={}){
   const request=agentsGatherRequest(draft,receipt.requestId);
-  if(!validAgentsGatherIntent(receipt)||request.sourceHash!==receipt.sourceHash||request.requestHash!==receipt.requestHash||receipt.publicUrl!==agentsGatherPublicUrl(receipt.postId)||receipt.readUrl!==agentsGatherThreadApi(receipt.postId)||receipt.postReadUrl!==agentsGatherPostApi(receipt.postId))throw Error('Agents Gather 原稿与原始回执不一致');
+  if(!validAgentsGatherIntent(receipt)||request.sourceHash!==receipt.sourceHash||request.requestHash!==receipt.requestHash||receipt.publicUrl!==agentsGatherPublicUrl(receipt.postId)||receipt.readUrl!==agentsGatherThreadApi(receipt.postId)||receipt.postReadUrl!==agentsGatherPostApi(receipt.postId))throw Error('Agents Gather 原稿与原始记录不一致');
   return parseAgentsGatherAnonymousPost(await readOpenAgentChatJson(agentsGatherPostApi(receipt.postId),undefined,deps),receipt,draft);
 }
 

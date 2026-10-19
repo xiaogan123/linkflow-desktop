@@ -5,6 +5,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {load} from 'cheerio';
 import {emptyState} from '../src/main/store';
 import {TaskCenter} from '../src/ui/pages/TaskCenter';
+import {TaskCard} from '../src/ui/App';
 import type {ArticleReviewReasonCode,Channel,Site,Snapshot,Task} from '../src/shared/types';
 import {articleReviewDetail,articleReviewTitle,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,channelReadinessForDisplay,draftStatusLabel,isUserActionTask,taskCanManuallyRecoverNostr,taskHasAutomaticFollowup,taskMessageForDisplay,taskPresentation,taskReservesPlanningSlot,taskResultStatusLabel,taskSortRank,taskWorkKind} from '../src/ui/presentation';
 
@@ -14,22 +15,28 @@ const channel=(id:string,automation:Channel['automation'],accountRequired=true):
 const task=(status:Task['status']='queued'):Task=>({id:'task-1',siteId:site.id,channelId:'telegraph',sourceDomain:'telegra.ph',status,createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'fixture'});
 const failedReview=(reasonCode:ArticleReviewReasonCode)=>({status:'failed' as const,reason:'fixture failure',reasonCode,reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)});
 
+const renderTaskCard=(value:Task,siteReady=true)=>load(renderToStaticMarkup(React.createElement(TaskCard,{
+  task:value,channel:channel(value.channelId,'api',false),now:new Date(stamp),selected:true,onSelect:()=>{},
+  onAction:async()=>{},onDraft:()=>{},onUrl:()=>{},demo:false,reviewMode:'ai',siteReady,
+})));
+
+
 test('passed AI review waits for its future schedule without resembling a fresh review or active publication',()=>{
   const passed:Task={...task('queued'),checkpoint:'article_review',scheduledAt:'2026-10-04T00:00:00.000Z',draftRevision:1,draft:{title:'Scheduled article',description:'Fixture',body:'Fixture body'},articleReview:{status:'passed',reason:'fixture approval',reasonCode:'passed',reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
-  assert.equal(taskPresentation(passed,'ai').label,'已审核，等待计划复核');
-  assert.equal(articleReviewTitle(passed,'ai'),'已有 AI 审核记录，等待计划复核');
-  assert.equal(draftStatusLabel(passed,'ai'),'已审核 · 等待计划复核');
+  assert.equal(taskPresentation(passed,'ai').label,'已审核，等待发布前检查');
+  assert.equal(articleReviewTitle(passed,'ai'),'已有 AI 复核记录，等待发布前检查');
+  assert.equal(draftStatusLabel(passed,'ai'),'已审核 · 等待发布前检查');
   const publishing={...passed,status:'running' as const};
   assert.equal(taskPresentation(publishing,'ai').label,'审核通过，发布中');
-  assert.equal(articleReviewTitle(publishing,'ai'),'AI 审核通过，正在继续发布');
+  assert.equal(articleReviewTitle(publishing,'ai'),'AI 复核通过，正在继续发布');
   const needsReview={...passed,articleReview:undefined};
-  assert.equal(taskPresentation(needsReview,'ai').label,'等待 AI 审核');
-  assert.equal(articleReviewTitle(needsReview,'ai'),'稿件等待独立 AI 审核');
+  assert.equal(taskPresentation(needsReview,'ai').label,'等待 AI 复核');
+  assert.equal(articleReviewTitle(needsReview,'ai'),'等待 AI 复核');
 });
 
 test('a consumed migration recovery does not display its stale automatic-repair promise',()=>{
   const consumed:Task={...task('failed'),checkpoint:'site_origin_migration_recovery_consumed',message:'独立审核发现可修订内容，AI 将自动修稿一次并重新审核。 一次性网站迁移恢复已结束；累计记录保留，不会再次自动恢复或重置重试次数。'};
-  assert.equal(taskMessageForDisplay(consumed),'独立审核发现可修订内容；自动修稿已停止。 一次性网站迁移恢复已结束；累计记录保留，不会再次自动恢复或重置重试次数。');
+  assert.equal(taskMessageForDisplay(consumed),'AI 复核发现可修改内容；自动改稿已停止。 一次性网站迁移恢复已结束；累计记录保留，不会再次自动恢复或重置重试次数。');
 });
 
 test('draft caption reports saved publication result even after the AI channel is disabled',()=>{
@@ -38,50 +45,52 @@ test('draft caption reports saved publication result even after the AI channel i
   assert.equal(draftStatusLabel(published,'ai',false),'已发布 · 当前有效');
   assert.equal(draftStatusLabel({...published,health:'unknown'},'ai',false),'已发布 · 待重新确认');
   assert.equal(draftStatusLabel({...published,status:'expired'},'ai',false),'曾发布 · 当前待复核');
-  assert.equal(draftStatusLabel({...published,status:'review',firstLiveAt:undefined},'ai',false),'已有公开地址 · 等待核验');
+  assert.equal(draftStatusLabel({...published,status:'review',firstLiveAt:undefined},'ai',false),'已有公开地址 · 等待检查链接');
   const awaiting={...task('queued'),draft:published.draft,articleReview:published.articleReview};
-  assert.equal(draftStatusLabel(awaiting,'ai',false),'待独立 AI 审核');
+  assert.equal(draftStatusLabel(awaiting,'ai',false),'等待 AI 复核');
 });
 
 test('a submitted Nostr event is shown as awaiting result rather than awaiting another AI review',()=>{
   const submitted:Task={...task('needs_input'),channelId:'nostr',sourceDomain:'njump.me',submittedAt:stamp,checkpoint:'nostr_publish_submitting',reconcileAttempts:3,nostr:{pubkey:'1'.repeat(64),eventId:'2'.repeat(64),identifier:'linkflow-synthetic',contentHash:'3'.repeat(64),createdAt:1_797_120_000,stage:'submitting'},draft:{title:'Synthetic',description:'Synthetic',body:'Synthetic body'},articleReview:{status:'passed',reason:'fixture',reasonCode:'passed',reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)}};
-  assert.equal(draftStatusLabel(submitted,'ai'),'已提交 · 结果待核验');
-  assert.equal(taskResultStatusLabel(submitted),'已提交 · 结果待核验');
+  assert.equal(draftStatusLabel(submitted,'ai'),'已提交 · 等待检查链接');
+  assert.equal(taskResultStatusLabel(submitted),'已提交 · 等待检查链接');
   assert.equal(draftStatusLabel({...submitted,status:'live',firstLiveAt:stamp,publicUrl:'https://njump.me/naddr1synthetic',nostr:{...submitted.nostr!,stage:'published'}},'ai'),'已发布 · 当前有效');
   const registrationOnly:Task={...task('needs_input'),channelId:'nostr',checkpoint:'account_registration_submitted',draft:submitted.draft,articleReview:submitted.articleReview};
-  assert.equal(draftStatusLabel(registrationOnly,'ai'),'待独立 AI 审核');
+  assert.equal(draftStatusLabel(registrationOnly,'ai'),'等待 AI 复核');
   assert.equal(taskResultStatusLabel(registrationOnly),'等待发布');
   assert.equal(taskCanManuallyRecoverNostr(submitted,true,true),true);
   assert.equal(taskCanManuallyRecoverNostr(submitted,false,true),false);
   assert.equal(taskCanManuallyRecoverNostr(submitted,true,false),false);
-  const data:Snapshot={...emptyState(),sites:[site],tasks:[submitted],channels:[channel('nostr','api')],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
-  const ready=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,status:'all',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
-  assert.equal(ready('[aria-label="只读核验原 Nostr 事件"]').attr('disabled'),undefined);
-  const paused=load(renderToStaticMarkup(React.createElement(TaskCenter,{data:{...data,sites:[{...site,status:'paused'}]},disabled:false,status:'all',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
-  assert.notEqual(paused('[aria-label="核验公开链接"]').attr('disabled'),undefined);
+  const ready=renderTaskCard(submitted);
+  const originalCheck=ready('button').filter((_,element)=>ready(element).text()==='检查原事件');
+  assert.equal(originalCheck.length,1);
+  assert.equal(originalCheck.attr('disabled'),undefined);
+  const paused=renderTaskCard(submitted,false);
+  const disabledCheck=paused('button').filter((_,element)=>paused(element).text()==='检查链接');
+  assert.equal(disabledCheck.length,1);
+  assert.notEqual(disabledCheck.attr('disabled'),undefined);
 });
 
 test('a skipped unknown publication remains deferred without hiding the unknown external result',()=>{
   const unknown:Task={...task('skipped'),channelId:'betterthanhtml',sourceDomain:'betterthanhtml.com',submittedAt:stamp,checkpoint:'betterthanhtml_publish_submitting',reconcileAttempts:3,betterthanhtml:{contentHash:'a'.repeat(64),id:'synthetic-workshop',stage:'submitting'},publicUrl:'https://betterthanhtml.com/workshop/synthetic-workshop',deferredAt:stamp};
   assert.equal(taskWorkKind(unknown,'ai'),'deferred');
-  assert.equal(taskPresentation(unknown,'ai').label,'已搁置 · 结果未知');
-  assert.equal(draftStatusLabel(unknown,'ai'),'已搁置 · 结果未知');
+  assert.equal(taskPresentation(unknown,'ai').label,'没做成 · 结果待确认');
+  assert.equal(draftStatusLabel(unknown,'ai'),'没做成 · 结果待确认');
   assert.equal(isUserActionTask(unknown,'ai'),false);
   assert.equal(canRetryTaskManually(unknown,'ai'),false);
   assert.equal(canResumeDeferredTask(unknown),false);
   const registrationOnly:Task={...task('skipped'),checkpoint:'account_registration_submitted',submittedAt:undefined,deferredAt:stamp};
-  assert.equal(taskPresentation(registrationOnly,'ai').label,'已搁置');
+  assert.equal(taskPresentation(registrationOnly,'ai').label,'没做成');
 });
 
-test('the restored needs-input review exposes only the explicit one-shot action at call 6',()=>{
-  const retry:Task={...task('needs_input'),checkpoint:'article_review',draftRevision:3,draft:{title:'Synthetic retry',description:'Synthetic summary',body:'Synthetic article body.'},cost:{aiCalls:6},articleReview:{...failedReview('passed'),draftRevision:3}};
+test('the restored needs-input review exposes only the explicit one-shot action at call 2',()=>{
+  const retry:Task={...task('needs_input'),checkpoint:'article_review',draftRevision:3,draft:{title:'Synthetic retry',description:'Synthetic summary',body:'Synthetic article body.'},cost:{aiCalls:2},articleReview:{...failedReview('passed'),draftRevision:3}};
   assert.equal(canUseOneReviewRetry(retry,'ai',true),true);
   assert.equal(canRestartArticleReview(retry,'ai',true),false);
   assert.match(articleReviewDetail(retry,'ai',true),/明确确认.*唯一一次/);
-  const data:Snapshot={...emptyState(),sites:[site],tasks:[retry],channels:[channel('telegraph','api',false)],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
-  const $=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,status:'all',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
-  assert.equal($('[aria-label="追加 1 次 AI 审核"]').length,1);
-  assert.equal($('button').filter((_,element)=>$(element).text().includes('重新 AI 核对')).length,0);
+  const $=renderTaskCard(retry);
+  assert.equal($('button').filter((_,element)=>$(element).text()==='追加 1 次 AI 复核').length,1);
+  assert.equal($('button').filter((_,element)=>$(element).text()==='重新 AI 复核').length,0);
   assert.equal(canUseOneReviewRetry({...retry,oneReviewRetry:{version:1,purpose:'independent_article_review',operationTokenHash:'a'.repeat(64),grantedAt:stamp,siteId:retry.siteId,channelId:retry.channelId,accountId:null,draftRevision:3,contentHash:'b'.repeat(64),contextHash:'c'.repeat(64),provider:'codex',model:'fixture',status:'invalidated',invalidatedAt:stamp,invalidationReason:'request_not_started'}},'ai',true),false);
 });
 
@@ -101,14 +110,12 @@ test('Docs MD unknown submission without a receipt is stopped without becoming a
   const receipt:Task={...unknown,status:'needs_input',checkpoint:'docs_md_api_receipt',publicUrl:'https://docs-md.com/fixture-article',docsMd:{...unknown.docsMd!,stage:'api_receipt',id:'fixture-article'},reconcileAfter:stamp};
   assert.equal(taskPresentation(receipt,'ai').label,'自动查询发布结果');
   assert.equal(taskHasAutomaticFollowup(receipt),true);
-  assert.equal(draftStatusLabel(receipt,'ai'),'已有公开地址 · 等待核验');
+  assert.equal(draftStatusLabel(receipt,'ai'),'已有公开地址 · 等待检查链接');
   const data:Snapshot={...emptyState(),sites:[site],tasks:[unknown],channels:[{...channel('docs-md','api',false),enabled:false}],runtime:{busy:false,aiReady:true,vaultReady:true,mailReady:false,version:'fixture',platform:'fixture',dataPath:'fixture',aiCallsToday:0}};
   const $=load(renderToStaticMarkup(React.createElement(TaskCenter,{data,disabled:false,status:'active',onStatusChange:()=>{},onAction:async()=>undefined,onEditDraft:()=>{},onSetUrl:()=>{},onSite:()=>{}})));
-  const metrics=Object.fromEntries($('.task-kpi').map((_,el)=>[$(el).find('small').text()+'='+$(el).find('strong').text()]).get().map(value=>value.split('=')));
-  assert.equal(metrics['系统推进'],'0');
-  assert.equal(metrics['需要你处理'],'0');
-  assert.equal(metrics['等待渠道'],'1');
-  assert.equal(metrics['当前有效'],'0');
+  assert.equal($('.todo-card').length,0);
+  assert.match($('.page-heading').text(),/没有要你处理的事/);
+  assert.match($('.todo-page').text(),/没有要你处理的事。外链助手会按计划自动发布。/);
 });
 
 test('terminal invalid topic has a precise label without offering a generic paid retry',()=>{
@@ -117,7 +124,7 @@ test('terminal invalid topic has a precise label without offering a generic paid
   assert.equal(isUserActionTask(invalid,'ai'),false);
   assert.equal(canRetryTaskManually(invalid,'ai'),false);
   const stopped={...invalid,checkpoint:'topic_recovery_budget'};
-  assert.equal(taskPresentation(stopped,'ai').label,'自动处理额度不足');
+  assert.equal(taskPresentation(stopped,'ai').label,'AI 次数用完了');
   assert.equal(isUserActionTask(stopped,'ai'),false);
   assert.equal(canRetryTaskManually(stopped,'ai'),false);
 });
@@ -130,7 +137,7 @@ test('policy and evidence dispositions never become human review labels',()=>{
     assert.equal(canRestartArticleReview(value,'ai'),false,reasonCode);
   }
   const policy={...task('failed'),checkpoint:'channel_wait',articleReview:failedReview('policy_not_found')};
-  assert.equal(taskPresentation(policy,'ai').label,'等待渠道许可证据');
+  assert.equal(taskPresentation(policy,'ai').label,'等待平台条款资料');
   assert.match(articleReviewDetail(policy,'ai'),/新证据/);
   assert.doesNotMatch(articleReviewDetail(policy,'ai'),/决定|例外/);
 });
@@ -138,8 +145,8 @@ test('policy and evidence dispositions never become human review labels',()=>{
 test('temporary review failures are system work before and after retry exhaustion',()=>{
   const queued={...task('queued'),checkpoint:'article_review',articleReview:failedReview('evidence_fetch_failed')};
   const exhausted={...queued,status:'failed' as const,checkpoint:'system_wait'};
-  assert.deepEqual([taskPresentation(queued,'ai').kind,taskPresentation(queued,'ai').label],['system_retry','系统将自动重试']);
-  assert.deepEqual([taskPresentation(exhausted,'ai').kind,taskPresentation(exhausted,'ai').label],['system_retry','系统处理已暂停']);
+  assert.deepEqual([taskPresentation(queued,'ai').kind,taskPresentation(queued,'ai').label],['system_retry','外链助手会重试']);
+  assert.deepEqual([taskPresentation(exhausted,'ai').kind,taskPresentation(exhausted,'ai').label],['system_retry','自动处理已停止']);
   assert.equal(isUserActionTask(exhausted,'ai'),false);
   assert.equal(taskHasAutomaticFollowup(exhausted),false);
   assert.equal(taskHasAutomaticFollowup(queued),true);
@@ -204,7 +211,7 @@ test('slot presentation matches submitted and non-submitted handoff behavior',()
 
 test('historical approval and terminated generation do not imply current authorization or an existing draft',()=>{
   const oldPassed:Task={...task('queued'),checkpoint:'article_review',draftRevision:2,articleReview:{...failedReview('passed'),status:'passed',draftRevision:1}};
-  assert.equal(taskPresentation(oldPassed,'ai').label,'已审核，等待计划复核');
+  assert.equal(taskPresentation(oldPassed,'ai').label,'已审核，等待发布前检查');
   assert.match(articleReviewDetail(oldPassed,'ai'),/必要时重新审核/);
   assert.doesNotMatch(articleReviewDetail(oldPassed,'ai'),/将在计划时间进入发布/);
   const noDraft:Task={...task('failed'),checkpoint:'site_origin_migration_recovery_consumed',message:'来源抓取失败；没有生成新稿。'};

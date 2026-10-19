@@ -3,7 +3,9 @@ import {pstrsTopLevelKeys} from './pstrs';
 
 export const TXTSBS_ORIGIN='https://txt.sbs';
 export const TXTSBS_CREATE_URL=`${TXTSBS_ORIGIN}/publish.php`;
-export const TXTSBS_AUTHOR='AI assistant involved in Linkflow development';
+/** Kept only for exact readback of submissions made by older versions. */
+export const TXTSBS_AUTHOR='Site publishing assistant';
+export function txtsbsSiteAuthor(site:{name:string}):string{return site.name.replace(/[\r\n<>\u0000-\u001f]/g,' ').replace(/\s+/g,' ').trim().slice(0,120)}
 export const TXTSBS_MAX_CONTENT_BYTES=120_000;
 export const TXTSBS_MAX_RESPONSE_BYTES=256*1024;
 export const TXTSBS_MAX_HTML_BYTES=2_000_000;
@@ -34,7 +36,7 @@ export const txtsbsHash=(value:string|Uint8Array)=>createHash('sha256').update(v
 export function trackTxtSbsPendingOperation<T>(pending:Promise<T>):Promise<T>{let tracked:Promise<T>;tracked=Promise.resolve(pending).then(value=>{pendingOperations.delete(tracked);return value},error=>{pendingOperations.delete(tracked);throw error});pendingOperations.add(tracked);return tracked}
 export async function drainTxtSbsPendingOperations(timeoutMs=30_000):Promise<boolean>{const deadline=Date.now()+Math.max(0,timeoutMs);while(pendingOperations.size&&Date.now()<deadline)await Promise.race([Promise.allSettled([...pendingOperations]),new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(100,deadline-Date.now()))))]);return pendingOperations.size===0}
 export function txtsbsPendingOperationCount(){return pendingOperations.size}
-export function txtsbsPublicUrl(id:string){if(!TXTSBS_ID.test(id))throw Error('txt.sbs 页面身份无效');return `${TXTSBS_ORIGIN}/${id}`}
+export function txtsbsPublicUrl(id:string){if(!TXTSBS_ID.test(id))throw Error('txt.sbs 页面标识无效');return `${TXTSBS_ORIGIN}/${id}`}
 export function txtsbsRequest(article:TxtSbsArticle){
   const body=new URLSearchParams({title:article.title,content:article.content,author:article.author,show_date:String(article.showDate),abstract:article.abstract,ajax:'1',show_serp:String(article.showSerp)}).toString();
   const source=JSON.stringify([article.title,article.abstract,article.author,article.content,article.showDate,article.showSerp]);
@@ -70,10 +72,10 @@ async function bounded(response:Response,signal:AbortSignal){const declared=resp
 function opaqueFrom(response:Response,bytes:Uint8Array,intent:TxtSbsIntent,now:()=>Date,bodyComplete=true):TxtSbsOpaqueResponse{return {...intent,version:1,kind:'txtsbs_opaque_response',capturedAt:now().toISOString(),status:response.status,contentType:response.headers.get('content-type')??'',responseUrl:response.url,redirected:response.redirected,responseType:response.type,bodyBase64:Buffer.from(bytes).toString('base64'),bodySha256:txtsbsHash(bytes),bodyComplete}}
 
 export async function createTxtSbsPage(input:{operationId:string;article:TxtSbsArticle;reviewed:true},persistence:TxtSbsPersistence,deps:TxtSbsDependencies={}):Promise<TxtSbsCreateResult>{
-  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('txt.sbs 缺少已审核的单次发布身份');if(deps.signal?.aborted)return {status:'not_started',reason:'authorization_changed'};
+  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('txt.sbs 缺少已审核的单次发布编号');if(deps.signal?.aborted)return {status:'not_started',reason:'authorization_changed'};
   const article=input.article,request=txtsbsRequest(article),validUtf8=(value:string,max:number)=>Buffer.from(value,'utf8').toString('utf8')===value&&Buffer.byteLength(value,'utf8')<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value),trimmed=(value:string,max:number)=>value===value.trim()&&validUtf8(value,max);
   if(!article.title||![...article.title].length||[...article.title].length>200||!trimmed(article.title,1000)||!trimmed(article.abstract,4000)||!article.author||[...article.author].length>120||!trimmed(article.author,1000)||!article.content.trim()||!validUtf8(article.content,TXTSBS_MAX_CONTENT_BYTES)||article.showDate!==true||article.showSerp!==true)return {status:'not_started',reason:'invalid_content'};
-  const now=deps.now??(()=>new Date()),intent:TxtSbsIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:now().toISOString()};if(!validTxtSbsIntent(intent))throw Error('txt.sbs 发布身份无效');
+  const now=deps.now??(()=>new Date()),intent:TxtSbsIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:now().toISOString()};if(!validTxtSbsIntent(intent))throw Error('txt.sbs 提交信息无效');
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   if(deps.signal?.aborted)return {status:'unknown',intent,diagnostic:'transport',opaqueResponseSaved:false};const controller=new AbortController(),external=()=>controller.abort();deps.signal?.addEventListener('abort',external,{once:true});if(deps.signal?.aborted)controller.abort();const timeout=Math.min(60_000,Math.max(50,deps.timeoutMs??25_000)),timer=setTimeout(()=>controller.abort(),timeout);timer.unref?.();let response:Response|undefined,responseBytes:Uint8Array|undefined;
   const preserve=async(value:Response)=>{let captured:Uint8Array|undefined;try{const late=new AbortController(),lateTimer=setTimeout(()=>late.abort(),timeout);lateTimer.unref?.();try{captured=await bounded(value,late.signal);await persistence.persistOpaqueResponse(opaqueFrom(value,captured,intent,now))}finally{clearTimeout(lateTimer)}}catch(error){try{await persistence.persistOpaqueResponse(opaqueFrom(value,error instanceof BodyReadError?error.bytes:new Uint8Array(),intent,now,false))}catch{}discard(value)}};

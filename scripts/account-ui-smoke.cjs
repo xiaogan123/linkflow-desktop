@@ -66,7 +66,7 @@ if(!process.versions.electron){
     'github-password':'github-password-original',
   };
   const actions=[];
-  const clone=value=>JSON.parse(JSON.stringify(value));
+  const clone=value=>value===undefined?undefined:JSON.parse(JSON.stringify(value));
   const replaceBindings=payload=>{
     const account=state.accounts.find(item=>item.id===payload.accountId);
     if(!account)throw new Error('fixture account missing');
@@ -78,6 +78,8 @@ if(!process.versions.electron){
   };
   ipcMain.handle('fixture',(_event,name,payload)=>{
     if(name==='snapshot')return clone(state);
+    // The renderer acknowledges its first snapshot once; main answers true.
+    if(name==='app:ready')return true;
     if(name==='app:update-status')return {phase:'idle',currentVersion:'1.2.29'};
     actions.push({name,payload:clone(payload)});
     if(name==='account:resend-shiply-code'){
@@ -125,24 +127,36 @@ if(!process.versions.electron){
     win=new BrowserWindow({width:1180,height:760,useContentSize:true,show:false,webPreferences:{preload:join(dir,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
     await win.loadFile(join(dir,'index.html'));
     await waitFor('document.body.innerText.includes("owner.example")');
-    await clickText('账号');
+    await clickText('平台与账号');
+    await waitFor('!!document.querySelector("[role=group][aria-label=\\"平台与账号\\"] button[aria-pressed]")');
+    await clickText('我的账号');
     await waitFor('document.body.innerText.includes("telegraph-author")');
+    check('account management is the 我的账号 tab of the 平台与账号 page',await evaluate(`(()=>{const nav=document.querySelector('button.nav-item[aria-current=page]'),tabs=[...document.querySelectorAll('[role=group][aria-label="平台与账号"] button')];return nav?.innerText.trim()==='平台与账号'&&tabs.find(item=>item.innerText.trim()==='我的账号')?.getAttribute('aria-pressed')==='true'&&tabs.find(item=>item.innerText.trim()==='平台')?.getAttribute('aria-pressed')==='false'})()`));
 
-    check('accounts page explains automatic Telegraph identities and offers the guided account entry',await evaluate(`(()=>{const row=[...document.querySelectorAll('.connection-overview-row')].find(item=>item.querySelector('strong')?.textContent==='Telegraph');return row?.textContent.includes('任务需要时自动建立作者身份')&&row.textContent.includes('任务自动准备')&&row.textContent.includes('无需预先注册')&&row.querySelectorAll('button').length===0&&[...document.querySelectorAll('button')].some(button=>button.innerText.trim()==='添加 / 连接账号')})()`));
-    check('Telegraph API identity is identified as task-created',await evaluate('document.body.innerText.includes("任务自动创建的 API 身份")'));
+    // The always-visible connection summary moved into the guided "连接账号" drawer: Telegraph is explained there.
+    check('accounts tab offers the guided account entry',await evaluate(`[...document.querySelectorAll('button')].some(button=>button.innerText.trim()==='连接账号'&&!button.disabled)`));
+    await clickText('连接账号');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="添加或连接账号"');
+    const telegraphOption=await evaluate(`(()=>{const option=[...document.querySelectorAll('[role=dialog] [role=listbox] [role=option]')].find(item=>item.querySelector('strong')?.textContent==='Telegraph');if(!option)return null;option.click();return option.querySelector('small')?.textContent??''})()`);
+    check('guided entry lists Telegraph as prepared automatically by tasks',typeof telegraphOption==='string'&&telegraphOption.includes('任务自动准备'));
+    await waitFor('!!document.querySelector("[role=dialog] .platform-selection")');
+    check('guided entry explains automatic Telegraph accounts and offers no connect action',await evaluate(`(()=>{const section=document.querySelector('[role=dialog] .platform-selection');return section?.querySelector('h3')?.textContent==='Telegraph'&&section.textContent.includes('任务自动准备')&&section.textContent.includes('任务需要时自动建立发布账号')&&section.textContent.includes('无需导入账号')&&section.querySelectorAll('button').length===0})()`));
+    await evaluate(`document.querySelector('[role=dialog][aria-label="添加或连接账号"] button[aria-label="关闭"]').click()`);
+    await waitFor('!document.querySelector("[role=dialog]")');
+    check('Telegraph API identity is identified as task-created',await evaluate(`[...document.querySelectorAll('.accounts-table tbody tr')].some(row=>row.textContent.includes('telegraph-author')&&row.textContent.includes('任务自动创建的 API 发布账号'))`));
     check('API identities never expose the password reveal action',await evaluate('!document.querySelector("button[aria-label=\\"查看 telegraph-author 的密码\\"]")&&!document.querySelector("button[aria-label=\\"查看 gist-owner 的密码\\"]")'));
     check('ordinary password account keeps its reveal action',await evaluate('!!document.querySelector("button[aria-label=\\"查看 github-user 的密码\\"]")'));
 
-    await clickLabel('查看 shiply-owner 的 Shiply 身份');
-    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接 Shiply.now 邮箱身份"');
-    check('an expired later Shiply code exposes another explicit same-identity renewal',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]'),button=[...dialog.querySelectorAll('button')].find(item=>item.innerText.trim()==='为原身份请求新验证码');return dialog.innerText.includes('当前验证码已明确过期；可为同一身份手动请求新验证码。')&&!!button&&!button.disabled})()`));
-    await clickText('为原身份请求新验证码');
+    await clickLabel('查看 shiply-owner 的 Shiply 发布账号');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="连接 Shiply.now 邮箱发布账号"');
+    check('an expired later Shiply code exposes another explicit same-identity renewal',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]'),button=[...dialog.querySelectorAll('button')].find(item=>item.innerText.trim()==='为原发布账号请求新验证码');return dialog.innerText.includes('当前验证码已明确过期；可为同一发布账号手动请求新验证码。')&&!!button&&!button.disabled})()`));
+    await clickText('为原发布账号请求新验证码');
     const shiplyRenewal=actions.findLast(item=>item.name==='account:resend-shiply-code');
     check('Shiply renewal sends only the existing account id',shiplyRenewal?.payload.accountId==='shiply-pending'&&Object.keys(shiplyRenewal.payload).join(',')==='accountId');
-    check('the fresh Shiply code hides another renewal until it expires',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return ![...dialog.querySelectorAll('button')].some(item=>item.innerText.trim()==='为原身份请求新验证码')&&!dialog.innerText.includes('当前验证码已明确过期')})()`));
+    check('the fresh Shiply code hides another renewal until it expires',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return ![...dialog.querySelectorAll('button')].some(item=>item.innerText.trim()==='为原发布账号请求新验证码')&&!dialog.innerText.includes('当前验证码已明确过期')})()`));
     await clickText('关闭');
 
-    await clickText('添加 / 连接账号');
+    await clickText('连接账号');
     await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="添加或连接账号"');
     await clickText('导入普通账号');
     await waitFor('!!document.querySelector("[role=dialog] select")');
@@ -151,7 +165,7 @@ if(!process.versions.electron){
     check('import list excludes Gist and Telegraph API identities',initial.options.map(option=>option.value).join(',')===',product-hunt,github');
     await setSelect('[role=dialog] select','github');
     await clickText('取消');
-    await clickText('添加 / 连接账号');
+    await clickText('连接账号');
     await clickText('导入普通账号');
     const reopened=await evaluate(`(()=>{const select=document.querySelector('[role=dialog] select');return {value:select.value,label:select.selectedOptions[0]?.textContent}})()`);
     check('cancel and reopen resets to no selected platform',reopened.value===''&&reopened.label==='先选择平台');
@@ -168,12 +182,12 @@ if(!process.versions.electron){
     const telegraphCredentialBefore=storedCredentials['telegraph-api'];
     const telegraphBefore=clone(state.accounts.find(item=>item.id==='telegraph-api'));
     const telegraphSaveCount=actions.filter(item=>item.name==='account:save'&&item.payload.id==='telegraph-api').length;
-    await clickLabel('绑定 telegraph-author');
-    await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("编辑身份绑定")');
+    await clickLabel('用于 telegraph-author');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="编辑发布账号设置"');
     const telegraphDialog=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');return {text:dialog.innerText,passwords:dialog.querySelectorAll('input[type=password]').length,emails:dialog.querySelectorAll('input[type=email]').length,channelOptions:[...dialog.querySelectorAll('option')].map(option=>option.value)}})()`);
-    check('Telegraph edit is binding-only with no password or login fields',telegraphDialog.passwords===0&&telegraphDialog.emails===0&&telegraphDialog.text.includes('此处只管理网站与收件箱绑定')&&telegraphDialog.text.includes('不会覆盖已保存的凭据')&&telegraphDialog.text.includes('保存绑定不代表平台当前可发布'));
+    check('Telegraph edit is binding-only with no password or login fields',telegraphDialog.passwords===0&&telegraphDialog.emails===0&&telegraphDialog.text.includes('此处只管理网站与收件箱关联')&&telegraphDialog.text.includes('不会覆盖已保存的密钥')&&telegraphDialog.text.includes('保存关联不代表平台当前可发布'));
     check('Telegraph binding dialog has no account channel choices',!telegraphDialog.channelOptions.includes('telegraph')&&!telegraphDialog.channelOptions.includes('product-hunt'));
-    await clickText('保存绑定');
+    await clickText('保存关联');
     await waitFor('!document.querySelector("[role=dialog]")');
     const telegraphBinding=actions.findLast(item=>item.name==='account:set-bindings'&&item.payload.accountId==='telegraph-api');
     const telegraphAfter=state.accounts.find(item=>item.id==='telegraph-api');
@@ -182,13 +196,13 @@ if(!process.versions.electron){
     check('stored Telegraph API credential and identity remain unchanged',storedCredentials['telegraph-api']===telegraphCredentialBefore&&telegraphAfter.credentialKind===telegraphBefore.credentialKind&&telegraphAfter.username===telegraphBefore.username&&telegraphAfter.channelId===telegraphBefore.channelId);
 
     await clickLabel('更新 gist-owner');
-    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="更新 GitHub Gist 身份"');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="更新 GitHub Gist 发布账号"');
     check('Gist retains its dedicated token connection flow',await evaluate('document.querySelector("[role=dialog]").innerText.includes("Gists 读写令牌")&&document.querySelector("[role=dialog] input[type=password]")!==null'));
     await clickText('取消');
 
     const normalCredentialBefore=storedCredentials['github-password'];
     await clickLabel('更新 github-user');
-    await waitFor('document.querySelector("[role=dialog]")?.innerText.includes("编辑账号与绑定")');
+    await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="编辑账号与关联"');
     const normalDialog=await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');const channel=dialog.querySelector('select');return {channel:channel?.value,email:dialog.querySelector('input[type=email]')?.value,hasPassword:!!dialog.querySelector('input[type=password]')}})()`);
     check('ordinary password account keeps editable login fields',normalDialog.channel==='github'&&normalDialog.email==='login@example.com'&&normalDialog.hasPassword);
     await clickText('保存账号');

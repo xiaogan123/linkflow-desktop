@@ -5,8 +5,9 @@ import { inspectRenderedArticle } from './article-rendering';
 import { applyDeclaredArticleVisibility, styleConcealsArticle } from './article-visibility';
 import { normalizePublicUrl } from './web';
 import { articleReviewStillValid } from '../main/article-review';
+import {publicIdentitySlug} from './public-identity';
 import type {
-  Account, ExecutionContext, ExecutionResult, LinkResult, SecretStore, Task, WordPressReceipt,
+  Account, ExecutionContext, ExecutionResult, LinkResult, SecretStore, Site, Task, WordPressReceipt,
 } from '../shared/types';
 export type { WordPressReceipt } from '../shared/types';
 
@@ -21,11 +22,17 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const BLOG_ID = /^[1-9][0-9]{0,19}$/;
 const POST_ID = /^[1-9][0-9]{0,19}$/;
 const HASH = /^[a-f0-9]{64}$/;
-const SLUG = /^lf-[a-z0-9]{1,32}-[a-f0-9]{12}$/;
+const SLUG = /^(?:lf-[a-z0-9]{1,32}-[a-f0-9]{12}|[a-z0-9](?:[a-z0-9-]{2,39}))$/;
 const SAFE_ELEMENTS = new Set([
   'a', 'blockquote', 'br', 'code', 'del', 'em', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p',
   'pre', 'strong', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'ul',
 ]);
+const WORDPRESS_VERIFY_MESSAGES={
+  local:'WordPress.com 本地缺少可核对的原稿或已发布记录；未判断平台失败',
+  absent:'WordPress.com 原发布 slug 已由匿名接口确认不存在',
+  unavailable:'WordPress.com 匿名 API 或公开页暂时无法检查',
+  invalid:'WordPress.com 公开内容、作者、网址或可见性与原记录不一致',
+} as const;
 
 type JsonObject = Record<string, unknown>;
 type WordPressTask = Task & { wordpress?: WordPressReceipt };
@@ -146,7 +153,7 @@ function canonicalTarget(value: string): string {
     const url = normalizePublicUrl(value);
     if (url.protocol !== 'https:') throw Error('invalid');
     return url.toString();
-  } catch { throw new Error('WordPress.com 全文目标必须是不含凭据的公开 HTTPS 网址'); }
+  } catch { throw new Error('WordPress.com 全文目标必须是不含账号密码的公开 HTTPS 网址'); }
 }
 
 function canonicalLink(value: string): string {
@@ -187,18 +194,19 @@ function safeArticleHtml(markdown: string): { html: string; links: string[] } {
   return { html: $.html(), links };
 }
 
-export function wordpressPostSlug(taskId: string, contentHash: string): string {
+export function wordpressPostSlug(taskId: string, contentHash: string, site?:Pick<Site,'name'|'domain'|'url'>): string {
   if (!HASH.test(contentHash)) throw new WordPressError('invalid_response');
+  if(site)return publicIdentitySlug(site,`${taskId}\u0000${contentHash}`,40);
   const normalized = taskId.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32)
     || sha(taskId).slice(0, 32);
   return `lf-${normalized}-${contentHash.slice(0, 12)}`;
 }
 
-function approvedArticle(task: Task, siteUrl: string, requireApproval = true): ApprovedArticle {
+function approvedArticle(task: Task, siteUrl: string, requireApproval = true, site?:Pick<Site,'name'|'domain'|'url'>): ApprovedArticle {
   const draft = task.draft;
   const approvedAt = Date.parse(task.articleApprovedAt ?? '');
   if (!draft || requireApproval && !Number.isFinite(approvedAt)) {
-    throw new Error('WordPress.com 全文须先通过当前稿件的独立核对');
+    throw new Error('WordPress.com 全文须先通过当前稿件的 AI 复核');
   }
   if (typeof draft.title !== 'string' || draft.title !== draft.title.trim() || draft.title.length < 1
     || draft.title.length > 200 || /[\u0000-\u001f\u007f<>]/.test(draft.title)) {
@@ -214,11 +222,11 @@ function approvedArticle(task: Task, siteUrl: string, requireApproval = true): A
   const rendered = safeArticleHtml(draft.body);
   const visible = load(rendered.html, undefined, false).root().text().replace(/\s+/g, ' ').trim();
   if (paragraphs.length < 2 || visible.replace(/\s/g, '').length < 200 || !rendered.links.includes(target)) {
-    throw new Error('WordPress.com 需要有独立信息价值的完整文章及已核对目标链接');
+    throw new Error('WordPress.com 需要有独立信息价值的完整文章及已检查目标链接');
   }
   const contentHash = sha(JSON.stringify({ title: draft.title, markdown: draft.body, target }));
   return { title: draft.title, markdown: draft.body, html: rendered.html, target, links: rendered.links,
-    contentHash, slug: wordpressPostSlug(task.id, contentHash) };
+    contentHash, slug: task.wordpress?.slug??wordpressPostSlug(task.id, contentHash, site??{name:'',domain:new URL(siteUrl).hostname,url:siteUrl}) };
 }
 
 function validReceipt(value: unknown): value is WordPressReceipt {
@@ -248,7 +256,7 @@ function validPostUrl(value: unknown, blogRoot?: string, slug?: string): string 
 }
 
 function apiUrl(path: string): URL {
-  if (!/^\/rest\/v1\.1\/(?:me(?:\/sites)?|sites\/[1-9][0-9]{0,19}(?:\/posts\/slug:lf-[a-z0-9]{1,32}-[a-f0-9]{12})?)$/.test(path)
+  if (!/^\/rest\/v1\.1\/(?:me(?:\/sites)?|sites\/[1-9][0-9]{0,19}(?:\/posts\/slug:[a-z0-9][a-z0-9-]{2,39})?)$/.test(path)
     && !/^\/wp\/v2\/sites\/[1-9][0-9]{0,19}\/posts$/.test(path)) throw new WordPressError('invalid_response');
   return new URL(path, API_ORIGIN);
 }
@@ -330,7 +338,7 @@ async function jsonRequest(
   path: string, dependencies: WordPressDependencies, options: { token?: string; method?: 'GET' | 'POST'; body?: JsonObject } = {},
 ): Promise<JsonObject> {
   if (options.token !== undefined && !validToken(options.token)) throw new WordPressError('auth');
-  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Linkflow-Desktop' };
+  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Mozilla/5.0' };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   if (options.body) headers['content-type'] = 'application/json';
   const { response, text } = await request(apiUrl(path), {
@@ -524,7 +532,7 @@ async function readPublicPost(
   const post = parseLegacyPost(raw, receipt.blogId);
   if (!exactRemotePost(post, article, receipt, blogRoot)) throw new WordPressError('invalid_response');
   const publicUrl = new URL(post.url);
-  const { response, text } = await request(publicUrl, { method: 'GET', headers: { accept: 'text/html', 'user-agent': 'Linkflow-Desktop' } },
+  const { response, text } = await request(publicUrl, { method: 'GET', headers: { accept: 'text/html', 'user-agent': 'Mozilla/5.0' } },
     dependencies, MAX_HTML_BYTES);
   if (!response.headers.get('content-type')?.toLowerCase().includes('text/html')) throw new WordPressError('invalid_response');
   const visible = inspectPublicPage(text, response.headers, article, post.url);
@@ -551,27 +559,29 @@ export async function verifyWordPressPublication(
 ): Promise<LinkResult> {
   const saved = (task as WordPressTask).wordpress;
   const fallback = task.publicUrl ?? API_ORIGIN;
+  if (task.channelId !== CHANNEL_ID || task.sourceDomain !== SOURCE_DOMAIN || !validReceipt(saved)
+    || saved.stage !== 'published' || !saved.url || task.publicUrl !== saved.url) {
+    return unavailable(fallback, 'unreachable', WORDPRESS_VERIFY_MESSAGES.local);
+  }
+  let article: ApprovedArticle;
+  try { article = approvedArticle(task, targetSiteUrl, false); }
+  catch { return unavailable(fallback, 'unreachable', WORDPRESS_VERIFY_MESSAGES.local); }
+  if (article.slug !== saved.slug || article.contentHash !== saved.contentHash) {
+    return unavailable(fallback, 'unreachable', WORDPRESS_VERIFY_MESSAGES.local);
+  }
   try {
-    if (task.channelId !== CHANNEL_ID || task.sourceDomain !== SOURCE_DOMAIN || !validReceipt(saved)
-      || saved.stage !== 'published' || !saved.url || task.publicUrl !== saved.url) {
-      return unavailable(fallback, 'invalid', 'WordPress.com 任务缺少一致的已发布回执');
-    }
-    const article = approvedArticle(task, targetSiteUrl, false);
-    if (article.slug !== saved.slug || article.contentHash !== saved.contentHash) {
-      return unavailable(fallback, 'invalid', 'WordPress.com 原文、稳定地址与回执不一致');
-    }
     const root = `https://${new URL(saved.url).hostname}/`;
     const found = await readPublicPost(saved, article, root, dependencies);
     return { found: true, outcome: 'found', url: found.post.url, rel: found.rel,
       reason: 'WordPress.com 匿名 API 与公开页的作者、标题、完整正文及全部链接一致；这不保证搜索收录或排名' };
   } catch (error) {
     if (error instanceof WordPressError && error.code === 'not_found') {
-      return unavailable(fallback, 'absent', 'WordPress.com 原发布 slug 暂未公开');
+      return unavailable(fallback, 'absent', WORDPRESS_VERIFY_MESSAGES.absent);
     }
-    if (error instanceof WordPressError && ['network', 'timeout', 'cancelled', 'rate_limited'].includes(error.code)) {
-      return unavailable(fallback, 'unreachable', 'WordPress.com 匿名 API 或公开页暂时无法核验');
+    if (error instanceof WordPressError && ['invalid_response', 'rejected'].includes(error.code)) {
+      return unavailable(fallback, 'invalid', WORDPRESS_VERIFY_MESSAGES.invalid);
     }
-    return unavailable(fallback, 'invalid', 'WordPress.com 公开内容、作者、网址或可见性与原回执不一致');
+    return unavailable(fallback, 'unreachable', WORDPRESS_VERIFY_MESSAGES.unavailable);
   }
 }
 
@@ -598,36 +608,36 @@ function firstRunFailure(error: unknown): WordPressExecutionResult {
     return { status: 'needs_input', message: 'WordPress.com 授权、站点绑定或发布权限已失效，未投稿' };
   }
   if (error instanceof WordPressError && ['rate_limited', 'timeout', 'network', 'cancelled'].includes(error.code)) {
-    return { status: 'queued', message: 'WordPress.com 身份或重复项检查暂时未完成，未投稿' };
+    return { status: 'queued', message: 'WordPress.com 发布账号或重复项检查暂时未完成，未投稿' };
   }
-  return { status: 'needs_input', message: 'WordPress.com 站点身份或公开发布条件无法安全确认，未投稿' };
+  return { status: 'needs_input', message: 'WordPress.com 站点关联账号或公开发布条件无法安全确认，未投稿' };
 }
 
 export async function runWordPressTask(
   context: ExecutionContext, dependencies: WordPressDependencies = {},
 ): Promise<WordPressExecutionResult> {
-  if (!contextMatches(context)) return { status: 'needs_input', message: '当前渠道不支持 WordPress.com 全文 API' };
+  if (!contextMatches(context)) return { status: 'needs_input', message: '当前平台不支持 WordPress.com 全文 API' };
   const account = context.getAccount();
   if (!exactAccount(context, account)) return { status: 'needs_input', message: 'WordPress.com 任务缺少已验证的单站授权绑定' };
   const prior = (context.task as WordPressTask).wordpress;
   if (!prior && !articleReviewStillValid(context.task, context.site, context.channel, context.settings, account)) {
-    return { status: 'needs_input', message: 'WordPress.com 全文的事实与渠道独立 AI 核对未通过或已失效' };
+    return { status: 'needs_input', message: 'WordPress.com 全文的事实与平台 AI 复核未通过或已失效' };
   }
   let article: ApprovedArticle;
-  try { article = approvedArticle(context.task, context.site.url, !prior); }
+  try { article = approvedArticle(context.task, context.site.url, !prior, context.site); }
   catch (error) { return { status: 'needs_input', message: error instanceof Error ? error.message : 'WordPress.com 原稿无效' }; }
 
   if (prior) {
     if (!validReceipt(prior) || prior.blogId !== account.username || prior.slug !== article.slug
       || prior.contentHash !== article.contentHash
       || (prior.url ?? '') !== (context.task.publicUrl ?? '') && (!!prior.url || !!context.task.publicUrl)) {
-      return { status: 'needs_input', message: 'WordPress.com 回执、稿件或原站点身份已改变，禁止重发', wordpress: prior };
+      return { status: 'needs_input', message: 'WordPress.com 记录、稿件或原站点关联账号已改变，禁止重发', wordpress: prior };
     }
     const result = await reconcileWordPressTask(context, dependencies);
     if (result.status === 'found') {
       try { checkpoint(context, { wordpress: result.wordpress, checkpoint: 'wordpress_published',
         submittedAt: context.task.submittedAt, publicUrl: result.publicUrl }); } catch { /* Read-only identity is still returned. */ }
-      return { status: 'review', message: 'WordPress.com 原投稿已找回并通过匿名全文核验，未再次发送；搜索收录不保证',
+      return { status: 'review', message: 'WordPress.com 原投稿已找回并通过匿名全文检查，未再次发送；搜索收录不保证',
         publicUrl: result.publicUrl, wordpress: result.wordpress, checkpoint: 'wordpress_published', submittedAt: context.task.submittedAt };
     }
     return { status: 'review', message: 'WordPress.com 原投稿结果待核清；只读查证且不会重发', wordpress: prior,
@@ -636,7 +646,7 @@ export async function runWordPressTask(
   }
   if (context.task.submittedAt || context.task.publicUrl
     || ['wordpress_publish_submitting', 'wordpress_published'].includes(context.task.checkpoint ?? '')) {
-    return { status: 'needs_input', message: 'WordPress.com 投稿痕迹缺少匹配回执，禁止重发' };
+    return { status: 'needs_input', message: 'WordPress.com 投稿痕迹缺少匹配记录，禁止重发' };
   }
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未投稿' };
 
@@ -656,7 +666,7 @@ export async function runWordPressTask(
     contentHash: article.contentHash, stage: 'submitting' };
   const submittedAt = stamp(dependencies);
   try { checkpoint(context, { wordpress: pending, checkpoint: 'wordpress_publish_submitting', submittedAt }); }
-  catch { return { status: 'queued', message: 'WordPress.com 投稿意图未持久保存，未发送' }; }
+  catch { return { status: 'queued', message: 'WordPress.com 投稿计划未持久保存，未发送' }; }
 
   let created: RemotePost;
   try {
@@ -676,7 +686,7 @@ export async function runWordPressTask(
     checkpoint(context, { wordpress: identified, checkpoint: 'wordpress_publish_submitting', submittedAt, publicUrl: created.url });
     identitySaved = true;
   } catch { /* Return exact response identity so the controller can durably retain it. */ }
-  if (!identitySaved) return { status: 'review', message: 'WordPress.com 已返回公开地址；待本机保存匹配回执后只读核验，不会重发',
+  if (!identitySaved) return { status: 'review', message: 'WordPress.com 已返回公开地址；待本机保存匹配记录后检查，不会重发',
     publicUrl: created.url, wordpress: identified, checkpoint: 'wordpress_publish_submitting', submittedAt };
 
   try {
@@ -684,10 +694,10 @@ export async function runWordPressTask(
     const published: WordPressReceipt = { ...identified, stage: 'published', postId: found.post.postId, url: found.post.url };
     try { checkpoint(context, { wordpress: published, checkpoint: 'wordpress_published', submittedAt, publicUrl: found.post.url }); }
     catch { /* The durable post identity remains sufficient for later read-only recovery. */ }
-    return { status: 'review', message: 'WordPress.com 匿名 API 与公开页已核验完整原文和链接；搜索收录不保证',
+    return { status: 'review', message: 'WordPress.com 匿名 API 与公开页已检查完整原文和链接；搜索收录不保证',
       publicUrl: found.post.url, wordpress: published, checkpoint: 'wordpress_published', submittedAt };
   } catch {
-    return { status: 'review', message: 'WordPress.com 已返回公开地址，完整全文仍待只读核验；不会重发',
+    return { status: 'review', message: 'WordPress.com 已返回公开地址，完整全文仍待检查；不会重发',
       publicUrl: created.url, wordpress: identified, checkpoint: 'wordpress_publish_submitting', submittedAt };
   }
 }

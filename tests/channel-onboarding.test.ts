@@ -12,24 +12,24 @@ const channel=(id:string)=>{
 };
 const builtIn=(id:string):Channel=>CHANNELS.find(item=>item.id===id)??{...channel('telegraph'),id,provenance:'built-in'};
 
-test('Markdrop no-signup filter reaches the accepted publisher without implying a verified hosting policy',()=>{
+test('Markdrop no-signup filter reaches general finance content after the policy review',()=>{
   const markdrop=channel('markdrop'),view=channelOnboardingView(markdrop);
   assert.equal(view.kind,'no_signup');
   assert.match(view.setup,/无需账号或邮箱.*一次性编辑密钥.*不保证长期/);
   assert.equal(view.verification?.sourceUrl,'https://api.markdrop.in/openapi.json');
   assert.equal(channelMatchesDirectoryFilters(markdrop,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'software',siteVisible:true}),true);
-  assert.equal(channelMatchesDirectoryFilters(markdrop,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'finance',siteVisible:true}),false);
+  assert.equal(channelMatchesDirectoryFilters(markdrop,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'finance',siteVisible:true}),true);
   assert.equal(channelMatchesDirectoryFilters({...markdrop,enabled:false},{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'software',siteVisible:true}),false);
   assert.equal(channelOnboardingKind({...markdrop,provenance:'custom'}),'unknown');
 });
 
 test('Draftmark is an enabled no-signup channel with per-document credentials',()=>{
   const value=channel('draftmark'),view=channelOnboardingView(value);assert.equal(value.enabled,true);assert.equal(view.kind,'no_signup');
-  assert.match(view.setup,/无需账号或邮箱.*magic token.*API key.*不重复提交/);
+  assert.match(view.setup,/无需账号或邮箱.*magic token.*密钥.*不重复提交/);
   assert.equal(view.verification?.sourceUrl,'https://draftmark.app/terms');
   assert.equal(channelMatchesDirectoryFilters(value,{automation:'all',onboarding:'no_signup',freeOnly:true,category:'software',siteVisible:true}),true);
   assert.equal(channelMatchesDirectoryFilters(value,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'software',siteVisible:true}),true);
-  assert.equal(channelMatchesDirectoryFilters(value,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'finance',siteVisible:true}),false);
+  assert.equal(channelMatchesDirectoryFilters(value,{automation:'ai_auto',onboarding:'no_signup',freeOnly:true,category:'finance',siteVisible:true}),true);
 });
 
 test('accepted anonymous publishers expose their current no-signup access without stale hold copy',()=>{
@@ -55,7 +55,7 @@ test('accepted anonymous publishers expose their current no-signup access withou
 test('verified no-signup and automatic identity flows stay distinct',()=>{
   for(const id of ['lucid-page','rentry','betterthanhtml','supanote','docs-md'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
   assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentswiki','carcinus','large-language','mataroa','nostr','notebin','openagentchat','paper-wf','plopino','shellbook','shippage','swarmmemo','telegraph','verbose','vibedrop','wordcell']);
-  assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建作者身份/);
+  assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建发布账号/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/本机创建作者密钥/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/不是钱包连接/);
   assert.match(channelOnboardingView(channel('paper-wf')).setup,/人机验证/);
@@ -83,7 +83,7 @@ test('wallet means the platform setup while Linkflow states the credential it ac
   assert.equal(CHANNELS.filter(item=>channelMatchesOnboarding(item,'wallet')).every(item=>['paragraph','sigle','nuance','hive'].includes(item.id)),true);
   const paragraph=channelOnboardingView(channel('paragraph'));
   assert.match(paragraph.setup,/钱包或邮箱/);
-  assert.match(paragraph.setup,/API key/);
+  assert.match(paragraph.setup,/密钥/);
   assert.deepEqual(paragraph.aliases,['Mirror']);
   assert.equal(CHANNELS.filter(item=>item.id==='paragraph').length,1);
   assert.match(channelOnboardingView(builtIn('sigle')).setup,/Leather \/ Stacks.*逐篇签名.*未接无人值守/);
@@ -117,7 +117,7 @@ test('custom and unmapped rows remain unknown even when they reuse a trusted id 
 test('setup combines with capability, free, finance and selected-site visibility using AND',()=>{
   const select=(automation:Parameters<typeof channelMatchesAutomation>[1],setup:Parameters<typeof channelMatchesOnboarding>[1],siteVisible=true)=>CHANNELS.filter(item=>channelMatchesDirectoryFilters(item,{automation,onboarding:setup,freeOnly:true,category:'finance',siteVisible})).map(item=>item.id).sort();
   assert.deepEqual(select('connected_auto','wallet'),['paragraph']);
-  assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','lucid-page','pastyx','supanote','txtsbs']);
+  assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','brewpage','deed-page','docs-md','draftmark','html-app','katbin','lucid-page','markdrop','memorywiki','nextgen-slides','pastemyst','pastyx','pstrs','supanote','thethings','txtsbs','yourwebs']);
   assert.deepEqual(select('ai_auto','existing_account'),[]);
   assert.deepEqual(select('connected_auto','ai_account'),[]);
   assert.deepEqual(select('connected_auto','wallet',false),[]);
@@ -196,7 +196,7 @@ test('new publishers preserve automatic account and existing verified identity d
   assert.equal(channelOnboardingKind(plopino),'ai_account');
   assert.equal(channelOnboardingKind(here),'existing_account');
   assert.match(channelOnboardingView(plopino).setup,/已授权邮箱.*自动建立.*不会重复注册/);
-  assert.match(channelOnboardingView(here).setup,/邮箱验证.*API key/);
+  assert.match(channelOnboardingView(here).setup,/邮箱验证.*密钥/);
   assert.equal(channelMatchesDirectoryFilters(plopino,{automation:'ai_auto',onboarding:'ai_account',freeOnly:true,category:'software',siteVisible:true}),true);
   assert.equal(channelMatchesDirectoryFilters(here,{automation:'connected_auto',onboarding:'existing_account',freeOnly:true,category:'software',siteVisible:true}),true);
 });

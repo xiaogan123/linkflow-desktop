@@ -77,7 +77,7 @@ function routeClass(value:string,publicUrl:string,origin:string):MDShareRenderRo
 async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,options:RenderOptions={}):Promise<MDShareRenderedPage>{
   if(!exactMDSharePublicUrl(url,origin)){
     options.onDiagnostic?.({version:1,kind:'failure',phase:'load',failureCategory:'invalid_url'});
-    throw Error('MDShare 原生核验 URL 无效');
+    throw Error('MDShare 原生检查 URL 无效');
   }
   const partition=`mdshare-verifier-${randomUUID()}`;
   const win=new BrowserWindow({show:false,width:1080,height:900,webPreferences:{partition,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false}});
@@ -107,7 +107,7 @@ async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,opti
     rejectPending=error=>finish(reject,error);
     void pending.then(value=>finish(resolve,value),error=>finish(reject,error));
   }).finally(()=>{rejectPending=undefined});
-  const stop=()=>fail('MDShare 原生核验已取消','aborted');
+  const stop=()=>fail('MDShare 原生检查已取消','aborted');
   signal.addEventListener('abort',stop,{once:true});
   ses.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
   ses.setPermissionCheckHandler(()=>false);
@@ -120,7 +120,7 @@ async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,opti
       if(!deniedIdentityCaptured){
         deniedIdentityCaptured=true;
         try{options.onFirstDeniedRequest?.({version:1,phase,url:details.url,method:details.method,resourceType:details.resourceType})}
-        catch{record({version:1,kind:'request',phase,...requestDetails});fail('MDShare 首个拒绝请求身份未能持久记录','diagnostic_capture_failed',requestDetails);callback({cancel:true});return}
+        catch{record({version:1,kind:'request',phase,...requestDetails});fail('MDShare 首个拒绝请求标识未能持久记录','diagnostic_capture_failed',requestDetails);callback({cancel:true});return}
       }
       record({version:1,kind:'request',phase,...requestDetails});fail('MDShare 原生请求不在精确白名单','request_denied',requestDetails);callback({cancel:true});return
     }
@@ -164,11 +164,11 @@ async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,opti
     return options.trackPhysical?options.trackPhysical(owned,label):owned;
   };
   const maxPollAttempts=options.testing?.maxPollAttempts??120,pollIntervalMs=options.testing?.pollIntervalMs??100,cleanupTimeoutMs=options.testing?.cleanupTimeoutMs??2000;
-  if(!Number.isInteger(maxPollAttempts)||maxPollAttempts<1||maxPollAttempts>120)throw Error('MDShare 原生核验轮询上限无效');
-  if(!Number.isInteger(pollIntervalMs)||pollIntervalMs<1||pollIntervalMs>1000)throw Error('MDShare 原生核验轮询间隔无效');
-  if(!Number.isInteger(cleanupTimeoutMs)||cleanupTimeoutMs<1||cleanupTimeoutMs>2000)throw Error('MDShare 原生核验清理时限无效');
+  if(!Number.isInteger(maxPollAttempts)||maxPollAttempts<1||maxPollAttempts>120)throw Error('MDShare 原生检查轮询上限无效');
+  if(!Number.isInteger(pollIntervalMs)||pollIntervalMs<1||pollIntervalMs>1000)throw Error('MDShare 原生检查轮询间隔无效');
+  if(!Number.isInteger(cleanupTimeoutMs)||cleanupTimeoutMs<1||cleanupTimeoutMs>2000)throw Error('MDShare 原生检查清理时限无效');
   try{
-    if(signal.aborted)throw Error('MDShare 原生核验已取消');
+    if(signal.aborted)throw Error('MDShare 原生检查已取消');
     recordLifecycle({version:1,kind:'lifecycle',phase:'initial_clear'});
     await cancellable(physical('initial_clear',clearStorageData));
     phase='load';recordLifecycle({version:1,kind:'lifecycle',phase});
@@ -176,7 +176,7 @@ async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,opti
     phase='poll';recordLifecycle({version:1,kind:'lifecycle',phase});
     for(let attempt=0;attempt<maxPollAttempts;attempt++){
       if(violation)throw Error(violation);
-      if(aborted||signal.aborted||win.isDestroyed())throw Error('MDShare 原生核验已取消');
+      if(aborted||signal.aborted||win.isDestroyed())throw Error('MDShare 原生检查已取消');
       const source=`(()=>{
         const root=document.querySelector('article .ms-preview.ms-md');
         const hasArea=rect=>rect.width>0&&rect.height>0;
@@ -198,7 +198,7 @@ async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,opti
       if(result){if(violation)throw Error(violation);phase='complete';recordLifecycle({version:1,kind:'lifecycle',phase});return {...result,responseRobots:[...responseRobots],nativeRequests:[...nativeRequests]}}
       await new Promise<void>((resolve,reject)=>{
         let timer:ReturnType<typeof setTimeout>;
-        const cancel=()=>{clearTimeout(timer);reject(Error('MDShare 原生核验已取消'))};
+        const cancel=()=>{clearTimeout(timer);reject(Error('MDShare 原生检查已取消'))};
         timer=setTimeout(()=>{signal.removeEventListener('abort',cancel);resolve()},pollIntervalMs);
         signal.addEventListener('abort',cancel,{once:true});
       });
@@ -207,7 +207,7 @@ async function renderWithOrigin(url:string,signal:AbortSignal,origin:string,opti
   }catch(error){
     if(!failureRecorded){
       const category:MDShareRenderFailureCategory=signal.aborted?'aborted':phase==='initial_clear'?'storage_clear_failed':phase==='load'?'load_failed':phase==='poll'?'poll_failed':'renderer_failed';
-      fail(category==='load_failed'?'MDShare 原生页面加载失败':category==='storage_clear_failed'?'MDShare 原生会话初始化失败':'MDShare 原生核验失败',category);
+      fail(category==='load_failed'?'MDShare 原生页面加载失败':category==='storage_clear_failed'?'MDShare 原生会话初始化失败':'MDShare 原生检查失败',category);
     }
     throw error;
   }finally{

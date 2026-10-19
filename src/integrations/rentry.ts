@@ -4,11 +4,11 @@ import {marked} from 'marked';
 import {rentryPostSlug} from '../shared/publication';
 import {normalizePublicUrl} from './web';
 import {applyDeclaredArticleVisibility,styleConcealsArticle,pageRobotsDirectives} from './article-visibility';
-import type {Account,ExecutionContext,ExecutionResult,LinkResult,RentryReceipt,Task} from '../shared/types';
+import type {Account,ExecutionContext,ExecutionResult,LinkResult,RentryReceipt,Site,Task} from '../shared/types';
 
 const ORIGIN='https://rentry.co';
 const AUTHOR='anonymous';
-const SLUG=/^lf-[a-z0-9]{1,32}-[a-f0-9]{12}$/;
+const SLUG=/^(?:lf-[a-z0-9]{1,32}-[a-f0-9]{12}|[a-z0-9](?:[a-z0-9-]{2,39}))$/;
 const HASH=/^[a-f0-9]{64}$/;
 const MAX_HTML=2_000_000;
 const MAX_API=128_000;
@@ -40,7 +40,7 @@ function receipt(value:unknown):value is RentryReceipt{
     &&typeof value.contentHash==='string'&&HASH.test(value.contentHash)
     &&(value.stage==='submitting'||value.stage==='published');
 }
-function article(task:Task,target:string,requireApproval=true){
+function article(task:Task,target:string,requireApproval=true,site?:Pick<Site,'name'|'domain'|'url'>){
   const draft=task.draft;
   if(!draft||requireApproval&&!Number.isFinite(Date.parse(task.articleApprovedAt??'')))
     throw Error('Rentry 全文须先通过当前稿件核对');
@@ -63,7 +63,7 @@ function article(task:Task,target:string,requireApproval=true){
     ||parsed('img').length||links.some(link=>!link.label)||!links.some(link=>link.href===href))
     throw Error('Rentry 需要有独立信息价值的全文、公开 HTTPS 链接及相关目标链接');
   const contentHash=sha(JSON.stringify({title:draft.title,body,target:href}));
-  const slug=rentryPostSlug(task.id,contentHash);
+  const slug=task.rentry?.slug??rentryPostSlug(task.id,contentHash,site??{name:'',domain:new URL(target).hostname,url:target});
   if(!SLUG.test(slug))throw new RentryError('invalid');
   return {title:draft.title,body,text,target:href,contentHash,slug};
 }
@@ -90,25 +90,25 @@ async function ready(context:ExecutionContext,deps:RentryDependencies):Promise<{
   let account=context.getAccount();
   if(!account){
     if(context.task.accountId||context.task.rentry||context.task.submittedAt||context.task.publicUrl||context.signal.aborted)
-      return {status:'needs_input',message:'Rentry 原本机身份或投稿状态待核对，不会生成替代身份'};
+      return {status:'needs_input',message:'Rentry 原本机发布账号或投稿状态待核对，不会生成替代账号'};
     const at=stamp(deps);
     account={id:randomUUID(),channelId:'rentry',email:'',username:AUTHOR,
-      displayName:'本机匿名发布身份',credentialKind:'api_token',status:'registered',hasPassword:true,
+      displayName:'本机匿名发布账号',credentialKind:'api_token',status:'registered',hasPassword:true,
       source:'generated',createdAt:at,updatedAt:at};
     const key=randomBytes(32);
     try{await context.saveAccount(account,JSON.stringify({version:1,key:key.toString('base64url')}))}
-    catch{return {status:'queued',message:'Rentry 本机身份未加密保存，尚未投稿'}}
+    catch{return {status:'queued',message:'Rentry 本机发布账号未加密保存，尚未投稿'}}
     return {account,key};
   }
   if(context.task.accountId&&context.task.accountId!==account.id||account.channelId!=='rentry'
     ||account.username!==AUTHOR||account.publicationUrl||account.credentialKind!=='api_token'
     ||account.source!=='generated'||account.status!=='registered'||!account.hasPassword)
-    return {status:'needs_input',message:'Rentry 原本机发布身份不一致，其他渠道可继续'};
+    return {status:'needs_input',message:'Rentry 原本机发布账号不一致，其他平台可继续'};
   try{return {account,key:masterKey(await context.secrets.get(`account:${account.id}`))}}
-  catch{return {status:'needs_input',message:'Rentry 原本机密钥不可用，不能换身份投稿'}}
+  catch{return {status:'needs_input',message:'Rentry 原本机密钥不可用，不能换账号投稿'}}
 }
 export async function prepareRentryIdentity(context:ExecutionContext,deps:RentryDependencies={}):Promise<ExecutionResult|undefined>{
-  if(!contextMatches(context))return {status:'needs_input',message:'当前任务不属于 Rentry 全文发布渠道'};
+  if(!contextMatches(context))return {status:'needs_input',message:'当前任务不属于 Rentry 全文发布平台'};
   const access=await ready(context,deps);
   return 'status' in access?access:undefined;
 }
@@ -121,7 +121,7 @@ function abortable<T>(promise:Promise<T>,signal:AbortSignal):Promise<T>{
   });
 }
 async function request(path:string,deps:RentryDependencies,form?:URLSearchParams):Promise<{response:Response;text:string}>{
-  if(path!=='/api/new'&&(!/^\/lf-[a-z0-9]{1,32}-[a-f0-9]{12}$/.test(path)||form))
+  if(path!=='/api/new'&&(!SLUG.test(path.slice(1))||!path.startsWith('/')||form))
     throw new RentryError('invalid');
   if(path==='/api/new'&&!form)throw new RentryError('invalid');
   if(deps.signal?.aborted)throw new RentryError('cancelled');
@@ -136,7 +136,7 @@ async function request(path:string,deps:RentryDependencies,form?:URLSearchParams
     response=await abortable((deps.fetch??fetch)(url,{
       method:form?'POST':'GET',redirect:'manual',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',
       signal:controller.signal,headers:{accept:form?'application/json':'text/html',
-        'user-agent':'Linkflow (original-article publisher)',
+        'user-agent':'Mozilla/5.0',
         ...(form?{'content-type':'application/x-www-form-urlencoded'}:{})},
       ...(form?{body:form.toString()}:{})
     }),controller.signal);
@@ -269,10 +269,10 @@ export async function verifyRentryPublication(task:Task,target:string,deps:Rentr
   try{
     const saved=task.rentry;
     if(task.channelId!=='rentry'||task.sourceDomain!=='rentry.co'||!receipt(saved)||saved.stage!=='published'
-      ||task.publicUrl!==pageUrl(saved.slug))return fail('invalid','Rentry 缺少一致的已发布回执');
+      ||task.publicUrl!==pageUrl(saved.slug))return fail('invalid','Rentry 缺少一致的已发布记录');
     const expected=article(task,target,false);
     if(saved.contentHash!==expected.contentHash||saved.slug!==expected.slug)
-      return fail('invalid','Rentry 原文摘要与回执不符');
+      return fail('invalid','Rentry 原文摘要与记录不符');
     const result=await found(expected,deps);
     if(result.noindex)return fail('invalid','Rentry 页面标记 noindex，不能作为可索引来源计数',result.rel);
     return {found:true,outcome:'found',url:result.url,rel:result.rel,
@@ -280,20 +280,20 @@ export async function verifyRentryPublication(task:Task,target:string,deps:Rentr
   }catch(error){
     return fail(error instanceof RentryError&&error.code==='absent'?'absent'
       :error instanceof RentryError&&['network','timeout','cancelled','challenge','rate'].includes(error.code)
-        ?'unreachable':'invalid','Rentry 原公开全文暂未核验通过');
+        ?'unreachable':'invalid','Rentry 原公开全文暂未检查通过');
   }
 }
 export async function runRentryTask(context:ExecutionContext,deps:RentryDependencies={}):Promise<RentryExecutionResult>{
-  if(!contextMatches(context))return {status:'needs_input',message:'当前渠道不支持 Rentry 全文 API'};
+  if(!contextMatches(context))return {status:'needs_input',message:'当前平台不支持 Rentry 全文 API'};
   const prior=context.task.rentry;
   let expected:Article;
-  try{expected=article(context.task,context.site.url,!prior)}
+  try{expected=article(context.task,context.site.url,!prior,context.site)}
   catch(error){return {status:'needs_input',message:error instanceof Error?error.message:'Rentry 原稿无效'}}
   if(prior){
     const priorUrl=receipt(prior)?pageUrl(prior.slug):undefined;
     const priorCheckpoint=receipt(prior)&&prior.stage==='published'?'rentry_published':'rentry_publish_submitting';
     if(priorUrl&&context.task.publicUrl&&context.task.publicUrl!==priorUrl)
-      return {status:'needs_input',message:'Rentry 原回执与公开地址不一致，禁止重发',rentry:prior,
+      return {status:'needs_input',message:'Rentry 原记录与公开地址不一致，禁止重发',rentry:prior,
         checkpoint:priorCheckpoint,submittedAt:context.task.submittedAt};
     const result=await reconcileRentryTask(context,deps);
     if(result.status==='found'){
@@ -303,27 +303,27 @@ export async function runRentryTask(context:ExecutionContext,deps:RentryDependen
     return result.status==='found'
       ?{status:'review',message:'Rentry 原投稿已找到，未再次发送',publicUrl:result.publicUrl,
         rentry:result.rentry,checkpoint:'rentry_published',submittedAt:context.task.submittedAt}
-      :{status:'review',message:'Rentry 原投稿结果不明，只读核验且不会重发',
+      :{status:'review',message:'Rentry 原投稿结果不明；只检查原记录，不会重发',
         checkpoint:priorCheckpoint,rentry:prior,submittedAt:context.task.submittedAt,
         ...(priorUrl?{publicUrl:priorUrl}:{})};
   }
   if(context.task.submittedAt||context.task.publicUrl
     ||['rentry_publish_submitting','rentry_published'].includes(context.task.checkpoint??''))
-    return {status:'needs_input',message:'Rentry 投稿痕迹缺少回执，禁止重发'};
+    return {status:'needs_input',message:'Rentry 投稿痕迹缺少记录，禁止重发'};
   const original=context.getAccount(),access=await ready(context,deps);
   if('status' in access)return access;
   if(!original||original.status!=='registered'||context.task.accountId!==access.account.id
-    ||original.id!==access.account.id)return {status:'queued',message:'Rentry 本机身份已就绪，请先以此身份独立核对稿件'};
+    ||original.id!==access.account.id)return {status:'queued',message:'Rentry 本机发布账号已就绪；稍后会用这个账号重新核对稿件，再投稿。'};
   if(context.signal.aborted)return {status:'queued',message:'任务已暂停，尚未投稿'};
   const saved:RentryReceipt={slug:expected.slug,contentHash:expected.contentHash,stage:'submitting'};
   const submittedAt=stamp(deps);
   try{context.checkpoint({rentry:saved,checkpoint:'rentry_publish_submitting',submittedAt})}
-  catch{return {status:'queued',message:'Rentry 投稿意图未保存，未提交'}}
+  catch{return {status:'queued',message:'Rentry 投稿计划未保存，未提交'}}
   try{
     await createPage(expected,editCode(access.key,context.task.id,expected.contentHash),{...deps,signal:context.signal});
   }catch(error){
     if(error instanceof RentryError&&['challenge','rate'].includes(error.code))
-      return {status:'review',message:'Rentry 要求验证或限流，保留原投稿意图并停止请求；其他渠道可继续',
+      return {status:'review',message:'Rentry 要求验证或限流，保留原投稿计划并停止请求；其他平台可继续',
         rentry:saved,checkpoint:'rentry_publish_submitting',submittedAt};
     // A failed or lost response cannot prove whether the write happened.
   }
@@ -332,10 +332,10 @@ export async function runRentryTask(context:ExecutionContext,deps:RentryDependen
     const published:RentryReceipt={...saved,stage:'published'};
     try{context.checkpoint({rentry:published,checkpoint:'rentry_published',publicUrl:result.url,submittedAt})}
     catch{/* Pending original receipt is durable for later read-only recovery. */}
-    return {status:'review',message:'Rentry 全文与匿名公开页已核验',publicUrl:result.url,
+    return {status:'review',message:'Rentry 全文与匿名公开页已检查',publicUrl:result.url,
       rentry:published,checkpoint:'rentry_published',submittedAt};
   }catch{
-    return {status:'review',message:'Rentry 投稿结果仍待只读核验，不会重发',
+    return {status:'review',message:'Rentry 投稿结果仍待检查，不会重发',
       rentry:saved,checkpoint:'rentry_publish_submitting',submittedAt};
   }
 }

@@ -100,7 +100,7 @@ export function validSynthfolkAccountSecret(value:unknown):value is SynthfolkAcc
 }
 
 export async function registerSynthfolkProfile(input:{accountId:string;taskId:string;draft:SynthfolkProfileDraft;targetUrl:string},persistence:SynthfolkRegistrationPersistence,deps:OpenAgentChatDependencies={}){
-  if(!UUID.test(input.accountId)||!UUID.test(input.taskId)||persistence.accountId!==undefined&&persistence.accountId!==input.accountId)throw Error('Synthfolk 固定身份无效');
+  if(!UUID.test(input.accountId)||!UUID.test(input.taskId)||persistence.accountId!==undefined&&persistence.accountId!==input.accountId)throw Error('Synthfolk 固定发布账号无效');
   const request=synthfolkRegistrationRequest(input.draft,input.targetUrl);
   // Any prior encrypted journal permanently blocks a second public registration.
   if(await persistence.loadPriorRaw()!==undefined)return {status:'prior_intent' as const};

@@ -27,7 +27,7 @@ export function saveMailbox(state:State,input:MailboxInput,hasNewPassword=false,
   const value=normalizeMailbox(input),old=value.id?state.mailboxes.find(item=>item.id===value.id):undefined;
   if(state.mailboxes.some(item=>item.id!==value.id&&item.host===value.host&&item.port===value.port&&item.user.toLowerCase()===value.user.toLowerCase()))throw Error('该 IMAP 账号已存在');
   const stamp=now.toISOString(),identityChanged=!!old&&mailboxIdentityChanged(old,value);
-  const mailbox:Mailbox={...old,...value,id:old?.id??value.id??randomUUID(),createdAt:old?.createdAt??stamp,updatedAt:stamp,hasPassword:hasNewPassword||(!identityChanged&&old?.hasPassword)||false,verifiedAt:identityChanged?undefined:old?.verifiedAt,lastError:identityChanged?undefined:old?.lastError};
+  const mailbox:Mailbox={...old,...value,id:old?.id??value.id??randomUUID(),createdAt:old?.createdAt??stamp,updatedAt:stamp,hasPassword:hasNewPassword||(!identityChanged&&old?.hasPassword)||false,verifiedAt:identityChanged||hasNewPassword?undefined:old?.verifiedAt,lastError:identityChanged||hasNewPassword?undefined:old?.lastError};
   state.mailboxes=state.mailboxes.filter(item=>item.id!==mailbox.id);state.mailboxes.push(mailbox);return mailbox;
 }
 

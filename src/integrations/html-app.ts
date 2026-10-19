@@ -53,7 +53,7 @@ export function htmlAppIdentity(html:string){
 export async function createHtmlAppSite(input:{operationId:string;reviewed:true;html:string;priorIntent?:HtmlAppIntent},persistence:HtmlAppPersistence,deps:HtmlAppDependencies={}):Promise<HtmlAppResult>{
   if(input.reviewed!==true||!OPERATION_ID.test(input.operationId))throw Error('ht-ml.app 提交输入无效');
   const identity=htmlAppIdentity(input.html);
-  if(input.priorIntent){if(!validIntent(input.priorIntent))throw Error('ht-ml.app 原意图无效');return {status:'blocked',intent:{...input.priorIntent}}}
+  if(input.priorIntent){if(!validIntent(input.priorIntent))throw Error('ht-ml.app 原提交信息无效');return {status:'blocked',intent:{...input.priorIntent}}}
   const intent={operationId:input.operationId,sourceHash:identity.sourceHash,requestHash:identity.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}
   try{if(persistence.assertReadyToSubmit({...intent})!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}

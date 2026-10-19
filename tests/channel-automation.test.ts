@@ -17,7 +17,7 @@ test('accepted Markdrop is discoverable as automatic while qualification and dis
   const markdrop=channel('markdrop');
   assert.equal(channelAutomationKind(markdrop),'ai_auto');
   assert.equal(channelMatchesAutomation(markdrop,'ai_auto',true,'software'),true);
-  assert.equal(channelMatchesAutomation(markdrop,'ai_auto',true,'finance'),false);
+  assert.equal(channelMatchesAutomation(markdrop,'ai_auto',true,'finance'),true);
   assert.match(channelAutomationView(markdrop).setup??'',/免注册.*一次性编辑密钥.*不保证长期/);
   assert.deepEqual(channelSourceLabels('markdrop'),{checked:'资料核查',open:'官方说明'});
   assert.equal(channelAutomationKind({...markdrop,enabled:false}),'disabled');
@@ -27,16 +27,17 @@ test('accepted Markdrop is discoverable as automatic while qualification and dis
 test('accepted Draftmark is enabled with per-document credentials and software eligibility',()=>{
   const value=channel('draftmark');assert.equal(value.enabled,true);assert.equal(channelAutomationKind(value),'ai_auto');
   assert.equal(channelMatchesAutomation(value,'ai_auto',true,'software'),true);
-  assert.equal(channelMatchesAutomation(value,'ai_auto',true,'finance'),false);
-  assert.match(channelAutomationView(value).setup??'',/服务端生成大小写敏感的文档 ID.*逐文档凭据.*不重发.*没有免费层 SLA/);
+  assert.equal(channelMatchesAutomation(value,'ai_auto',true,'finance'),true);
+  assert.match(channelAutomationView(value).setup??'',/服务端生成大小写敏感的文档 ID.*逐文档密钥.*不重发.*没有免费层 SLA/);
   assert.deepEqual(channelSourceLabels('draftmark'),{checked:'资料核查',open:'官方说明'});
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentsgather','agentswiki','betterthanhtml','brewpage','carcinus','deed-page','draftmark','html-app','katbin','large-language','listed-startups','lucid-page','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','shellbook','shippage','slugpost','supanote','swarmmemo','synthfolk','tantive','telegraph','thethings','totpage','txtsbs','verbose','vibedrop','wordcell','yourwebs']);
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','here-now','hive','paragraph','product-index','shiply']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentsgather','agentswiki','betterthanhtml','brewpage','carcinus','deed-page','docs-md','draftmark','html-app','katbin','large-language','listed-startups','lucid-page','markdownpage','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','rant','shellbook','shippage','slugpost','supanote','swarmmemo','synthfolk','tantive','telegraph','thethings','totpage','txtsbs','verbose','vibedrop','wordcell','yeetmd','yourwebs']);
+  assert.equal(channelAutomationKind(channel('slopit')),'disabled');
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','hackmd','here-now','hive','leaflet','paragraph','product-index','shiply','wordpress-com']);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
-  assert.match(channelAutomationView(channel('nostr')).setup,/本机建立作者身份/);
+  assert.match(channelAutomationView(channel('nostr')).setup,/本机建立发布账号/);
   assert.match(channelAutomationView(channel('paper-wf')).setup,/人机验证/);
   assert.match(channelAutomationView(channel('bluesky')).method??'',/短帖/);
   assert.match(channelAutomationView(channel('blogger')).setup,/本人完成 Google 授权/);
@@ -51,7 +52,7 @@ test('accepted batch channels expose their actual UI capability and safety bound
     assert.equal(channelAutomationKind({...value,provenance:'custom'}),'manual',id);
   }
   assert.match(channelAutomationView(channel('swarmmemo')).setup??'',/无需邮箱或钱包.*真实发布.*不重发/);
-  assert.match(channelAutomationView(channel('tantive')).setup??'',/免账号.*原 request ID.*每篇仍须独立审核/);
+  assert.match(channelAutomationView(channel('tantive')).setup??'',/免账号.*原 request ID.*每篇仍须 AI 复核/);
   const productIndex=channel('product-index');assert.equal(productIndex.enabled,true);assert.equal(channelAutomationKind(productIndex),'connected_auto');
   assert.equal(channelAutomationKind({...productIndex,enabled:false}),'disabled');assert.equal(channelAutomationKind({...productIndex,provenance:'custom'}),'manual');
   const pastyxSetup=channelAutomationView(channel('pastyx')).setup??'';assert.match(pastyxSetup,/已完成一次真实/);assert.match(pastyxSetup,/未知结果不重发/);assert.match(pastyxSetup,/不代表永久保存/);
@@ -65,6 +66,14 @@ test('accepted batch channels expose their actual UI capability and safety bound
   for(const id of automatic.filter(value=>value!=='pastyx'))assert.equal(channelMatchesAutomation(channel(id),'ai_auto',true,'finance'),false,id);
   assert.equal(channelMatchesAutomation(channel('pastyx'),'ai_auto',true,'finance'),true);
   assert.equal(channelMatchesAutomation(productIndex,'connected_auto',true,'finance'),false);
+});
+
+test('batch-five platform rows use the current review and link-check wording',()=>{
+  const direct=channelAutomationView(channel('yeetmd')).setup??'';
+  const connected=channelAutomationView(channel('hackmd')).setup??'';
+  assert.match(direct,/首篇自动检查链接/);
+  assert.match(connected,/首篇检查链接通过后转正/);
+  assert.doesNotMatch(`${direct} ${connected}`,/渠道|核验|独立审核|额度|系统推进/);
 });
 
 test('disabled, custom and unknown API rows do not inflate automatic capability counts',()=>{
@@ -83,15 +92,15 @@ test('disabled, custom and unknown API rows do not inflate automatic capability 
   assert.equal(channelAutomationView(unknown).method,undefined);
   assert.match(channelAutomationView(custom).setup,/API 字段不代表/);
   const wordpress=channel('wordpress-com');
-  assert.equal(wordpress.enabled,false);
-  assert.equal(channelAutomationKind(wordpress),'disabled');
-  assert.equal(channelMatchesAutomation(wordpress,'connected_auto'),false);
+  assert.equal(wordpress.enabled,true);
+  assert.equal(channelAutomationKind(wordpress),'connected_auto');
+  assert.equal(channelMatchesAutomation(wordpress,'connected_auto'),true);
   assert.equal(channelAutomationKind({...wordpress,enabled:true}),'connected_auto');
   assert.match(channelAutomationView({...wordpress,enabled:true}).setup??'',/WordPress\.com.*浏览器授权.*已公开博客/);
   const docsMd=channel('docs-md'),enabledDocsMd={...docsMd,enabled:true};
-  assert.equal(docsMd.enabled,false);
-  assert.equal(channelAutomationKind(docsMd),'disabled');
-  assert.equal(channelMatchesAutomation(docsMd,'ai_auto'),false);
+  assert.equal(docsMd.enabled,true);assert.equal(docsMd.trial,true);
+  assert.equal(channelAutomationKind(docsMd),'ai_auto');
+  assert.equal(channelMatchesAutomation(docsMd,'ai_auto'),true);
   assert.equal(channelAutomationKind(enabledDocsMd),'ai_auto');
   assert.match(channelAutomationView(enabledDocsMd).setup??'',/免账号匿名分享.*真实托管验收前保持停用/);
   assert.equal(channelExecutionReadiness(emptyState(),'site',enabledDocsMd).kind,'ready');
@@ -107,9 +116,9 @@ test('ShipPage accepted automatic identity retains expiry and no-repost boundari
   assert.deepEqual(channelSourceLabels('shippage'),{checked:'资料核查',open:'官方说明'});
 });
 
-test('Leaflet is a distinct full article connection and excluded until live acceptance',()=>{
-  const leaflet=channel('leaflet');assert.equal(leaflet.enabled,false);assert.equal(channelAutomationKind(leaflet),'disabled');
-  assert.equal(channelMatchesAutomation(leaflet,'ai_auto'),false);assert.equal(channelMatchesAutomation(leaflet,'connected_auto'),false);
+test('Leaflet is an enabled trial full-article connection',()=>{
+  const leaflet=channel('leaflet');assert.equal(leaflet.enabled,true);assert.equal(leaflet.trial,true);assert.equal(channelAutomationKind(leaflet),'connected_auto');
+  assert.equal(channelMatchesAutomation(leaflet,'ai_auto'),false);assert.equal(channelMatchesAutomation(leaflet,'connected_auto'),true);
   const enabled={...leaflet,enabled:true};assert.equal(channelAutomationKind(enabled),'connected_auto');assert.match(channelAutomationView(enabled).method??'',/全文/);assert.match(channelAutomationView(enabled).setup??'',/首次连接本人.*应用专用密码/);
 });
 
@@ -119,7 +128,7 @@ test('Verbose is automatic after live acceptance and keeps experimental guidance
   assert.equal(channelAutomationKind(verbose),'ai_auto');
   assert.equal(channelMatchesAutomation(verbose,'registration_pending'),false);
   assert.equal(channelMatchesAutomation(verbose,'ai_auto',true,'finance'),true);
-  assert.match(channelAutomationView(verbose).setup,/自动建立作者身份.*实验平台/);
+  assert.match(channelAutomationView(verbose).setup,/自动建立发布账号.*实验平台/);
   assert.match(verbose.name,/实验/);
   assert.match(verbose.qualityReason,/nofollow\/ugc.*不保证搜索收录/);
   assert.equal(verbose.authority,undefined);
@@ -143,8 +152,8 @@ test('Verbose site readiness respects an explicit exclusion and a lost one-time 
 });
 
 test('free and finance filters combine with capability rather than replacing it',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'connected_auto',true,'finance')).map(item=>item.id).sort(),['bluesky','github-gist','paragraph']);
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'ai_auto',true,'finance')).map(item=>item.id).sort(),['betterthanhtml','lucid-page','mataroa','nostr','pastyx','supanote','telegraph','txtsbs','verbose']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'connected_auto',true,'finance')).map(item=>item.id).sort(),['bluesky','hackmd','leaflet','paragraph']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesAutomation(item,'ai_auto',true,'finance')).map(item=>item.id).sort(),['betterthanhtml','brewpage','deed-page','docs-md','draftmark','html-app','katbin','lucid-page','markdownpage','markdrop','mataroa','memorywiki','nextgen-slides','nostr','pastemyst','pastyx','pstrs','rant','supanote','telegraph','thethings','txtsbs','verbose','yeetmd','yourwebs']);
   assert.equal(channelMatchesAutomation(channel('paper-wf'),'registration_pending',true,'finance'),false);
   assert.equal(channelMatchesAutomation(channel('paper-wf'),'registration_pending',false,'finance'),true);
   assert.equal(channelMatchesAutomation({...channel('telegraph'),enabled:false},'all',true,'finance'),true);
@@ -188,7 +197,7 @@ test('invalid Telegraph credentials replace generic locally-ready copy with acco
   assert.equal(channelAutomationKind(plopino),'ai_auto');
   assert.equal(channelAutomationKind(here),'connected_auto');
   assert.match(channelAutomationView(plopino).setup??'',/已授权邮箱.*自动建立.*不.*重复注册/);
-  assert.match(channelAutomationView(here).setup??'',/邮箱验证.*API key.*关联网站/);
+  assert.match(channelAutomationView(here).setup??'',/邮箱验证.*密钥.*关联网站/);
   for(const value of [plopino,here]){
     assert.equal(channelMatchesAutomation(value,channelAutomationKind(value) as 'ai_auto'|'connected_auto',true,'software'),true);
     assert.equal(channelMatchesAutomation(value,'all',true,'finance'),false);
@@ -208,7 +217,10 @@ test('accepted SlugPost webpage publisher is anonymous full-article automation, 
 test('accepted txt.sbs automation copy preserves review and retention limits without a stale disable claim',()=>{
   const value=channel('txtsbs'),view=channelAutomationView(value);
   assert.equal(channelAutomationKind(value),'ai_auto');
-  assert.match(view.setup??'',/已完成真实匿名全文.*后续每篇仍需独立审核与核验.*不保证永久保存/);
+  assert.match(view.setup??'',/已完成真实匿名全文.*后续每篇仍需 AI 复核与检查链接.*不保证永久保存/);
   assert.match(view.setup??'',/未知结果不重发/);
   assert.doesNotMatch(view.setup??'',/验收前|保持停用/);
 });
+
+
+test('legacy custom finance audiences remain visible without structured metadata',()=>{const old={...channel('telegraph'),provenance:'custom' as const,categories:['finance' as const]};delete old.audience;delete old.promotionPolicy;assert.equal(channelMatchesAutomation(old,'all',true,'finance'),true);});

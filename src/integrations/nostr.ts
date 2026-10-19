@@ -1,3 +1,4 @@
+import {publicationReadContext} from '../main/publication-snapshot';
 import { createHash, randomUUID as cryptoRandomUUID } from 'node:crypto';
 import { load } from 'cheerio';
 import { marked, type Token } from 'marked';
@@ -139,7 +140,7 @@ function urlsInMarkdown(value: string): string[] {
 
 function taskArticle(task: Task, siteUrl: string): ApprovedArticle {
   if (!task.draft) throw new Error('全文草稿不完整');
-  if (!task.topicUrl) throw new Error('全文草稿缺少已核对的本站选题地址');
+  if (!task.topicUrl) throw new Error('全文草稿缺少已检查的本站选题地址');
   const target = canonicalHttps(task.topicUrl);
   if (normalizedHost(target) !== normalizedHost(siteUrl)) throw new Error('全文中的选题地址不属于当前网站');
   const title = task.draft.title.normalize('NFC').trim();
@@ -151,7 +152,7 @@ function taskArticle(task: Task, siteUrl: string): ApprovedArticle {
     || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(summary)) throw new Error('全文摘要不符合 Nostr 发布要求');
   if (Buffer.byteLength(content, 'utf8') < 200 || Buffer.byteLength(content, 'utf8') > MAX_CONTENT_BYTES
     || /\u0000/.test(content)) throw new Error('全文正文不符合 Nostr 发布要求');
-  if (!urlsInMarkdown(content).includes(target)) throw new Error('全文正文必须包含已核对选题页的真实 HTTPS 地址');
+  if (!urlsInMarkdown(content).includes(target)) throw new Error('全文正文必须包含已检查选题页的真实 HTTPS 地址');
   return { title, summary, content, target, contentHash: sha256(content) };
 }
 
@@ -163,7 +164,11 @@ function approvedArticle(task: Task, siteUrl: string): ApprovedArticle {
 }
 
 function identifierFor(taskId: string): string {
-  return `linkflow-${sha256(taskId).slice(0, 32)}`;
+  return sha256(taskId).slice(0, 32);
+}
+
+function historicalIdentifierFor(taskId: string): string {
+  return `linkflow-${identifierFor(taskId)}`;
 }
 
 function eventTemplate(article: ApprovedArticle, identifier: string, createdAt: number): EventTemplate {
@@ -203,7 +208,7 @@ function eventMatchesReceipt(actual: unknown, expected: Omit<NostrEvent, 'sig'> 
 
 function validReceipt(value: NostrReceipt | undefined, task: Task, article: ApprovedArticle): value is NostrReceipt {
   if (!value || !HEX_32.test(value.pubkey) || !HEX_32.test(value.eventId)
-    || value.identifier !== identifierFor(task.id) || value.contentHash !== article.contentHash
+    || ![identifierFor(task.id), historicalIdentifierFor(task.id)].includes(value.identifier) || value.contentHash !== article.contentHash
     || !Number.isSafeInteger(value.createdAt) || value.createdAt < 1_500_000_000
     || !['submitting', 'published'].includes(value.stage)) return false;
   const template = eventTemplate(article, value.identifier, value.createdAt);
@@ -212,7 +217,7 @@ function validReceipt(value: NostrReceipt | undefined, task: Task, article: Appr
 }
 
 function expectedUnsignedEvent(task: Task, article: ApprovedArticle): Omit<NostrEvent, 'sig'> & { sig?: string } {
-  if (!validReceipt(task.nostr, task, article)) throw new Error('Nostr 回执与原稿不一致');
+  if (!validReceipt(task.nostr, task, article)) throw new Error('Nostr 记录与原稿不一致');
   return {
     ...eventTemplate(article, task.nostr.identifier, task.nostr.createdAt),
     pubkey: task.nostr.pubkey,
@@ -345,7 +350,7 @@ function readRelayEvent(
     let settled = false;
     let sent = false;
     let timer: ReturnType<typeof setTimeout>;
-    const subscription = `lf-${expected.id.slice(0, 24)}`;
+    const subscription = `sub-${expected.id.slice(0, 24)}`;
     const finish = (result: RelayReadResult) => {
       if (settled) return;
       settled = true;
@@ -427,6 +432,7 @@ export async function verifyNostrPublication(
   signal?: AbortSignal,
   dependencies: NostrDependencies = {},
 ): Promise<LinkResult> {
+  if(task.submittedAt&&task.publicationSnapshot){siteUrl=task.publicationSnapshot.siteUrl;task={...task,draft:structuredClone(task.publicationSnapshot.draft),topicUrl:task.publicationSnapshot.targetUrl};}
   const fallback = task.publicUrl ?? `${READER_ORIGIN}/`;
   let receipt: NostrReceipt;
   let publicUrl: string;
@@ -438,26 +444,26 @@ export async function verifyNostrPublication(
     receipt = task.nostr!;
     publicUrl = publicUrlFor(receipt);
   } catch {
-    return unavailable(task.publicUrl ?? fallback, 'Nostr 任务回执、原稿或选题地址无效', 'invalid');
+    return unavailable(task.publicUrl ?? fallback, 'Nostr 任务记录、原稿或选题地址无效', 'invalid');
   }
   if (task.publicUrl && !nostrPublicUrlMatches(task.publicUrl, receipt)) {
     return unavailable(task.publicUrl, 'Nostr 公开网址与原作者及文章标识不一致', 'invalid');
   }
 
   const relay = await readExactEvent(expected, signal, dependencies);
-  if (relay.status === 'invalid') return unavailable(publicUrl, 'Nostr relay 返回的签名、事件身份或全文与原回执不一致', 'invalid');
-  if (relay.status !== 'found') return unavailable(publicUrl, '固定 Nostr relay 暂未回读到原事件；不会据此重发');
+  if (relay.status === 'invalid') return unavailable(publicUrl, 'Nostr 中继服务返回的签名、事件标识或全文与原记录不一致', 'invalid');
+  if (relay.status !== 'found') return unavailable(publicUrl, '固定 Nostr 中继服务暂未回读到原事件；不会据此重发');
 
   let fetched: { url: string; html: string;robotsHeader?:string };
   try { fetched = await (dependencies.fetchHtml ?? defaultFetchHtml)(publicUrl, signal); }
   catch { return unavailable(publicUrl, 'njump 暂时无法确认文章的公开静态页面'); }
   if (Buffer.byteLength(fetched.html, 'utf8') > MAX_READER_HTML_BYTES || !nostrPublicUrlMatches(fetched.url, receipt)) {
-    return unavailable(fetched.url || publicUrl, 'njump 响应地址或大小不符合固定 reader 约束', 'invalid');
+    return unavailable(fetched.url || publicUrl, 'njump 响应地址或大小不符合固定公开阅读页的要求', 'invalid');
   }
 
   try {
     const policyPageUrl = readerPolicyPageUrl(fetched.html, fetched.url, receipt);
-    if (!policyPageUrl) return unavailable(fetched.url, 'njump canonical 与原作者或文章标识不一致', 'invalid');
+    if (!policyPageUrl) return unavailable(fetched.url, 'njump 规范网址与原作者或文章标识不一致', 'invalid');
     const rendering = inspectRenderedArticle(
       fetched.html,
       article.content,
@@ -484,14 +490,14 @@ export async function verifyNostrPublication(
       } catch { /* unrelated reader detail block */ }
     }
     if (!embedded || !eventFieldsEqual(embedded, relay.event)) {
-      return unavailable(fetched.url, 'njump 嵌入 EVENT 与固定 relay 的签名全文不一致', 'invalid');
+      return unavailable(fetched.url, 'njump 嵌入 EVENT 与固定中继服务的签名全文不一致', 'invalid');
     }
     return {
       found: true,
       outcome: 'found',
       url: fetched.url,
       rel: rendering.rel,
-      reason: '固定 relay 的签名全文、njump 嵌入 EVENT 与公开 articleBody 目标链接完全一致。',
+      reason: '固定中继服务的签名全文、njump 嵌入 EVENT 与公开 articleBody 目标链接完全一致。',
     };
   } catch {
     return unavailable(fetched.url, 'njump 静态正文无法安全解析', 'invalid');
@@ -502,12 +508,13 @@ export async function reconcileNostrTask(
   context: ExecutionContext,
   dependencies: NostrDependencies = {},
 ): Promise<NostrReconcileResult> {
+  context=publicationReadContext(context);
   const unknown = { status: 'unknown' as const };
   if (context.channel.id !== 'nostr' || context.task.channelId !== 'nostr' || !context.task.nostr
     || !context.task.submittedAt || !Number.isFinite(Date.parse(context.task.submittedAt))) return unknown;
   const account = context.getAccount();
   if (!account || account.id !== context.task.accountId || account.channelId !== 'nostr'
-    || account.username !== context.task.nostr.pubkey || account.source !== 'generated') return unknown;
+    || account.username !== context.task.nostr.pubkey) return unknown;
   const result = await verifyNostrPublication(context.task, context.site.url, context.signal, dependencies);
   if (!result.found) return unknown;
   return { status: 'found', publicUrl: result.url, nostr: { ...context.task.nostr, stage: 'published' } };
@@ -568,13 +575,13 @@ export async function runNostrTask(
   dependencies: NostrDependencies = {},
 ): Promise<ExecutionResult> {
   if (context.channel.id !== 'nostr' || context.channel.automation !== 'api' || context.task.channelId !== 'nostr') {
-    return { status: 'needs_input', message: '该渠道没有启用 Nostr NIP-23 自动发布' };
+    return { status: 'needs_input', message: '该平台没有启用 Nostr NIP-23 自动发布' };
   }
   const prior = context.task.nostr;
   const remoteCheckpoint = ['nostr_publish_submitting', 'nostr_published'].includes(context.task.checkpoint ?? '');
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
     return {
-      status: 'needs_input', message: '已有 Nostr 提交记录但缺少完整事件身份；不会创建替代事件',
+      status: 'needs_input', message: '已有 Nostr 提交记录但缺少完整事件标识；不会创建替代事件',
       checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl,
     };
   }
@@ -583,36 +590,36 @@ export async function runNostrTask(
   catch (error) { return { status: 'needs_input', message: error instanceof Error ? error.message : 'Nostr 全文草稿无效' }; }
   if (prior) {
     if (!validReceipt(prior, context.task, article)) {
-      return { status: 'needs_input', message: '保存的 Nostr 作者、事件或全文哈希无效；不会重新广播', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
+      return { status: 'needs_input', message: '保存的 Nostr 作者、事件或全文校验值无效；不会重新广播', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
     }
     const account = context.getAccount();
-    if (!usableAccount(account, context.task) || account.username !== prior.pubkey) {
-      return { status: 'needs_input', message: '原 Nostr 作者身份与当前网站连接不一致；不会换号重发', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
+    if (!account || account.id !== context.task.accountId || account.channelId !== 'nostr' || account.username !== prior.pubkey) {
+      return { status: 'needs_input', message: '原 Nostr 作者账号与当前网站连接不一致；不会换号重发', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
     }
     const reconciled = await reconcileNostrTask(context, dependencies);
     if (reconciled.status !== 'found') {
-      return { status: 'needs_input', message: 'Nostr 已有提交意图，但固定 relay 与公开 reader 尚未共同确认原事件；只会继续只读对账', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
+      return { status: 'needs_input', message: 'Nostr 已有提交信息，但固定中继服务与公开阅读页尚未共同确认原事件；只会继续检查原事件', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
     }
     try {
       context.checkpoint({ nostr: reconciled.nostr, checkpoint: 'nostr_published', submittedAt: context.task.submittedAt, publicUrl: reconciled.publicUrl });
     } catch {
-      return { status: 'review', message: 'Nostr 原事件已由 relay 与公开 reader 确认；已保留正向回执', checkpoint: 'nostr_published', submittedAt: context.task.submittedAt, publicUrl: reconciled.publicUrl };
+      return { status: 'review', message: 'Nostr 原事件已由中继服务与公开阅读页确认；已保留正向记录', checkpoint: 'nostr_published', submittedAt: context.task.submittedAt, publicUrl: reconciled.publicUrl };
     }
-    return { status: 'review', message: 'Nostr 原事件已由固定 relay 与公开 reader 完整确认，等待外链核验', checkpoint: 'nostr_published', submittedAt: context.task.submittedAt, publicUrl: reconciled.publicUrl };
+    return { status: 'review', message: 'Nostr 原事件已由固定中继服务与公开阅读页完整确认，等待外链检查', checkpoint: 'nostr_published', submittedAt: context.task.submittedAt, publicUrl: reconciled.publicUrl };
   }
 
-  if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未创建 Nostr 身份或事件' };
+  if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未创建 Nostr 发布账号或事件' };
   let account = context.getAccount();
   if (!account) {
-    if (context.task.accountId) return { status: 'needs_input', message: '任务绑定的 Nostr 身份已不存在；不会生成替代作者' };
+    if (context.task.accountId) return { status: 'needs_input', message: '任务绑定的 Nostr 发布账号已不存在；不会生成替代作者' };
     try { account = await generatedIdentity(context, dependencies); }
-    catch { return { status: 'failed', message: '无法在本机保险箱中创建 Nostr 作者身份，尚未广播事件' }; }
+    catch { return { status: 'failed', message: '无法在本机保险箱中创建 Nostr 作者账号，尚未广播事件' }; }
   }
   if (!usableAccount(account, context.task)) {
-    return { status: 'needs_input', message: '当前 Nostr 作者身份不可用；不会自动换号发布' };
+    return { status: 'needs_input', message: '当前 Nostr 作者账号不可用；不会自动换号发布' };
   }
   const key = await signingKey(context, account);
-  if (!key) return { status: 'needs_input', message: '本机保险箱中的 Nostr 作者私钥缺失或与原公钥不一致；不会生成替代身份' };
+  if (!key) return { status: 'needs_input', message: '本机保险箱中的 Nostr 作者私钥缺失或与原公钥不一致；不会生成替代账号' };
 
   const instant = safeInstant(dependencies);
   const identifier = identifierFor(context.task.id);
@@ -645,7 +652,7 @@ export async function runNostrTask(
     return { status: 'queued', message: 'Nostr 事件尚未广播；任务状态已改变' };
   }
   if (context.signal.aborted) {
-    return { status: 'needs_input', message: 'Nostr 写前意图已保存；暂停后只会只读核对，不会广播替代事件', checkpoint: 'nostr_publish_submitting', submittedAt: instant.iso };
+    return { status: 'needs_input', message: 'Nostr 写前提交信息已保存；暂停后只会检查，不会广播替代事件', checkpoint: 'nostr_publish_submitting', submittedAt: instant.iso };
   }
 
   await Promise.all(RELAYS.map(relay => publishToRelay(relay, event, context.signal, dependencies)));
@@ -661,7 +668,7 @@ export async function runNostrTask(
   if (!verified.found) {
     return {
       status: 'needs_input',
-      message: 'Nostr 广播结果尚未同时通过固定 relay 与公开 reader 核验；只会继续只读对账，不会再次发送 EVENT',
+      message: 'Nostr 广播结果尚未同时通过固定中继服务与公开阅读页检查；只会继续检查原事件，不会再次发送',
       checkpoint: 'nostr_publish_submitting', submittedAt: instant.iso,
     };
   }
@@ -670,11 +677,11 @@ export async function runNostrTask(
   try {
     context.checkpoint({ nostr: published, checkpoint: 'nostr_published', submittedAt: instant.iso, publicUrl });
   } catch {
-    return { status: 'review', message: 'Nostr 事件已由 relay 与公开 reader 确认；暂停后保留同一事件回执', checkpoint: 'nostr_published', submittedAt: instant.iso, publicUrl };
+    return { status: 'review', message: 'Nostr 事件已由中继服务与公开阅读页确认；暂停后保留同一事件记录', checkpoint: 'nostr_published', submittedAt: instant.iso, publicUrl };
   }
   return {
     status: 'review',
-    message: 'Nostr NIP-23 全文已由固定 relay 与公开 reader 完整确认，等待外链核验',
+    message: 'Nostr NIP-23 全文已由固定中继服务与公开阅读页完整确认，等待外链检查',
     checkpoint: 'nostr_published', submittedAt: instant.iso, publicUrl,
   };
 }

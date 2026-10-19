@@ -85,7 +85,8 @@ export interface AgentRiotRecoveryBinding {
 }
 
 export const agentriotHash=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
-export const agentriotInstallationId=(accountId:string)=>`linkflow-desktop:${accountId.toLowerCase()}`;
+// The no-site form is retained only to recognize existing persisted registrations.
+export const agentriotInstallationId=(accountId:string,siteSlug?:string)=>siteSlug?`${siteSlug}:${accountId.toLowerCase()}`:`linkflow-desktop:${accountId.toLowerCase()}`;
 export const agentriotProfileUrl=(slug:string)=>`${AGENTRIOT_ORIGIN}/api/agents/${encodeURIComponent(slug)}`;
 export const agentriotUpdatesUrl=(slug:string)=>`${agentriotProfileUrl(slug)}/updates`;
 export const agentriotPublicUrl=(agentSlug:string,updateSlug:string)=>`${AGENTRIOT_ORIGIN}/agents/${agentSlug}/updates/${updateSlug}`;
@@ -128,9 +129,9 @@ export function parseAgentRiotUpdateReceipt(value:unknown,agentSlug:string):Agen
   return {id:update.id,slug:update.slug,title:update.title,signalType:update.signalType,createdAt:new Date(update.createdAt).toISOString(),publicUrl:agentriotPublicUrl(agentSlug,update.slug)};
 }
 
-export function agentriotRegistrationRequest(installationId:string,name:string,tagline:string,description:string){
+export function agentriotRegistrationRequest(installationId:string,name:string,tagline:string,description:string,legacy=false){
   if(!clean(installationId,1,256)||!AGENTRIOT_SLUG.test(name)||name.length>120||!clean(tagline,1,120)||!clean(description,1,1000))throw Error('AgentRiot identity is invalid');
-  const body=JSON.stringify({installationId,name,tagline,description,softwareName:'LinkFlow'});
+  const body=JSON.stringify({installationId,name,tagline,description,softwareName:legacy?'LinkFlow':'Site Publisher'});
   return {body,requestHash:agentriotHash(`POST\n${AGENTRIOT_REGISTER}\ncontent-type:application/json\n\n${body}`)};
 }
 
@@ -171,7 +172,7 @@ function validOpaque(value:unknown):value is AgentRiotOpaqueResponse {
 
 export function validAgentRiotAccountSecret(value:unknown):value is AgentRiotAccountSecret {
   if(!exactObject(value,['version','kind','operationId','requestHash','installationId','name','tagline','description','createdAt'],['apiKey','opaqueResponse'])||value.version!==1||value.kind!=='agentriot_account'||typeof value.operationId!=='string'||!/^agentriot_register_[a-f0-9]{32}$/.test(value.operationId)||typeof value.requestHash!=='string'||!SHA.test(value.requestHash)||!clean(value.installationId,1,256)||typeof value.name!=='string'||!AGENTRIOT_SLUG.test(value.name)||value.name.length>120||!clean(value.tagline,1,120)||!clean(value.description,1,1000)||!exactDate(value.createdAt)||(value.apiKey!==undefined&&(!clean(value.apiKey,16,256)||!/^agrt_[A-Za-z0-9_-]+$/.test(value.apiKey)))||(value.opaqueResponse!==undefined&&(!validOpaque(value.opaqueResponse)||value.opaqueResponse.requestUrl!==AGENTRIOT_REGISTER)))return false;
-  try{const request=agentriotRegistrationRequest(value.installationId,value.name,value.tagline,value.description);if(request.requestHash!==value.requestHash)return false}catch{return false}
+  try{const current=agentriotRegistrationRequest(value.installationId,value.name,value.tagline,value.description);const legacy=agentriotRegistrationRequest(value.installationId,value.name,value.tagline,value.description,true);if(value.requestHash!==current.requestHash&&value.requestHash!==legacy.requestHash)return false}catch{return false}
   if(value.apiKey!==undefined){if(!value.opaqueResponse)return false;const parsed=parseAgentRiotOpaque(value.opaqueResponse,AGENTRIOT_REGISTER,201),registration=parsed===undefined?undefined:parseAgentRiotRegistration(parsed);if(!registration||registration.apiKey!==value.apiKey||registration.agent.name!==value.name||registration.agent.slug!==value.name)return false}
   return true;
 }

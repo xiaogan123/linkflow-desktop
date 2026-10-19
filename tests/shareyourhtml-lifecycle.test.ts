@@ -3,7 +3,9 @@ import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import test from 'node:test';
+import test,{beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-19T10:17:00.000Z')}));
+import {publicIdentitySlug} from '../src/integrations/public-identity';
 import {renderShareYourHtmlArticle} from '../src/integrations/shareyourhtml-article';
 import {ARTICLE_REVIEW_CONTRACT_VERSION,articleContentHash,articleContextHash} from '../src/main/article-review';
 import {Controller} from '../src/main/controller';
@@ -18,7 +20,7 @@ const taskId='11111111-1111-4111-8111-111111111111';
 const siteId='22222222-2222-4222-8222-222222222222';
 const stamp='2026-10-08T00:00:00.000Z';
 const topic='https://example.com/guides/reviewed-topic';
-const slug='lf-11111111111141118111111111111111';
+const slug=publicIdentitySlug(site(),taskId,40);
 const publicUrl=`https://${slug}.shareyourhtml.com`;
 const editKey='01234567-89ab-cdef-0123-456789abcdef';
 
@@ -92,7 +94,7 @@ test('a nested receipt commit wins over the stale outer Store update',async()=>{
     assert.equal(claim.sourceHash,hash(html));assert.equal(claim.requestHash,hash(JSON.stringify({slug,html,expiry:'never'})));
     const persistence=createShareYourHtmlPublicationPersistence(f.store,vault(f.store),{taskId,siteId,reviewedHtml:html,reviewedDraft:saved.draft!,reviewedDraftRevision:saved.draftRevision!,expectedIntent:claim,assertSubmissionAuthorized:()=>true});
     let nested:Promise<void>|undefined;
-    assert.throws(()=>f.store.update(state=>{nested=persistence.persistCreatedAtomically({receipt:{...claim,publicUrl,requestedExpiry:'never',publicVerification:'pending'},editKey});state.settings.notify=false}),/更晚的持久化结果/);
+    assert.throws(()=>f.store.update(state=>{nested=persistence.persistCreatedAtomically({receipt:{...claim,publicUrl,requestedExpiry:'never',publicVerification:'pending'},editKey});state.settings.notify=false}),/更晚的保存结果/);
     await nested;const current=f.store.read();assert.equal(current.tasks[0].shareYourHtml?.stage,'api_receipt');assert.equal(current.settings.notify,true);assert.match(f.store.getCipher(`publication:${taskId}`)??'',/^enc:/);
     f.store.close();const reopened=new Store(f.path);try{assert.equal(reopened.read().tasks[0].shareYourHtml?.stage,'api_receipt');assert.match(reopened.getCipher(`publication:${taskId}`)??'',/^enc:/)}finally{reopened.close()}
   }finally{rmSync(f.directory,{recursive:true,force:true})}

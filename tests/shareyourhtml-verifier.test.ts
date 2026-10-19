@@ -222,3 +222,20 @@ test('one outer deadline bounds page plus robots guarded reads',async()=>{
   }});
   assert.equal(result.status,'visible_match');assert.equal(result.indexing.robots,'unknown');assert.equal(requests,2);assert.ok(Date.now()-started<90);
 });
+
+test('submitted readback uses its frozen content after topic and site metadata change',async()=>{
+ const original=task(),originalSite=site();
+ const {capturePublicationSnapshots}=await import('../src/main/publication-snapshot');
+ capturePublicationSnapshots({tasks:[{...original,submittedAt:undefined}]},{tasks:[original],sites:[originalSite]});
+ const edited={...original,draft:{title:'Local replacement',description:'Changed',body:'Other content'},topicUrl:'https://example.com/other'};
+ const currentSite={...originalSite,name:'Changed name',url:'https://example-site.com/',domain:'example-site.com',language:'zh',topics:[]};
+ const mock=transport(renderedHtml());
+ const result=await verifyShareYourHtmlReadback(edited,currentSite,{fetch:mock.fetch});
+ assert.equal(result.status,'visible_match');assert.equal(mock.calls.length,2);assert.equal(result.targetLinks[0].href,topic);
+});
+
+test('legacy submitted readback does not apply current topic discovery policy',async()=>{
+ const currentSite={...site(),topics:[]};
+ const result=await verifyShareYourHtmlReadback(task(),currentSite,{fetch:transport(renderedHtml()).fetch});
+ assert.equal(result.status,'visible_match');
+});

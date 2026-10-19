@@ -34,23 +34,23 @@ test('Blogger stays a base candidate but requires OAuth identity and blog bindin
  assert.equal(channelExecutionReadiness(state,s.id,blogger).kind,'ready');
 });
 
-test('real developer proof stays visible for a finance tool while topic only affects ranking',()=>{
+test('developer proof does not override a software-only audience for finance',()=>{
  const s=site('提供公开浏览器计算工具、技术说明与风险教育');
  s.qualifications={developer:'https://publisher.example/tools'};
  const github=channelDiscoveryFor(s,channel('github'));
- assert.equal(github.status,'worth_trying');
- assert.equal(github.executionReady,true);
- assert.equal(github.canQueue,true);
- assert.equal(matchChannels(s,[channel('github')]).length,1,'real qualification permits adjacent topics; relevance only affects ranking');
+ assert.equal(github.status,'blocked');
+ assert.equal(github.executionReady,false);
+ assert.equal(github.canQueue,false);
+ assert.equal(matchChannels(s,[channel('github')]).length,0,'audience suitability is a hard requirement for finance');
 });
 
 test('tool wording never invents package or product qualification',()=>{
  const s=site('提供公开浏览器手续费计算工具和操作指南');
  const product=channelDiscoveryFor(s,channel('product-hunt'));
  const npm=channelDiscoveryFor(s,channel('npm'));
- assert.equal(product.status,'needs_preparation');
+ assert.equal(product.status,'blocked');
  assert.equal(product.executionReady,false);
- assert.equal(product.canQueue,true);
+ assert.equal(product.canQueue,false);
  assert.equal(eligibilityFor(s,channel('product-hunt')).eligible,false);
  assert.equal(npm.status,'blocked');
  assert.equal(npm.canQueue,false);
@@ -60,11 +60,11 @@ test('tool wording never invents package or product qualification',()=>{
 test('affiliate signals keep hosted publication conditions visible without keyword-only rejection',()=>{
  const s=site('提供交易所邀请码、手续费减免和推荐佣金说明');
  const wordpress=channelDiscoveryFor(s,channel('wordpress-com'));
- assert.equal(wordpress.status,'blocked');assert.equal(wordpress.canQueue,false);assert.match(wordpress.reason,/停用/);
+ assert.equal(wordpress.status,'needs_preparation');assert.equal(wordpress.canQueue,false);
  const leaflet=channelDiscoveryFor(s,channel('leaflet'));
- assert.equal(leaflet.status,'blocked');assert.equal(leaflet.canQueue,false);assert.match(leaflet.reason,/停用/);
+ assert.equal(leaflet.status,'worth_trying');assert.equal(leaflet.canQueue,true);
  const enabledLeaflet=channelDiscoveryFor(s,{...channel('leaflet'),enabled:true});
- assert.equal(enabledLeaflet.status,'recommended');assert.equal(enabledLeaflet.canQueue,true);assert.doesNotMatch(enabledLeaflet.reason,/联盟导流为主要目的/);
+ assert.equal(enabledLeaflet.status,'worth_trying');assert.equal(enabledLeaflet.canQueue,true);assert.doesNotMatch(enabledLeaflet.reason,/联盟导流为主要目的/);
  for(const candidate of [{...channel('wordpress-com'),enabled:true},channel('paragraph')]){
   const result=channelDiscoveryFor(s,candidate),id=candidate.id;
   assert.equal(result.status,'needs_preparation',id);
@@ -82,14 +82,14 @@ test('disabled channels and missing hard business facts remain blocked',()=>{
  assert.equal(company.canQueue,false);
 });
 
-test('translation is a ranking note and paid manual work never becomes automatic',()=>{
+test('language mismatch blocks preparation and paid manual work never becomes automatic',()=>{
  const translatedSite=site();translatedSite.qualifications={techContent:'https://publisher.example/guide'};
  const translated=channelDiscoveryFor(translatedSite,channel('hackernoon'));
  assert.equal(translated.channel.automation,'manual');
- assert.equal(translated.status,'worth_trying');
- assert.equal(translated.canQueue,true);
+ assert.equal(translated.status,'blocked');
+ assert.equal(translated.canQueue,false);
  assert.equal(translated.executionReady,false);
- assert.match(translated.reason,/语言.*不同/);
+ assert.match(translated.reason,/语言.*不符合/);
  const paid=channelDiscoveryFor(site(),channel('ghost-pro'));
  assert.equal(paid.channel.free,'paid');
  assert.equal(paid.channel.automation,'manual');

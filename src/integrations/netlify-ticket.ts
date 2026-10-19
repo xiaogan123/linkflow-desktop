@@ -260,7 +260,7 @@ async function fixedRequest(
       const request = runtime.dependencies.request ?? ((input: string, init: RequestInit) => fetch(input, init));
       const responsePromise = request(url.toString(), {
         method,
-        headers: { accept: 'application/json', 'user-agent': 'Linkflow-Desktop' },
+        headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0' },
         redirect: 'error',
         credentials: 'omit',
         cache: 'no-store',

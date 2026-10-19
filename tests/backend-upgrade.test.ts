@@ -30,7 +30,7 @@ test('legacy state migration creates a separate mailbox and stable task identity
 
 test('a confirmed lost link stays historically counted, leaves current health, and recovers without resubmission',()=>{
  const value=task(),missingAt=new Date('2026-09-10T00:00:00.000Z');applyLinkResult(value,{outcome:'absent',found:false,url:value.publicUrl!,rel:'',reason:'missing'},missingAt);
- assert.equal(value.status,'needs_input');assert.equal(value.health,'missing');assert.equal(value.reviewKind,'lost_link');assert.equal(value.attempts,1);assert.equal(liveThisMonth(siteId,[value],missingAt,'UTC'),1);assert.equal(currentLive(siteId,[value]),0);assert.ok(value.nextCheckAt);
+ assert.equal(value.status,'live');assert.equal(value.health,'missing');assert.equal(value.reviewKind,undefined);assert.equal(value.attempts,1);assert.equal(liveThisMonth(siteId,[value],missingAt,'UTC'),1);assert.equal(currentLive(siteId,[value]),0);assert.ok(value.nextCheckAt);
  applyLinkResult(value,{outcome:'found',found:true,url:value.publicUrl!,rel:'nofollow',reason:''},new Date('2026-09-17T00:00:00.000Z'));
  assert.equal(value.status,'live');assert.equal(value.health,'healthy');assert.equal(value.attempts,1);assert.equal(value.firstLiveAt,'2026-09-01T00:00:00.000Z');assert.ok((value.history?.length??0)>=2);
 });
@@ -158,12 +158,14 @@ test('validated backup preserves a real custom-channel id and sourced metrics',(
  const restored=validateBackup({state,secrets:{}}).state;assert.equal(restored.customChannels?.[0].id,custom[0].id);assert.deepEqual(restored.channelMetrics?.[custom[0].id],state.channelMetrics[custom[0].id]);
 });
 
-test('metric backup restores explicit measurement targets and leaves older imports unmodified',()=>{
+test('metric backup preserves legacy measurements and migrates their explicit targets to arrays',()=>{
  const state=emptyState();
  state.channelMetrics={telegraph:{authority:{name:'Ahrefs DR',value:0,source:'https://metrics.example.org/report',asOf:'2026-09-28',scope:'subdomain',target:'journal.example.org'}},'github-gist':{authority:{name:'DR',value:42,source:'https://metrics.example.org/legacy',asOf:'2026-09-28'}}};
- assert.deepEqual(validateBackup({state,secrets:{}}).state.channelMetrics,state.channelMetrics);
+ const restored=validateBackup({state,secrets:{}}).state.channelMetrics!;
+ for(const channelId of Object.keys(state.channelMetrics))assert.deepEqual(restored[channelId].authority,state.channelMetrics[channelId].authority);
+ assert.equal(restored.telegraph.metrics?.[0].target,'journal.example.org');assert.equal(restored['github-gist'].metrics?.[0].target,'');
  state.channelMetrics['github-gist']={authority:{name:'DR',value:42,source:'https://metrics.example.org/monthly',dataMonth:'2026-09',checkedAt:'2026-09-28',scope:'domain',target:'example.org'}};
- assert.deepEqual(validateBackup({state,secrets:{}}).state.channelMetrics,state.channelMetrics);
+ const monthly=validateBackup({state,secrets:{}}).state.channelMetrics!;assert.deepEqual(monthly['github-gist'].authority,state.channelMetrics['github-gist'].authority);assert.equal(monthly['github-gist'].metrics?.[0].asOf,'2026-09');
  state.channelMetrics.telegraph.authority!.target='https://example.org/article';
  assert.throws(()=>validateBackup({state,secrets:{}}),/测量对象/);
 });

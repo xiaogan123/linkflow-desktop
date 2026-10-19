@@ -34,6 +34,12 @@ const UNKNOWN_CREATE_MESSAGES:Record<DocsMdUnknownDiagnostic,string>={
   schema_rate_limit:'Docs MD 单次提交已保留；响应 rateLimit.remaining 字段不符合契约，结果不明且不会重发',
   schema_url:'Docs MD 单次提交已保留；响应 url 或 rawUrl 字段不符合契约，结果不明且不会重发',
 };
+const DOCS_MD_VERIFY_MESSAGES={
+  local:'Docs MD 本地缺少可核对的原稿或平台返回记录；未判断平台失败',
+  absent:'Docs MD 已知永久页或原始 Markdown 地址不存在',
+  invalid:'原文、公开 HTML 或永久页标记与记录不一致',
+  unavailable:'Docs MD 本地绑定不完整或公开页检查暂未完成',
+} as const;
 
 export interface DocsMdExecutionResult extends ExecutionResult{docsMd?:DocsMdTaskReceipt}
 export type DocsMdReconcileResult={status:'found';publicUrl:string;docsMd:DocsMdTaskReceipt}|{status:'unknown'};
@@ -62,13 +68,13 @@ export function docsMdDraftError(draft:Task['draft']):string|undefined{
     return 'Docs MD 需要可备份的单行标题和完整 Markdown 正文';
   try{
     if(unsupportedMarkdownToken(marked.lexer(identity.source,{gfm:true})))
-      return 'Docs MD 自动核验仅支持普通 Markdown；不接受原始 HTML、图片、Mermaid 或无法绑定的相对链接';
+      return 'Docs MD 自动检查仅支持普通 Markdown；不接受原始 HTML、图片、Mermaid 或无法绑定的相对链接';
   }catch{return 'Docs MD Markdown 无法按固定渲染契约解析'}
 }
 
 function operationId(taskId:string):string{return `docs_md_${taskId.toLowerCase().replace(/[^a-f0-9]/g,'')}`}
 function publicUrl(id:string):string{
-  if(id.length>128||!PUBLIC_ID.test(id))throw Error('Docs MD 公开文章身份无效');
+  if(id.length>128||!PUBLIC_ID.test(id))throw Error('Docs MD 公开文章标识无效');
   return `${ORIGIN}/${id}`;
 }
 function rawUrl(id:string):string{return `${ORIGIN}/raw/${id}`}
@@ -77,11 +83,13 @@ function intent(saved:DocsMdTaskReceipt):DocsMdIntent{
 }
 function receipt(saved:DocsMdTaskReceipt):DocsMdReceipt|undefined{
   if(!saved.id)return;
-  const url=publicUrl(saved.id);
-  return {operationId:saved.operationId,id:saved.id,publicUrl:url,rawUrl:rawUrl(saved.id),sourceHash:saved.sourceHash,requestHash:saved.requestHash,expiresAt:0};
+  try{
+    const url=publicUrl(saved.id);
+    return {operationId:saved.operationId,id:saved.id,publicUrl:url,rawUrl:rawUrl(saved.id),sourceHash:saved.sourceHash,requestHash:saved.requestHash,expiresAt:0};
+  }catch{return}
 }
 
-class PublicReadError extends Error{constructor(readonly kind:'unavailable'|'invalid'){super(`Docs MD public read ${kind}`)}}
+class PublicReadError extends Error{constructor(readonly kind:'absent'|'unavailable'|'invalid'){super(`Docs MD public read ${kind}`)}}
 function discard(response:Response):void{if(response.body&&!response.body.locked)void response.body.cancel().catch(()=>undefined)}
 async function abortable<T>(pending:Promise<T>,signal:AbortSignal,disposeLate?:(value:T)=>void):Promise<T>{
   if(signal.aborted){void pending.then(value=>disposeLate?.(value),()=>undefined);throw new PublicReadError('unavailable')}
@@ -99,7 +107,7 @@ async function readBounded(response:Response,maximum:number,signal:AbortSignal):
   if(!response.body)return '';
   const reader=response.body.getReader(),chunks:Uint8Array[]=[];let size=0;
   try{for(;;){const next=await abortable(reader.read(),signal);if(next.done)break;size+=next.value.byteLength;if(size>maximum)throw new PublicReadError('invalid');chunks.push(next.value)}}
-  catch{void reader.cancel().catch(()=>undefined);throw new PublicReadError(signal.aborted?'unavailable':'invalid')}
+  catch(error){void reader.cancel().catch(()=>undefined);throw error instanceof PublicReadError?error:new PublicReadError('unavailable')}
   finally{reader.releaseLock()}
   try{return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(Buffer.concat(chunks.map(value=>Buffer.from(value))))}
   catch{throw new PublicReadError('invalid')}
@@ -120,11 +128,11 @@ async function fixedPublicGet(url:string,kind:'html'|'robots',deps:DocsMdDepende
     let pending:Promise<Response>;try{pending=Promise.resolve(transport(url,{method:'GET',redirect:'manual',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',signal:controller.signal,headers:{accept:kind==='html'?'text/html':'text/plain'}}))}catch{throw new PublicReadError('unavailable')}
     response=await abortable(pending,controller.signal,discard);
     if(controller.signal.aborted)throw new PublicReadError('unavailable');
-    if(response.redirected||response.type==='opaqueredirect'||response.status>=300&&response.status<400||response.url&&response.url!==url)throw new PublicReadError('invalid');
-    if(response.status===404||response.status===410||response.status===451)throw new PublicReadError('invalid');
-    if(response.status!==200)throw new PublicReadError(response.status>=500||response.status===408||response.status===429?'unavailable':'invalid');
+    if(response.redirected||response.type==='opaqueredirect'||response.status>=300&&response.status<400||response.url&&response.url!==url)throw new PublicReadError('unavailable');
+    if(kind==='html'&&(response.status===404||response.status===410))throw new PublicReadError('absent');
+    if(response.status!==200)throw new PublicReadError('unavailable');
     const mediaType=response.headers.get('content-type')?.split(';',1)[0].trim().toLowerCase();
-    if(mediaType!==(kind==='html'?'text/html':'text/plain'))throw new PublicReadError('invalid');
+    if(mediaType!==(kind==='html'?'text/html':'text/plain'))throw new PublicReadError('unavailable');
     handled=true;return {text:await readBounded(response,kind==='html'?MAX_PUBLIC_HTML_BYTES:MAX_ROBOTS_BYTES,controller.signal),headers:response.headers};
   }catch(error){controller.abort();if(error instanceof PublicReadError)throw error;throw new PublicReadError('unavailable')}
   finally{clearTimeout(timer);deps.signal?.removeEventListener('abort',externalAbort);if(response&&!handled)discard(response)}
@@ -163,53 +171,62 @@ function exactResolvedUrl(value:string|undefined,base:string,expected:string):bo
   if(!value)return false;try{return new URL(value,base).href===expected}catch{return false}
 }
 
-function rendered(html:string,task:Task,url:string,expectedRawUrl:string,target:string,headers:Headers):string|undefined{
+function rendered(html:string,task:Task,url:string,expectedRawUrl:string,target:string,headers:Headers):{status:'found';rel:string}|{status:'invalid'|'unavailable'}{
   try{
-    const identity=docsMdTaskIdentity(task);if(!identity||!task.draft)return;
+    const identity=docsMdTaskIdentity(task);if(!identity||!task.draft)return {status:'unavailable'};
     const $=load(html);applyDeclaredArticleVisibility($);
     const canonical=$('link[rel]').filter((_,node)=>($(node).attr('rel')??'').toLowerCase().split(/\s+/).includes('canonical'));
-    if(canonical.length!==1||!exactResolvedUrl(canonical.attr('href'),url,url))return;
+    if(canonical.length!==1||!exactResolvedUrl(canonical.attr('href'),url,url))return {status:'unavailable'};
     const outer=$('#markdown-content'),article=$(ARTICLE_SELECTOR);
     if(outer.length!==1||article.length!==1||outer.children('.markdown-content').length!==1
-      ||!visibleWithAncestors($,outer[0])||!visibleWithAncestors($,article[0]))return;
+      ||!visibleWithAncestors($,outer[0])||!visibleWithAncestors($,article[0]))return {status:'unavailable'};
     const blocks=article.children().toArray().filter(node=>visibleText($,node).length>0),headings=article.find('h1').toArray();
     if(!blocks.length||!$(blocks[0]).is('h1')||headings.length!==1||!visibleWithAncestors($,headings[0])
-      ||visibleText($,headings[0])!==normal(task.draft.title.trim()))return;
+      ||visibleText($,headings[0])!==normal(task.draft.title.trim()))return {status:'unavailable'};
     const card=outer.parent(),row=card.parent(),header=row.prev(),footer=row.next(),fileBar=outer.prev();
     if(card.length!==1||row.length!==1||header.length!==1||footer.length!==1||fileBar.length!==1
-      ||![card[0],row[0],header[0],footer[0],fileBar[0]].every(node=>visibleWithAncestors($,node)))return;
+      ||![card[0],row[0],header[0],footer[0],fileBar[0]].every(node=>visibleWithAncestors($,node)))return {status:'unavailable'};
     const badge=header.children('div'),footerText=footer.children('p');
-    if(badge.length!==1||visibleText($,badge[0])!=='Permanent link'
-      ||footerText.length!==1||visibleText($,footerText[0])!=='This link does not expire.')return;
+    if(badge.length!==1||footerText.length!==1)return {status:'unavailable'};
+    const badgeText=visibleText($,badge[0]),expiryText=visibleText($,footerText[0]);
+    if(!badgeText||!expiryText)return {status:'unavailable'};
+    if(badgeText!=='Permanent link'||expiryText!=='This link does not expire.'){
+      const claimsExpiry=(value:string)=>/\btemporary\b|\bnot permanent\b|\b(?:expires?|expiring)\s+(?:in|at|on|after|today|tomorrow)\b|\bwill expire\b/i.test(value);
+      return {status:claimsExpiry(badgeText)||claimsExpiry(expiryText)?'invalid':'unavailable'};
+    }
     const filename=fileBar.find('h1'),rawLinks=fileBar.find('a[href]').toArray().filter(node=>visibleText($,node)==='Raw');
     if(filename.length!==1||visibleText($,filename[0])!=='publication.md'
       ||rawLinks.length!==1||!visibleWithAncestors($,rawLinks[0])
-      ||!exactResolvedUrl($(rawLinks[0]).attr('href'),url,expectedRawUrl))return;
+      ||!exactResolvedUrl($(rawLinks[0]).attr('href'),url,expectedRawUrl))return {status:'unavailable'};
+    const targetAnchors=article.find('a[href]').toArray().filter(node=>visibleWithAncestors($,node)&&visibleText($,node).length>0&&exactResolvedUrl($(node).attr('href'),url,target));
+    if(!targetAnchors.length)return {status:'invalid'};
     const inspected=inspectRenderedArticle(html,identity.source,target,ARTICLE_SELECTOR,{pageUrl:url,robotsHeader:headers.get('x-robots-tag')??''});
-    if(!inspected.found)return;
+    if(!inspected.found)return {status:inspected.reason==='policy'||inspected.reason==='target'?'invalid':'unavailable'};
     for(const anchor of article.find('a[href]').toArray()){
       const href=$(anchor).attr('href')??'';if(!/^https?:\/\//i.test(href))continue;
       const rel=new Set(($(anchor).attr('rel')??'').toLowerCase().split(/\s+/).filter(Boolean));
-      if([...REQUIRED_LINK_REL].some(value=>!rel.has(value)))return;
+      if([...REQUIRED_LINK_REL].some(value=>!rel.has(value)))return {status:'invalid'};
     }
     const targetRel=new Set(inspected.rel.toLowerCase().split(/\s+/).filter(Boolean));
-    if([...REQUIRED_LINK_REL].some(value=>!targetRel.has(value)))return;
-    return inspected.rel;
-  }catch{return}
+    if([...REQUIRED_LINK_REL].some(value=>!targetRel.has(value)))return {status:'invalid'};
+    return {status:'found',rel:inspected.rel};
+  }catch{return {status:'unavailable'}}
 }
 
-async function accepted(task:Task,target:string,deps:DocsMdDependencies):Promise<{status:'found';url:string;rel:string}|{status:'invalid'|'unavailable'}>{
+async function accepted(task:Task,target:string,deps:DocsMdDependencies):Promise<{status:'found';url:string;rel:string}|{status:'absent'|'invalid'|'unavailable'}>{
   const saved=task.docsMd,known=saved&&receipt(saved),identity=docsMdTaskIdentity(task);
-  if(!saved||!known||!identity||saved.sourceHash!==identity.sourceHash||saved.requestHash!==identity.requestHash
-    ||task.submittedAt!==saved.createdAt||task.publicUrl!==known.publicUrl)return {status:'invalid'};
+  if(!saved||!known||!identity||!/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(saved.operationId)
+    ||saved.sourceHash!==identity.sourceHash||saved.requestHash!==identity.requestHash
+    ||task.submittedAt!==saved.createdAt||task.publicUrl!==known.publicUrl)return {status:'unavailable'};
   const raw=await compareDocsMdRawSource(known,identity.source,deps);
+  if(raw.status==='source_absent')return {status:'absent'};
   if(raw.status==='source_mismatch')return {status:'invalid'};
   if(raw.status==='source_unavailable')return {status:'unavailable'};
   try{
     const robots=await fixedPublicGet(`${ORIGIN}/robots.txt`,'robots',deps);
     if(!robotsAllows(robots.text,new URL(known.publicUrl).pathname))return {status:'invalid'};
-    const page=await fixedPublicGet(known.publicUrl,'html',deps),rel=rendered(page.text,task,known.publicUrl,known.rawUrl,target,page.headers);
-    return rel===undefined?{status:'invalid'}:{status:'found',url:known.publicUrl,rel};
+    const page=await fixedPublicGet(known.publicUrl,'html',deps),result=rendered(page.text,task,known.publicUrl,known.rawUrl,target,page.headers);
+    return result.status==='found'?{status:'found',url:known.publicUrl,rel:result.rel}:result;
   }catch(error){return {status:error instanceof PublicReadError?error.kind:'unavailable'}}
 }
 
@@ -226,25 +243,25 @@ export async function verifyDocsMdPublication(task:Task,target:string,deps:DocsM
   const saved=task.docsMd,known=saved&&receipt(saved);
   if(task.channelId!=='docs-md'||task.sourceDomain!=='docs-md.com'||task.accountId||!saved||!known||!task.draft
     ||!['api_receipt','published'].includes(saved.stage)||task.publicUrl!==known.publicUrl)
-    return failed('invalid','Docs MD 缺少与原稿绑定的 API 回执');
+    return failed('unreachable',DOCS_MD_VERIFY_MESSAGES.local);
   const match=await accepted(task,task.topicUrl??target,deps);
-  if(match.status!=='found')return failed(match.status==='invalid'?'invalid':'unreachable',match.status==='invalid'?'原文、公开 HTML 或永久页标记与回执不一致':'Docs MD 公开页只读核验暂未完成');
+  if(match.status!=='found')return failed(match.status==='absent'?'absent':match.status==='invalid'?'invalid':'unreachable',match.status==='absent'?DOCS_MD_VERIFY_MESSAGES.absent:match.status==='invalid'?DOCS_MD_VERIFY_MESSAGES.invalid:DOCS_MD_VERIFY_MESSAGES.unavailable);
   return {found:true,outcome:'found',url:match.url,rel:match.rel,reason:'Docs MD 原始 Markdown 与公开页可见全文、永久页外壳及目标链接一致；不代表已被搜索引擎收录'};
 }
 
 export async function runDocsMdTask(context:ExecutionContext,deps:DocsMdDependencies={}):Promise<DocsMdExecutionResult>{
-  if(!contextMatches(context)||!context.docsMdPersistence)return {status:'needs_input',message:'当前任务未绑定 Docs MD 安全持久化'};
+  if(!contextMatches(context)||!context.docsMdPersistence)return {status:'needs_input',message:'当前任务缺少 Docs MD 的安全保存位置'};
   const format=docsMdDraftError(context.task.draft);if(format)return {status:'needs_input',message:format};
   const identity=docsMdTaskIdentity(context.task)!;const prior=context.task.docsMd;
   if(prior){
     const known=receipt(prior),checkpoint=prior.stage==='published'?'docs_md_published':prior.stage==='api_receipt'?'docs_md_api_receipt':'docs_md_share_submitting';
     if(prior.sourceHash!==identity.sourceHash||prior.requestHash!==identity.requestHash||context.task.submittedAt!==prior.createdAt
-      ||known&&context.task.publicUrl!==known.publicUrl)return {status:'needs_input',message:'Docs MD 原回执、原稿或公开地址已不一致，禁止重发',docsMd:prior,checkpoint,submittedAt:context.task.submittedAt};
+      ||known&&context.task.publicUrl!==known.publicUrl)return {status:'needs_input',message:'Docs MD 原记录、原稿或公开地址已不一致，禁止重发',docsMd:prior,checkpoint,submittedAt:context.task.submittedAt};
     const recovered=await reconcileDocsMdTask(context,deps);
-    return recovered.status==='found'?{status:'review',message:'Docs MD 原稿已通过原文与公开 HTML 核验，没有重发',publicUrl:recovered.publicUrl,docsMd:recovered.docsMd,checkpoint:'docs_md_published',submittedAt:context.task.submittedAt}
-      :{status:'review',message:known?'Docs MD API 回执已保留；公开可见全文未核验，不计入成果':'Docs MD 单次提交结果不明；缺少公开 ID，已停止自动请求且不会重发',docsMd:prior,checkpoint,submittedAt:context.task.submittedAt,...(known?{publicUrl:known.publicUrl}:{})};
+    return recovered.status==='found'?{status:'review',message:'Docs MD 原稿已通过原文与公开 HTML 检查，没有重发',publicUrl:recovered.publicUrl,docsMd:recovered.docsMd,checkpoint:'docs_md_published',submittedAt:context.task.submittedAt}
+      :{status:'review',message:known?'Docs MD 平台返回记录已保留；公开可见全文未检查，不计为外链':'Docs MD 单次提交结果不明；缺少公开 ID，已停止自动请求且不会重发',docsMd:prior,checkpoint,submittedAt:context.task.submittedAt,...(known?{publicUrl:known.publicUrl}:{})};
   }
-  if(context.task.submittedAt||context.task.publicUrl||/^docs_md_/.test(context.task.checkpoint??''))return {status:'needs_input',message:'Docs MD 提交痕迹缺少完整原意图，禁止重发'};
+  if(context.task.submittedAt||context.task.publicUrl||/^docs_md_/.test(context.task.checkpoint??''))return {status:'needs_input',message:'Docs MD 提交痕迹缺少完整原提交信息，禁止重发'};
   let submittedIntent:DocsMdIntent|undefined;
   const persistence={
     persistIntent:async(value:DocsMdIntent)=>{submittedIntent={...value};await context.docsMdPersistence!.persistIntent(value)},
@@ -252,11 +269,11 @@ export async function runDocsMdTask(context:ExecutionContext,deps:DocsMdDependen
     persistEditTokenAtomically:(value:{operationId:string;id:string;editToken:string})=>context.docsMdPersistence!.persistEditTokenAtomically(value),
   };
   const result=await createDocsMdShare({operationId:operationId(context.task.id),reviewed:true,markdown:identity.source},persistence,{...deps,signal:context.signal});
-  if(result.status==='not_started')return {status:'queued',message:'Docs MD 提交意图未持久化，未发送'};
+  if(result.status==='not_started')return {status:'queued',message:'Docs MD 提交信息未保存，未发送'};
   if(result.status==='blocked')return {status:'review',message:'Docs MD 单次提交已保留；结果不明且不会重发',docsMd:{...result.intent,stage:'submitting'},checkpoint:'docs_md_share_submitting',submittedAt:result.intent.createdAt};
   if(result.status==='unknown')return {status:'review',message:UNKNOWN_CREATE_MESSAGES[result.diagnostic],docsMd:{...result.intent,stage:'submitting'},checkpoint:'docs_md_share_submitting',submittedAt:result.intent.createdAt};
-  if(!submittedIntent)throw Error('Docs MD API 回执缺少本地提交意图');
-  return {status:'review',message:result.status==='created_persistence_unknown'?'已保留 Docs MD 公开回执；编辑令牌或持久化结果未完全确认，不会重发获取':'Docs MD API 回执已保留；等待原文与公开 HTML 核验',publicUrl:result.receipt.publicUrl,docsMd:{...submittedIntent,stage:'api_receipt',id:result.receipt.id},checkpoint:'docs_md_api_receipt',submittedAt:submittedIntent.createdAt};
+  if(!submittedIntent)throw Error('Docs MD 平台返回记录缺少本地提交信息');
+  return {status:'review',message:result.status==='created_persistence_unknown'?'已保留 Docs MD 公开记录；编辑令牌或保存结果未完全确认，不会重发获取':'Docs MD 平台返回记录已保留；等待原文与公开 HTML 检查',publicUrl:result.receipt.publicUrl,docsMd:{...submittedIntent,stage:'api_receipt',id:result.receipt.id},checkpoint:'docs_md_api_receipt',submittedAt:submittedIntent.createdAt};
 }
 
 export const docsMdPublisherTesting={contextMatches,operationId,receipt,intent,rendered,robotsAllows,unsupportedMarkdownToken};

@@ -1,7 +1,7 @@
 {
   "name": "linkflow",
   "productName": "外链助手",
-  "version": "1.2.36",
+  "version": "1.2.37",
   "description": "个人免费外链计划客户端",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/build-electron.mjs",
     "start": "npm run build && electron .",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
     "test:desktop": "node scripts/smoke-desktop.mjs",
     "package:mac": "npm run build && node scripts/package.mjs mac-arm64",
     "package:win": "npm run build && node scripts/package.mjs windows-x64",

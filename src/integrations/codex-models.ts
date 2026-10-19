@@ -75,7 +75,7 @@ export async function queryCodexModels(command:string,args:string[],env:NodeJS.P
   });
   proc.on('error',()=>finish(Error('无法启动 Codex 模型发现服务')));
   proc.on('close',()=>{if(!settled)finish(Error('Codex 模型发现未完成'))});
-  send({id:1,method:'initialize',params:{clientInfo:{name:'linkflow',title:'Linkflow',version:'1.1.0'}}});
+  send({id:1,method:'initialize',params:{clientInfo:{name:'site-publisher',title:'Site Publisher',version:'1.1.0'}}});
  })}catch(error){primary=error instanceof Error?error:Error('Codex 模型发现失败')}
  let cleanup:Error|undefined;
  if(child)try{await closeOwnedProcess(child,closed)}catch{cleanup=Error('Codex 模型发现子进程清理未完成')}

@@ -295,10 +295,72 @@ test('stores the local author and immutable event identity before either fixed r
   assert.equal(event.pubkey, PUBKEY);
   assert.equal(event.tags.find(tag => tag[0] === 'title')?.[1], data.task.draft?.title);
   assert.equal(event.tags.find(tag => tag[0] === 'd')?.[1], nostrTesting.identifierFor(data.task.id));
+  assert.doesNotMatch(JSON.stringify(event.tags), /linkflow|\blf-/i);
   assert.equal(verifyEvent(event), true);
   const publicState = JSON.stringify({ task: data.task, checkpoints: data.checkpoints, result, accounts: data.accounts, logs: data.logs });
   assert.equal(publicState.includes(TEST_SECRET), false);
   assert.equal(data.logs.length, 0);
+});
+
+test('two sites mint different local Nostr authors while each keeps its own first event', async () => {
+  const first = fixture({ existing: null });
+  const second = fixture({ existing: null });
+  second.site.id = 'site-b';
+  second.site.domain = 'example-site.com';
+  second.site.url = 'https://example-site.com/';
+  second.task.siteId = 'site-b';
+  second.task.id = 'task-b';
+  second.task.topicUrl = 'https://example-site.com/guides/cost-audit?source=research';
+  second.task.draft!.body = BODY.replace(TARGET, second.task.topicUrl);
+  const firstHarness = new RelayHarness('uncertain-drop');
+  const secondHarness = new RelayHarness('uncertain-drop');
+  const firstDeps = dependencies(firstHarness, async () => { throw Error('reader unavailable'); });
+  const secondDeps = dependencies(secondHarness, async () => { throw Error('reader unavailable'); });
+  secondDeps.generateSecretKey = () => Uint8Array.from([...new Uint8Array(31), 2]);
+  secondDeps.randomUUID = () => 'nostr-account-b';
+  await runNostrTask(first.context, firstDeps);
+  await runNostrTask(second.context, secondDeps);
+  assert.notEqual(first.accounts[0].id, second.accounts[0].id);
+  assert.notEqual(first.accounts[0].username, second.accounts[0].username);
+  assert.equal(first.task.nostr?.pubkey, first.accounts[0].username);
+  assert.equal(second.task.nostr?.pubkey, second.accounts[0].username);
+  assert.doesNotMatch(second.task.nostr?.identifier ?? '', /linkflow/i);
+});
+
+test('old branded Nostr receipt remains verifiable without emitting another event', async () => {
+  const previous = task();
+  const article = nostrTesting.approvedArticle(previous, site().url);
+  const identifier = `linkflow-${nostrTesting.identifierFor(previous.id)}`;
+  const event = finalizeEvent(nostrTesting.eventTemplate(article, identifier, CREATED_AT), TEST_KEY);
+  previous.accountId = 'nostr-account';
+  previous.nostr = { pubkey: event.pubkey, eventId: event.id, identifier, contentHash: article.contentHash, createdAt: CREATED_AT, stage: 'submitting' };
+  previous.submittedAt = NOW;
+  previous.checkpoint = 'nostr_publish_submitting';
+  const data = fixture({ task: previous });
+  const harness = new RelayHarness();
+  harness.events.set(event.id, event);
+  const result = await runNostrTask(data.context, dependencies(harness, async url => ({ url, html: readerHtml(event) })));
+  assert.equal(result.status, 'review');
+  assert.equal(result.publicUrl, nostrTesting.publicUrlFor(previous.nostr));
+  assert.equal([...harness.sends.values()].reduce((sum, count) => sum + count, 0), 0);
+});
+
+test('an imported historical Nostr author reconciles its old event by reads only', async () => {
+  const previous = task();
+  const article = nostrTesting.approvedArticle(previous, site().url);
+  const identifier = `linkflow-${nostrTesting.identifierFor(previous.id)}`;
+  const event = finalizeEvent(nostrTesting.eventTemplate(article, identifier, CREATED_AT), TEST_KEY);
+  previous.accountId = 'nostr-account';
+  previous.nostr = { pubkey: event.pubkey, eventId: event.id, identifier, contentHash: article.contentHash, createdAt: CREATED_AT, stage: 'submitting' };
+  previous.submittedAt = NOW;
+  previous.checkpoint = 'nostr_publish_submitting';
+  const data = fixture({ task: previous, existing: account({ source: 'imported' }) });
+  const harness = new RelayHarness();
+  harness.events.set(event.id, event);
+  const result = await runNostrTask(data.context, dependencies(harness, async url => ({ url, html: readerHtml(event) })));
+  assert.equal(result.status, 'review');
+  assert.equal(result.publicUrl, nostrTesting.publicUrlFor(previous.nostr));
+  assert.equal([...harness.sends.values()].reduce((sum, count) => sum + count, 0), 0);
 });
 
 test('an uncertain first broadcast is never sent again and recovery remains read-only', async () => {
@@ -650,4 +712,19 @@ test('Nostr public reader headers restrict qualification without changing the si
     if(directive==='nofollow')assert.match(result.rel,/nofollow/);
   }
   assert.deepEqual(base.task.nostr,base.receipt);
+});
+
+import {publicationDraftHash} from '../src/main/publication-snapshot';
+test('Nostr reconciliation and verification retain captured draft and target after later site edits',async()=>{
+  const f=fixture(),harness=new RelayHarness(),deps=dependencies(harness,async url=>({url,html:readerHtml([...harness.events.values()][0])}));
+  await runNostrTask(f.context,deps);
+  const draft=structuredClone(f.task.draft!);
+  f.task.publicationSnapshot={version:1,capturedAt:NOW,source:'submitted_draft',siteUrl:f.site.url,targetUrl:TARGET,siteName:f.site.name,language:f.site.language,draft,contentHash:publicationDraftHash(draft)};
+  f.site.url='https://example-site.com/';f.site.name='Changed Name';f.site.language='zh';
+  f.task.draft={...draft,title:'Changed title',body:'Changed body'};f.task.topicUrl='https://example-site.com/changed';
+  const before=[...harness.sends.values()].reduce((sum,count)=>sum+count,0);
+  const result=await verifyNostrPublication(f.task,f.site.url,f.context.signal,deps);assert.equal(result.found,true,result.reason);
+  const reconciled=await reconcileNostrTask(f.context,deps);assert.equal(reconciled.status,'found');
+  assert.equal([...harness.sends.values()].reduce((sum,count)=>sum+count,0),before);
+  assert.equal(f.task.draft.title,'Changed title');
 });

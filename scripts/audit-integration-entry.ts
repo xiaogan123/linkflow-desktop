@@ -9,6 +9,8 @@ import {validateLocalBackup} from '../src/main/backup-validation';
 import {join} from 'node:path';
 import { Controller } from '../src/main/controller';
 import { CHANNELS } from '../src/integrations/catalog';
+import {buildChannelTermsCache,reviewedChannelTermsCache} from '../src/main/article-evidence';
+import type {Channel} from '../src/shared/types';
 import { runBrowserTask, closeTaskBrowser } from '../src/integrations/browser';
 import type { ExecutionContext, Account } from '../src/shared/types';
 app.setPath('userData', process.env.AUDIT_USER_DATA!);
@@ -29,6 +31,18 @@ async function scenario(name:string, pages:Record<string,FixturePage>, choose:(d
 }
 const action=(kind:string,id=-1,ref='none',purpose='navigation')=>({kind,id,ref,purpose,option:0,reason:'deterministic fixture'});
 const filling=(d:any)=> {const c=d.page.controls.find((c:any)=>!c.filled&&['input','textarea'].includes(c.tag)); if(c)return action('fill',c.id,c.type==='password'?'account.password':/email/i.test(c.label)?'account.email':/(?:user\s?name|handle)/i.test(c.label)?'account.username':/website/i.test(c.label)?'site.url':'site.title');return undefined;};
+// Scheduling only publishes between 09:00 and 23:00 local time and never exactly on the hour, and a newly
+// imported site's first post is reserved from the next local day of the same month. Pick a fixture timezone in
+// which "now" is inside 09:05-22:54, at least 5 minutes from an hour boundary and not on the last day of a month, so the
+// smoke does not depend on the wall clock of the machine running it.
+const publishingTimeZone=()=>{
+ const now=new Date(),zones=[...Array.from({length:27},(_,i)=>i-12).map(o=>o===0?'Etc/GMT':`Etc/GMT${o>0?'-':'+'}${Math.abs(o)}`),'Asia/Kolkata','Asia/Tehran','Australia/Darwin','Pacific/Marquesas','America/St_Johns','Asia/Kathmandu'];
+ const local=(timeZone:string)=>Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now).filter(p=>p.type!=='literal').map(p=>[p.type,Number(p.value)]));
+ const fits=(timeZone:string)=>{const t=local(timeZone);return t.hour>=9&&t.hour<=22&&t.minute>=5&&t.minute<=54&&t.day<new Date(Date.UTC(t.year,t.month,0)).getUTCDate()};
+ const zone=zones.find(fits);
+ assert(zone,'no timezone is inside publishing hours and before the last day of its month right now (about 11:00-19:05 UTC on a month end); rerun later');
+ return zone;
+};
 const importedAccount=(status:Account['status']='unknown'):Account=>({id:'11111111-1111-4111-8111-111111111111',channelId:'seed-channel',email:'audit@owner.example',username:'audit-owner',createdAt:'2026-09-01T00:00:00.000Z',status,source:'imported',hasPassword:true});
 app.whenReady().then(async()=>{
  try{
@@ -48,13 +62,14 @@ app.whenReady().then(async()=>{
  const blockedController=Object.create(Controller.prototype) as Controller;
  (blockedController as any).drafting=new Set();
  (blockedController as any).services={};
- const policyState={settings:{channelOverrides:{flathub:true,dev:true,medium:true}},tasks:[{id:'policy-task',siteId:'fixture-site',channelId:'flathub'}],sites:[{id:'fixture-site'}]};
+ // A real State always carries account/binding arrays; draft generation now checks account readiness before the disabled-channel guard.
+ const policyState={settings:{channelOverrides:{flathub:true,dev:true,medium:true}},tasks:[{id:'policy-task',siteId:'fixture-site',channelId:'flathub'}],sites:[{id:'fixture-site'}],accounts:[],accountBindings:[]};
  Object.defineProperty(blockedController,'store',{value:{read:()=>policyState}});
  let draftAiCalls=0;(blockedController as any).ai=()=>{draftAiCalls++;throw Error('AI must not run for disabled channels');};
  for(const channelId of ['flathub','dev','medium']){
    policyState.tasks[0].channelId=channelId;
    assert.equal(blockedController.channels().find(c=>c.id===channelId)?.enabled,false);
-   await assert.rejects(blockedController.generateDraft('policy-task'),/渠道已停用/);
+   await assert.rejects(blockedController.generateDraft('policy-task'),{message:/渠道已停用/,reasonCode:'channel_disabled'});
  }
  assert.equal(draftAiCalls,0);evidence.push({name:'disabled-channel-draft-and-override-guard',passed:true,aiCalls:draftAiCalls});
  // These scenarios exercise a named publisher's review gate, not catalog rank.
@@ -63,10 +78,23 @@ app.whenReady().then(async()=>{
  const draftTopicUrl='https://example.com/guides/information-verification';
  draftStore.update(s=>s.sites.push({id:siteId,domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'AI information education',description:'Crypto information verification with affiliate disclosure',category:'ai',language:'zh',monthlyTarget:2,articleReviewMode:'manual',topics:[{url:draftTopicUrl,lastModified:stamp,discoveredAt:stamp}],topicsCheckedAt:stamp,topicsAttemptedAt:stamp,status:'ready',createdAt:stamp}));
  const fakeVaultFor=(store:Store)=>({ready:true,available:()=>true,get:async(k:string)=>{const cipher=store.getCipher(k);return cipher?Buffer.from(cipher,'base64').toString():undefined},set:async(k:string,v:string)=>store.setCipher(k,Buffer.from(v).toString('base64')),delete:async(k:string)=>store.deleteCipher(k),encryptSecrets:(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).map(([key,value])=>[key,Buffer.from(value).toString('base64')]))});const fakeVault=fakeVaultFor(draftStore);
- const draftController=new Controller(draftStore,fakeVault as any,'',{discoverTopics:async()=>{throw Error('fresh fixture topics must not trigger discovery')},readTopicEvidence:async(_site,url)=>({url,title:'Information verification guide',text:'Check the primary source, publication date, and unresolved claims before relying on the information.',contentHash:'a'.repeat(64)})});draftController.runtime.aiReady=true;
- (draftController as any).ai=()=>({json:async()=>({title:'信息来源核验教程',description:'核对公开信息',body:('通过原文和日期核对信息，明确未知之处。'.repeat(30)+'\n\n').repeat(3)})});
- await draftController.tick();const staged=draftStore.read();assert.equal(staged.settings.articleReviewMode,'manual');assert.equal(staged.sites[0].articleReviewMode,'manual');assert.equal(staged.tasks.length,1);assert.equal(staged.tasks[0].channelId,'telegraph');assert.equal(staged.tasks[0].topicUrl,draftTopicUrl);assert.equal(staged.tasks[0].topicContentHash,'a'.repeat(64));assert.equal(staged.tasks[0].checkpoint,'article_review');assert.equal(staged.tasks[0].status,'needs_input');assert.equal(staged.tasks[0].submittedAt,undefined);assert.equal(staged.accounts.length,0);assert.equal(staged.tasks[0].attempts,0);assert.equal(staged.sites[0].error,'同一平台已有一个未完成任务，完成或明确终止前不重复建立。');
- evidence.push({name:'real-controller-financial-draft-gate-and-eligibility',passed:true,accountCreated:false,published:false});
+ // Drafting now reads platform terms and collects public evidence before any draft AI call. Keep both offline:
+ // a reviewed terms cache built by the product's own builders, and no extra public evidence beyond the topic page.
+ let termsPreparations=0;const offlineDraftServices={prepareChannelTerms:async(channel:Channel)=>{termsPreparations++;return reviewedChannelTermsCache(buildChannelTermsCache(channel,[{url:channel.rulesUrl??`https://${channel.domain}/`,kind:'content_policy',text:'Educational content about verifying information is allowed. Promotional links are allowed with a disclosure at the end of the article.',appliesTo:channel.id,applicability:'verified'}]),{finance:'allowed',promotion:'allowed',disclosurePlacement:'end'})},collectArticleEvidence:async()=>[]};
+ const draftController=new Controller(draftStore,fakeVault as any,'',{...offlineDraftServices,discoverTopics:async()=>{throw Error('fresh fixture topics must not trigger discovery')},readTopicEvidence:async(_site,url)=>({url,title:'Information verification guide',text:'Check the primary source, publication date, and unresolved claims before relying on the information.',contentHash:'a'.repeat(64)})});draftController.runtime.aiReady=true;
+ // Drafts now follow the site's writing profile (prose length range) and carry a fact manifest whose quotes
+ // must come from the captured evidence snapshot. The deterministic writer honours the requested length.
+ const profileRepeats=(data:any,unit:string,fallback:number)=>{const range=data?.writingProfile?.length;return range?Math.max(1,Math.round((range.min+range.max)/2/[...unit.replace(/\s/g,'')].length)):fallback};
+ const zhUnit='通过原文和日期核对信息，明确未知之处。';
+ (draftController as any).ai=()=>({json:async(_instruction:string,data:any)=>{const repeats=profileRepeats(data,zhUnit,60),third=Math.ceil(repeats/3);return {title:'信息来源核验教程',description:'核对公开信息',body:[zhUnit.repeat(third),zhUnit.repeat(third),zhUnit.repeat(Math.max(1,repeats-2*third))].join('\n\n'),facts:[{claim:'通过原文和日期核对信息',url:draftTopicUrl,quote:'Check the primary source, publication date, and unresolved claims'}]}}});
+ let draftAiRuns=0;const draftAi=(draftController as any).ai;(draftController as any).ai=(...args:any[])=>{draftAiRuns++;return draftAi(...args)};
+ draftStore.update(s=>{s.settings.timezone=publishingTimeZone()});
+ // Scheduling now reserves a publication date first and selects the platform only when that date arrives.
+ await draftController.tick();const reserved=draftStore.read();assert.equal(reserved.tasks.length,1);assert.equal(reserved.tasks[0].channelId,'');assert.equal(reserved.tasks[0].status,'queued');assert(Date.parse(reserved.tasks[0].scheduledAt)>Date.now());assert.equal(reserved.tasks[0].draft,undefined);assert.equal(reserved.tasks[0].submittedAt,undefined);assert.equal(draftAiRuns,0);
+ draftStore.update(s=>{s.tasks[0].scheduledAt=new Date(Date.now()-1000).toISOString()});
+ // Batch 9b: a new profile defaults to automatic AI review; this site's explicit manual mode must still gate publication.
+ await draftController.tick();const staged=draftStore.read();assert(draftAiRuns>0);assert.equal(termsPreparations,1);assert.equal(staged.channelTermsCache?.telegraph?.reviewVersion,2);assert.equal(staged.settings.articleReviewMode,'ai');assert.equal(staged.sites[0].articleReviewMode,'manual');assert.equal(staged.tasks.length,1);assert.equal(staged.tasks[0].channelId,'telegraph');assert.equal(staged.tasks[0].topicUrl,draftTopicUrl);assert.equal(staged.tasks[0].topicContentHash,'a'.repeat(64));assert.equal(staged.tasks[0].checkpoint,'article_review');assert.equal(staged.tasks[0].status,'needs_input');assert.equal(staged.tasks[0].submittedAt,undefined);assert.equal(staged.accounts.length,0);assert.equal(staged.tasks[0].attempts,0);assert.equal(staged.sites[0].error,'当前没有符合条件且可执行的页面机会。');
+ evidence.push({name:'real-controller-financial-draft-gate-and-eligibility',passed:true,accountCreated:false,published:false,reservedBeforePlatformSelection:true,termsPreparations,draftAiCalls:draftAiRuns});
  const abortAccount=new AbortController();const context=(draftController as any).context(staged.tasks[0],abortAccount.signal);abortAccount.abort();const author={id:'33333333-3333-4333-8333-333333333333',channelId:'telegraph',email:'owner@example.com',username:'owner',status:'registered',credentialKind:'api_token',hasPassword:true,createdAt:stamp};await context.saveAccount(author,'fixture-token-must-persist-after-response');assert.equal(await fakeVault.get('account:'+author.id),'fixture-token-must-persist-after-response');assert.equal(draftStore.read().accounts[0].status,'registered');await assert.rejects(context.saveAccount({...author,status:'unknown'}),/暂停/);
  evidence.push({name:'inflight-registration-response-retains-token-after-pause',passed:true});draftStore.close();
 
@@ -74,15 +102,26 @@ app.whenReady().then(async()=>{
  const gistTopicUrl='https://example.com/templates/evidence-record';
  gistStore.update(s=>{s.settings.channelOverrides=Object.fromEntries(CHANNELS.map(channel=>[channel.id,channel.id==='github-gist']));s.sites.push({id:siteId,domain:'example.com',url:'https://example.com/',email:'different@example.com',name:'Technical templates',description:'Reusable evidence templates',category:'finance',language:'en',monthlyTarget:1,articleReviewMode:'manual',topics:[{url:gistTopicUrl,lastModified:stamp,discoveredAt:stamp}],topicsCheckedAt:stamp,topicsAttemptedAt:stamp,status:'ready',createdAt:stamp,qualifications:{developer:'https://example.com/templates'}});s.accounts.push({id:'44444444-4444-4444-8444-444444444444',channelId:'github-gist',email:'octocat@users.noreply.github.com',username:'octocat',createdAt:stamp,status:'registered',credentialKind:'api_token',hasPassword:true})});
  const gistVault=fakeVaultFor(gistStore);await gistVault.set('account:44444444-4444-4444-8444-444444444444','synthetic-gist-token');
- const gistController=new Controller(gistStore,gistVault as any,'',{discoverTopics:async()=>{throw Error('fresh fixture topics must not trigger discovery')},readTopicEvidence:async(_site,url)=>({url,title:'Evidence record template',text:'Record each claim, its primary source, the observed date, and the evidence that could disprove it.',contentHash:'b'.repeat(64)})});gistController.runtime.aiReady=true;
- (gistController as any).ai=()=>({json:async()=>({title:'Reusable evidence template',description:'Record sources and unresolved claims.',body:'Write the observed claim and primary source. Check original dates, preserve uncertainty, and distinguish an observation from an interpretation. '.repeat(3)+'\n\nUse a separate row for each fact and explain what would disprove the statement. [Project](https://example.com/)'})});
+ const gistController=new Controller(gistStore,gistVault as any,'',{...offlineDraftServices,discoverTopics:async()=>{throw Error('fresh fixture topics must not trigger discovery')},readTopicEvidence:async(_site,url)=>({url,title:'Evidence record template',text:'Record each claim, its primary source, the observed date, and the evidence that could disprove it.',contentHash:'b'.repeat(64)})});gistController.runtime.aiReady=true;
+ gistStore.update(s=>{s.settings.timezone=publishingTimeZone()});
+ // The managed writing envelope now appends the single link to the site (home or topic page); the writer must not add its own.
+ const enUnit='Write the observed claim and primary source. Check original dates, preserve uncertainty, and distinguish an observation from an interpretation. ';let gistAiRuns=0;
+ (gistController as any).ai=()=>({json:async(_instruction:string,data:any)=>{gistAiRuns++;return {title:'Reusable evidence template',description:'Record sources and unresolved claims.',body:enUnit.repeat(Math.max(1,profileRepeats(data,enUnit,3)-1))+'\n\nUse a separate row for each fact and explain what would disprove the statement.',facts:[{claim:'Write the observed claim and primary source',url:gistTopicUrl,quote:'Record each claim, its primary source, the observed date'}]}}});
  const originalFetch=globalThis.fetch;let gistPosts=0,anonymousChecks=0,readme='';const gistUrl='https://gist.github.com/octocat/aabbccddeeff11223344556677889900';
  globalThis.fetch=async(input,init)=>{const endpoint=String(input);assert(endpoint.startsWith('https://api.github.com/'));if(endpoint.endsWith('/user'))return Response.json({login:'octocat'});if(init?.method==='POST'){gistPosts++;assert.equal(gistStore.read().tasks[0].checkpoint,'submitting');assert(gistStore.read().tasks[0].submittedAt);readme=JSON.parse(String(init.body)).files['README.md'].content;}return Response.json({id:'aabbccddeeff11223344556677889900',html_url:gistUrl,public:true,created_at:stamp,owner:{login:'octocat'},files:{'README.md':{filename:'README.md',content:readme}}},{status:init?.method==='POST'?201:200})};
  const originalVerify=gistController.verify.bind(gistController);gistController.verify=async()=>{anonymousChecks++};
- try{await gistController.tick();const manualDraft=gistStore.read();assert.equal(manualDraft.settings.articleReviewMode,'manual');assert.equal(manualDraft.sites[0].articleReviewMode,'manual');assert.equal(gistPosts,0);assert.equal(manualDraft.tasks[0].channelId,'github-gist');assert.equal(manualDraft.tasks[0].topicUrl,gistTopicUrl);assert.equal(manualDraft.tasks[0].topicContentHash,'b'.repeat(64));assert.equal(manualDraft.tasks[0].checkpoint,'article_review');assert.equal(manualDraft.tasks[0].status,'needs_input');assert.equal(manualDraft.tasks[0].submittedAt,undefined);gistStore.update(s=>{s.tasks[0].articleApprovedAt=stamp;s.tasks[0].status='queued'});await gistController.tick();assert.equal(gistPosts,1);assert.equal(anonymousChecks,1);assert.equal(gistStore.read().tasks[0].status,'review');assert.equal(gistStore.read().tasks[0].firstLiveAt,undefined);assert.equal(gistStore.read().accounts.length,1);
+ try{
+ // Batch 5 policy: a finance site is a hard audience mismatch for GitHub Gist even with developer proof.
+ // The planner must not reserve a task, call AI, read platform terms or reach the GitHub API for it.
+ const termsBeforeGist=termsPreparations;await gistController.tick();const financeGate=gistStore.read();assert.equal(financeGate.tasks.length,0);assert.equal(gistAiRuns,0);assert.equal(gistPosts,0);assert.equal(termsPreparations,termsBeforeGist);assert.equal(financeGate.sites[0].planStatus?.effectiveTarget,0);assert.equal(financeGate.sites[0].error,'当前没有符合条件且可执行的页面机会。');
+ // The same owner, account and developer proof on a technical (non-finance) site keeps the approved-draft dispatch path.
+ gistStore.update(s=>{s.sites[0].category='developer'});
+ await gistController.tick();const gistReserved=gistStore.read();assert.equal(gistReserved.tasks.length,1);assert.equal(gistReserved.tasks[0].channelId,'');assert(Date.parse(gistReserved.tasks[0].scheduledAt)>Date.now());assert.equal(gistAiRuns,0);
+ gistStore.update(s=>{s.tasks[0].scheduledAt=new Date(Date.now()-1000).toISOString()});
+ await gistController.tick();const manualDraft=gistStore.read();assert.equal(manualDraft.settings.articleReviewMode,'ai');assert.equal(manualDraft.sites[0].articleReviewMode,'manual');assert.equal(gistPosts,0);assert.equal(manualDraft.tasks[0].channelId,'github-gist');assert.equal(manualDraft.tasks[0].topicUrl,gistTopicUrl);assert.equal(manualDraft.tasks[0].topicContentHash,'b'.repeat(64));assert.equal(manualDraft.tasks[0].checkpoint,'article_review');assert.equal(manualDraft.tasks[0].status,'needs_input');assert.equal(manualDraft.tasks[0].submittedAt,undefined);gistStore.update(s=>{s.tasks[0].articleApprovedAt=stamp;s.tasks[0].status='queued'});assert(gistAiRuns>0);await gistController.tick();assert.equal(gistPosts,1);const gistEnvelope=gistStore.read().tasks[0].writingEnvelope!;assert.equal(new URL(gistEnvelope.targetUrl).hostname,'example.com');assert.deepEqual([...readme.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g)].map(match=>match[1]),[gistEnvelope.targetUrl],'published Gist carries exactly one link, to the site');assert(readme.includes(gistEnvelope.disclosure),'published Gist keeps the managed disclosure');assert.equal(anonymousChecks,1);assert.equal(gistStore.read().tasks[0].status,'review');assert.equal(gistStore.read().tasks[0].firstLiveAt,undefined);assert.equal(gistStore.read().accounts.length,1);
  // A secret/unconfirmed Gist cannot become live through generic verification.
  globalThis.fetch=async()=>Response.json({public:false});await originalVerify(gistStore.read().tasks[0].id);assert.equal(gistStore.read().tasks[0].firstLiveAt,undefined);assert.equal(gistStore.read().tasks[0].status,'review');
- evidence.push({name:'gist-controller-approved-draft-global-account-dispatch-and-private-verification-guard',passed:true,posts:gistPosts,anonymousVerifierInvoked:anonymousChecks});
+ evidence.push({name:'gist-controller-approved-draft-global-account-dispatch-and-private-verification-guard',passed:true,posts:gistPosts,anonymousVerifierInvoked:anonymousChecks,financeAudienceGateBlockedGist:true,aiCalls:gistAiRuns});
  }finally{globalThis.fetch=originalFetch;gistStore.close()}
 
  await scenario('register-fill-publish-observed-public-url',{

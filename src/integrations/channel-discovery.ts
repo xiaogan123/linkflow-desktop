@@ -1,5 +1,6 @@
 import type {Category,Channel,Qualification,Site} from '../shared/types';
-import {eligibilityFor,qualificationLabels,requirementsFor,validQualificationUrl} from './eligibility';
+import {channelAudience,channelSuitability,eligibilityFor,qualificationLabels,requirementsFor,validQualificationUrl} from './eligibility';
+import {BATCH5_MESSAGES} from '../shared/batch5-messages';
 
 export type ChannelDiscoveryStatus='recommended'|'worth_trying'|'needs_preparation'|'blocked';
 export interface ChannelDiscovery {
@@ -29,6 +30,7 @@ function hasProductShape(site:Site){return /(?:提供.{0,24}(?:工具|计算器|
 function hasTechnicalContentShape(site:Site){return hasProductShape(site)||/(?:教程|指南|研究|技术|文档|prompt|guide|tutorial|documentation|research)/i.test(`${site.name} ${site.description}`)}
 function languageFit(site:Site,channel:Channel){const language=rootLanguage(site.language);return language==='und'||channel.languages.includes('*')||channel.languages.map(rootLanguage).includes(language)}
 function relevance(site:Site,channel:Channel){
+  if(site.category==='finance'){const audience=channelAudience(channel);return audience.includes('finance')?70:audience.includes('general')?38:0;}
   if(channel.categories.includes(site.category))return 70;
   if((related[site.category]??[]).some(category=>channel.categories.includes(category)))return 44;
   if(channel.categories.includes('general'))return 38;
@@ -49,7 +51,10 @@ function missingLabel(missing:Qualification[]){return missing.map(item=>qualific
  * manual candidates may only create a preparation task.
  */
 export function channelDiscoveryFor(site:Site,channel:Channel):ChannelDiscovery{
-  if(!channel.enabled)return {channel,score:0,status:'blocked',reason:'该渠道当前停用，不能建立新任务。',nextStep:'查看官方规则和停用说明；不要用其他渠道或账号绕过限制。',executionReady:false,canQueue:false};
+  if(!channel.enabled)return {channel,score:0,status:'blocked',reason:'该平台当前停用，不能建立新任务。',nextStep:'查看官方规则和停用说明；不要用其他平台或账号绕过限制。',executionReady:false,canQueue:false};
+
+  const suitability=channelSuitability(site,channel);
+  if(!suitability.eligible)return {channel,score:0,status:'blocked',reason:suitability.reason,nextStep:BATCH5_MESSAGES.suitabilityNextStep,executionReady:false,canQueue:false};
 
   const missing=missingRequirements(site,channel);
   const fit=eligibilityFor(site,channel);
@@ -61,7 +66,7 @@ export function channelDiscoveryFor(site:Site,channel:Channel):ChannelDiscovery{
     const inferred=missing.every(requirement=>inferredRequirement(site,requirement));
     const packageOnly=missing.some(requirement=>packageRequirements.has(requirement));
     if(!inferred||packageOnly){
-      return {channel,score:baseScore,status:'blocked',reason:`尚未确认${missingLabel(missing)}。网站主题或工具描述不能代替该资格。`,nextStep:`只有确有${missingLabel(missing)}时再使用此渠道；不要为满足目录要求虚构项目。`,executionReady:false,canQueue:false};
+      return {channel,score:baseScore,status:'blocked',reason:`尚未确认${missingLabel(missing)}。网站主题或工具描述不能代替该资格。`,nextStep:`只有确有${missingLabel(missing)}时再使用此平台；不要为满足目录要求虚构项目。`,executionReady:false,canQueue:false};
     }
     const canPrepare=channel.automation==='manual'&&missing.every(requirement=>preparableRequirements.has(requirement)&&(requirement!=='publication'||preparablePublicationChannels.has(channel.id)));
     const restrictedPublication=missing.includes('publication')&&affiliateRestrictedPublicationChannels.has(channel.id);
@@ -73,7 +78,7 @@ export function channelDiscoveryFor(site:Site,channel:Channel):ChannelDiscovery{
   const locallyEligible=fit.eligible;
   const executionReady=locallyEligible&&channel.automation!=='manual';
   if(topicScore<44||translated){
-    const reason=translated?'网站语言与渠道常用语言不同，可为该渠道另备真实翻译材料。':'主题并非完全相同，但已有真实资格或该渠道用途较通用。';
+    const reason=translated?'网站语言与平台常用语言不同，可为该平台另备真实翻译材料。':'主题并非完全相同，但已有真实资格或该平台用途较通用。';
     return {channel,score:baseScore,status:'worth_trying',reason,nextStep:channel.automation==='manual'?'可建立人工待办，先核对受众、账号和平台限制。':'可由你主动加入；自动执行前仍会重新检查资格、审核和安全条件。',executionReady,canQueue:locallyEligible};
   }
 

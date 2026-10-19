@@ -37,7 +37,7 @@ export function supanoteDraftError(draft:Task['draft']):string|undefined{
 
 function operationId(taskId:string):string{return `supanote_${taskId.toLowerCase().replace(/[^a-f0-9]/g,'')}`}
 function publicUrl(publicId:string):string{
-  if(!PUBLIC_ID.test(publicId))throw Error('Supanote 公开文章身份无效');
+  if(!PUBLIC_ID.test(publicId))throw Error('Supanote 公开文章标识无效');
   return `${ORIGIN}/n/${publicId}`;
 }
 function intent(saved:SupanoteTaskReceipt):SupanoteIntent{
@@ -107,7 +107,7 @@ function robotsAllows(text:string,path:string):boolean{
     if((key==='allow'||key==='disallow')&&group.agents.length&&value)group.rules.push({allow:key==='allow',pattern:value});
   }
   push(group);
-  const scored=groups.map(value=>({value,specificity:Math.max(...value.agents.map(agent=>agent==='*'?0:'linkflow'.includes(agent)?agent.length:-1))})).filter(value=>value.specificity>=0);
+  const scored=groups.map(value=>({value,specificity:Math.max(...value.agents.map(agent=>agent==='*'?0:'googlebot'.includes(agent)?agent.length:-1))})).filter(value=>value.specificity>=0);
   if(!scored.length)return true;const specificity=Math.max(...scored.map(value=>value.specificity)),rules=scored.filter(value=>value.specificity===specificity).flatMap(value=>value.value.rules);
   let winner:{allow:boolean;length:number}|undefined;
   for(const rule of rules){
@@ -165,37 +165,37 @@ export async function verifySupanotePublication(task:Task,_target:string,deps:Su
   const saved=task.supanote,known=saved&&receipt(saved);
   if(task.channelId!=='supanote'||task.sourceDomain!=='supanote.app'||!saved||!known||!task.draft
     ||!['api_receipt','published'].includes(saved.stage)||task.publicUrl!==known.publicUrl)
-    return failed('invalid','Supanote 缺少一致的 API 回执');
+    return failed('invalid','Supanote 缺少一致的平台返回记录');
   const api=await verifySupanote(known,{title:task.draft.title,markdown:task.draft.body},deps);
-  if(!api.verified)return failed(api.reason==='unavailable'?'unreachable':'invalid','Supanote 原文 API 对账未通过');
+  if(!api.verified)return failed(api.reason==='unavailable'?'unreachable':'invalid','Supanote 原文 API 核对未通过');
   try{
     const robots=await robotsText(deps);
-    if(!robotsAllows(robots,new URL(known.publicUrl).pathname))return failed('invalid','Supanote robots.txt 不允许抓取原公开文章');
+    if(!robotsAllows(robots,new URL(known.publicUrl).pathname))return failed('invalid','Supanote 抓取规则不允许抓取原公开文章');
     const page=await publicHtml(known.publicId,deps),rel=rendered(page.html,task,known.publicUrl,task.topicUrl??_target,page.headers);
     if(rel===undefined)return failed('invalid','Supanote 公开页标题、可见全文、链接或索引规则与原稿不一致');
     return {found:true,outcome:'found',url:known.publicUrl,rel,reason:'Supanote API 原文与公开页可见全文、全部链接及索引规则一致；不代表已被搜索引擎收录'};
-  }catch(error){return failed(error instanceof PublicReadError&&error.kind==='invalid'?'invalid':'unreachable','Supanote 公开页只读核验未完成')}
+  }catch(error){return failed(error instanceof PublicReadError&&error.kind==='invalid'?'invalid':'unreachable','Supanote 公开页检查未完成')}
 }
 
 export async function runSupanoteTask(context:ExecutionContext,deps:SupanoteDependencies={}):Promise<SupanoteExecutionResult>{
-  if(!contextMatches(context)||!context.supanotePersistence)return {status:'needs_input',message:'当前任务未绑定 Supanote 安全持久化'};
+  if(!contextMatches(context)||!context.supanotePersistence)return {status:'needs_input',message:'当前任务缺少 Supanote 的安全保存位置'};
   const format=supanoteDraftError(context.task.draft);if(format)return {status:'needs_input',message:format};
   const draft=context.task.draft!;
   const prior=context.task.supanote;
   if(prior){
     const known=receipt(prior),checkpoint=prior.stage==='published'?'supanote_published':prior.stage==='api_receipt'?'supanote_api_receipt':'supanote_publish_submitting';
-    if(known&&context.task.publicUrl!==known.publicUrl)return {status:'needs_input',message:'Supanote 原回执与公开地址不一致，禁止重发',supanote:prior,checkpoint,submittedAt:context.task.submittedAt};
+    if(known&&context.task.publicUrl!==known.publicUrl)return {status:'needs_input',message:'Supanote 原记录与公开地址不一致，禁止重发',supanote:prior,checkpoint,submittedAt:context.task.submittedAt};
     const recovered=await reconcileSupanoteTask(context,deps);
-    return recovered.status==='found'?{status:'review',message:'Supanote 原稿已通过公开页核验，没有重发',publicUrl:recovered.publicUrl,supanote:recovered.supanote,checkpoint:'supanote_published',submittedAt:context.task.submittedAt}
-      :{status:'review',message:known?'Supanote 原 API 回执已保留；公开可见全文未核验，不计入成果':'Supanote 单次提交结果不明；缺少公开 ID，已停止自动请求且不会重发',supanote:prior,checkpoint,submittedAt:context.task.submittedAt,...(known?{publicUrl:known.publicUrl}:{})};
+    return recovered.status==='found'?{status:'review',message:'Supanote 原稿已通过公开页检查，没有重发',publicUrl:recovered.publicUrl,supanote:recovered.supanote,checkpoint:'supanote_published',submittedAt:context.task.submittedAt}
+      :{status:'review',message:known?'Supanote 平台原始记录已保留；公开可见全文未检查，不计为外链':'Supanote 单次提交结果不明；缺少公开 ID，已停止自动请求且不会重发',supanote:prior,checkpoint,submittedAt:context.task.submittedAt,...(known?{publicUrl:known.publicUrl}:{})};
   }
-  if(context.task.submittedAt||context.task.publicUrl||/^supanote_/.test(context.task.checkpoint??''))return {status:'needs_input',message:'Supanote 提交痕迹缺少完整原意图，禁止重发'};
+  if(context.task.submittedAt||context.task.publicUrl||/^supanote_/.test(context.task.checkpoint??''))return {status:'needs_input',message:'Supanote 提交痕迹缺少完整原提交信息，禁止重发'};
   const result=await publishSupanote({operationId:operationId(context.task.id),reviewed:true,title:draft.title,markdown:draft.body},context.supanotePersistence,{...deps,signal:context.signal});
-  if(result.status==='not_started')return {status:'queued',message:'Supanote 提交意图未持久化，未发送'};
+  if(result.status==='not_started')return {status:'queued',message:'Supanote 提交信息未保存，未发送'};
   if(result.status==='blocked'||result.status==='uncertain')return {status:'review',message:'Supanote 单次提交已保留；结果不明且不会重发',supanote:{...result.intent,stage:'submitting'},checkpoint:'supanote_publish_submitting',submittedAt:result.intent.createdAt};
   // Persistence owns the exact operation timestamp and receipt. Returning a stale
   // reconstructed receipt here could overwrite the durable callback state.
-  return {status:'review',message:result.status==='published_manage_pending'?'已保留 Supanote 公开地址；管理令牌未能安全保存，不会重发获取':'Supanote API 回执已保留；等待公开页可见全文核验',publicUrl:result.receipt.publicUrl,checkpoint:'supanote_api_receipt'};
+  return {status:'review',message:result.status==='published_manage_pending'?'已保留 Supanote 公开地址；管理令牌未能安全保存，不会重发获取':'Supanote 平台返回记录已保留；等待公开页可见全文检查',publicUrl:result.receipt.publicUrl,checkpoint:'supanote_api_receipt'};
 }
 
 export const supanotePublisherTesting={contextMatches,operationId,receipt,intent,rendered,robotsAllows};

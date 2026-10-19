@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 umask 077
+# Under the C locale bsdtar prints the non-ASCII app name as \ooo escapes, which
+# the archive path checks below rightly reject. Pin a UTF-8 locale for listing.
+export LC_ALL=en_US.UTF-8
 
 VERSION="__LINKFLOW_VERSION__"
 EXPECTED_SHA256="__LINKFLOW_MAC_ARM64_SHA256__"

@@ -4,6 +4,28 @@ import { verifyRenderedArticle, inspectRenderedArticle } from '../src/integratio
 
 const TARGET = 'https://example.com/research/source';
 
+test('HackMD punctuation compatibility is opt-in and never rewrites code semantics',()=>{
+  const markdown=`Say "hello" -- wait... [Source](${TARGET})`;
+  const html=`<article><p>Say “hello” — wait… <a href="${TARGET}">Source</a></p></article>`;
+  assert.equal(inspectRenderedArticle(html,markdown,TARGET,'article').found,false);
+  assert.equal(inspectRenderedArticle(html,markdown,TARGET,'article',{hackmdCompatibility:true}).found,true);
+  for(const compatibility of [false,true]){
+    for(const [original,changed] of [['i--','i-'],['"input"','“input”']]){
+      const source=`Run \`${original}\`. [Source](${TARGET})`;
+      const page=`<article><p>Run <code>${changed}</code>. <a href="${TARGET}">Source</a></p></article>`;
+      assert.equal(inspectRenderedArticle(page,source,TARGET,'article',{hackmdCompatibility:compatibility}).found,false);
+    }
+  }
+});
+
+test('self-address auto-links are ignored only with HackMD compatibility',()=>{
+  const markdown=`See example.org and [Source](${TARGET}).`;
+  const html=`<article><p>See <a href="https://example.org/">example.org</a> and <a href="${TARGET}">Source</a>.</p></article>`;
+  assert.equal(inspectRenderedArticle(html,markdown,TARGET,'article').found,false);
+  assert.equal(inspectRenderedArticle(html,markdown,TARGET,'article',{hackmdCompatibility:true}).found,true);
+  assert.equal(inspectRenderedArticle(html.replace(`<a href="${TARGET}">Source</a>`,'Source'),markdown,TARGET,'article',{hackmdCompatibility:true}).found,false);
+});
+
 test('rendered article comparison preserves every literal operator and numeric delimiter', async t => {
   const markdown = `The return was -5%, the inequality was 1 < 2, the expression was 2*3=6, and the ratio was 1/2. [Source](${TARGET})`;
   const visible = 'The return was -5%, the inequality was 1 &lt; 2, the expression was 2*3=6, and the ratio was 1/2.';

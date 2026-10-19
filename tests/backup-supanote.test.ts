@@ -134,13 +134,14 @@ test('a fully rendered publication and its optional management secret survive ba
 
 test('a verified Supanote receipt keeps safe historical evidence after a later miss or read failure',()=>{
   const missing=state('published'),missingTask=missing.tasks[0];Object.assign(missingTask,{status:'needs_input',health:'missing',linkCheck:'absent',reviewKind:'lost_link',lostAt:'2026-10-10T10:00:00.000Z',lastCheckedAt:'2026-10-10T10:00:00.000Z',nextCheckAt:'2026-10-17T10:00:00.000Z',consecutiveMissing:1});
-  assert.equal(validateBackup({state:missing,secrets:{}}).state.tasks[0].reviewKind,'lost_link');
+  const restoredMissing=validateBackup({state:missing,secrets:{}}).state.tasks[0];
+  assert.equal(restoredMissing.status,'live');assert.equal(restoredMissing.reviewKind,undefined);assert.equal(restoredMissing.lostAt,'2026-10-10T10:00:00.000Z');
   const unavailable=state('published'),unavailableTask=unavailable.tasks[0];Object.assign(unavailableTask,{health:'unknown',linkCheck:'unreachable',lastCheckedAt:'2026-10-10T10:00:00.000Z',nextCheckAt:'2026-10-11T10:00:00.000Z'});
   assert.equal(validateBackup({state:unavailable,secrets:{}}).state.tasks[0].health,'unknown');
 });
 
-test('skipping a previously verified Supanote task retains strict historical proof',()=>{
-  for(const mutate of [(task:Task)=>{task.status='skipped'},(task:Task)=>Object.assign(task,{status:'skipped',health:'missing',linkCheck:'absent',reviewKind:'lost_link',lostAt:'2026-10-10T10:00:00.000Z',lastCheckedAt:'2026-10-10T10:00:00.000Z',nextCheckAt:'2026-10-17T10:00:00.000Z',consecutiveMissing:1})]){const value=state('published');mutate(value.tasks[0]);const restored=validateBackup({state:value,secrets:{}}).state.tasks[0];assert.equal(restored.status,'skipped');assert.equal(restored.supanote?.stage,'published');assert.ok(restored.firstLiveAt)}
+test('a skipped verified Supanote link keeps proof, while an old lost-link stop migrates to live history',()=>{
+  for(const [index,mutate] of [(task:Task)=>{task.status='skipped'},(task:Task)=>Object.assign(task,{status:'skipped',health:'missing',linkCheck:'absent',reviewKind:'lost_link',lostAt:'2026-10-10T10:00:00.000Z',lastCheckedAt:'2026-10-10T10:00:00.000Z',nextCheckAt:'2026-10-17T10:00:00.000Z',consecutiveMissing:1})].entries()){const value=state('published');mutate(value.tasks[0]);const restored=validateBackup({state:value,secrets:{}}).state.tasks[0];assert.equal(restored.status,index===0?'skipped':'live');assert.equal(restored.supanote?.stage,'published');assert.ok(restored.firstLiveAt)}
 });
 
 test('Supanote backups reject fabricated live evidence and malformed receipt stages', () => {
@@ -224,5 +225,5 @@ test('Supanote tasks cannot import accounts, bindings, or a receipt under anothe
 
   const wrongChannel = state('api_receipt');
   wrongChannel.tasks[0].channelId = 'other';
-  assert.throws(() => validateBackup({ state: wrongChannel, secrets: {} }), /Supanote 回执/);
+  assert.throws(() => validateBackup({ state: wrongChannel, secrets: {} }), /Supanote 返回记录与原稿或任务标识不一致/);
 });

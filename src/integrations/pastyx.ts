@@ -3,7 +3,9 @@ import {pstrsTopLevelKeys} from './pstrs';
 
 export const PASTYX_ORIGIN='https://pastyx.pages.dev';
 export const PASTYX_CREATE_URL=`${PASTYX_ORIGIN}/api/paste`;
-export const PASTYX_AUTHOR='Linkflow promotional content publisher';
+/** Kept only for exact readback of submissions made by older versions. */
+export const PASTYX_AUTHOR='Site content publisher';
+export function pastyxSiteAuthor(site:{name:string}):string{return site.name.replace(/[\r\n<>\u0000-\u001f]/g,' ').replace(/\s+/g,' ').trim().slice(0,120)}
 export const PASTYX_MAX_CONTENT_BYTES=1_000_000;
 export const PASTYX_MAX_RESPONSE_BYTES=256*1024;
 export const PASTYX_MAX_HTML_BYTES=2_000_000;
@@ -37,8 +39,8 @@ export function trackPastyXPendingOperation<T>(pending:Promise<T>):Promise<T>{le
 export async function drainPastyXPendingOperations(timeoutMs=30_000):Promise<boolean>{const deadline=Date.now()+Math.max(0,timeoutMs);while(pendingOperations.size&&Date.now()<deadline)await Promise.race([Promise.allSettled([...pendingOperations]),new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(100,deadline-Date.now()))))]);return pendingOperations.size===0}
 export function pastyxPendingOperationCount(){return pendingOperations.size}
 export function validPastyXEditKey(value:unknown):value is string{return typeof value==='string'&&EDIT_KEY.test(value)}
-export function pastyxPublicUrl(id:string){if(!PASTYX_ID.test(id))throw Error('PastyX 页面身份无效');return `${PASTYX_ORIGIN}/${id}`}
-export function pastyxApiUrl(id:string){if(!PASTYX_ID.test(id))throw Error('PastyX 页面身份无效');return `${PASTYX_CREATE_URL}/${id}`}
+export function pastyxPublicUrl(id:string){if(!PASTYX_ID.test(id))throw Error('PastyX 页面标识无效');return `${PASTYX_ORIGIN}/${id}`}
+export function pastyxApiUrl(id:string){if(!PASTYX_ID.test(id))throw Error('PastyX 页面标识无效');return `${PASTYX_CREATE_URL}/${id}`}
 export function pastyxRequest(article:PastyXArticle,editKey:string){
   const value:PastyXRequest={content:article.content,title:article.title,author:article.author,expiry:'never',editKey,burnAfterRead:false},body=JSON.stringify(value);
   const sourceHash=pastyxHash(JSON.stringify([article.title,article.author,article.content,'never',false]));
@@ -72,11 +74,11 @@ async function bounded(response:Response,signal:AbortSignal){const declared=resp
 function opaqueFrom(response:Response,bytes:Uint8Array,intent:PastyXIntent,now:()=>Date,bodyComplete=true):PastyXOpaqueResponse{return {...intent,version:1,kind:'pastyx_opaque_response',capturedAt:now().toISOString(),status:response.status,contentType:response.headers.get('content-type')??'',responseUrl:response.url,redirected:response.redirected,responseType:response.type,bodyBase64:Buffer.from(bytes).toString('base64'),bodySha256:pastyxHash(bytes),bodyComplete}}
 
 export async function createPastyXPaste(input:{operationId:string;article:PastyXArticle;reviewed:true},persistence:PastyXPersistence,deps:PastyXDependencies={}):Promise<PastyXCreateResult>{
-  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('PastyX 缺少已审核的单次发布身份');if(deps.signal?.aborted)return {status:'not_started',reason:'authorization_changed'};
+  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('PastyX 缺少已审核的单次发布编号');if(deps.signal?.aborted)return {status:'not_started',reason:'authorization_changed'};
   const validUtf8=(value:string,max:number)=>Buffer.from(value,'utf8').toString('utf8')===value&&Buffer.byteLength(value,'utf8')<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value),trimmed=(value:string,max:number)=>value===value.trim()&&validUtf8(value,max),article=input.article;
   if(!article.title||[...article.title].length>200||!trimmed(article.title,1000)||!article.author||[...article.author].length>120||!trimmed(article.author,1000)||!article.content.trim()||!validUtf8(article.content,PASTYX_MAX_CONTENT_BYTES))return {status:'not_started',reason:'invalid_content'};
   const generated=deps.randomBytes?.(32)??secureRandomBytes(32),editKey=Buffer.from(generated).toString('base64url');if(generated.byteLength!==32||!validPastyXEditKey(editKey))throw Error('PastyX 编辑密钥生成失败');
-  const now=deps.now??(()=>new Date()),request=pastyxRequest(article,editKey),intent:PastyXIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,editKeyHash:request.editKeyHash,createdAt:now().toISOString()};if(!validPastyXIntent(intent))throw Error('PastyX 发布身份无效');
+  const now=deps.now??(()=>new Date()),request=pastyxRequest(article,editKey),intent:PastyXIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,editKeyHash:request.editKeyHash,createdAt:now().toISOString()};if(!validPastyXIntent(intent))throw Error('PastyX 提交信息无效');
   try{await persistence.persistIntent(intent,editKey)}catch{return {status:'not_started',reason:'intent_not_persisted'}}try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   if(deps.signal?.aborted)return {status:'unknown',intent,diagnostic:'transport',opaqueResponseSaved:false};const controller=new AbortController(),external=()=>controller.abort();deps.signal?.addEventListener('abort',external,{once:true});if(deps.signal?.aborted)controller.abort();const timeout=Math.min(60_000,Math.max(50,deps.timeoutMs??25_000)),timer=setTimeout(()=>controller.abort(),timeout);timer.unref?.();let response:Response|undefined,responseBytes:Uint8Array|undefined;
   const preserve=async(value:Response)=>{let captured:Uint8Array|undefined;try{const late=new AbortController(),lateTimer=setTimeout(()=>late.abort(),timeout);lateTimer.unref?.();try{captured=await bounded(value,late.signal);await persistence.persistOpaqueResponse(opaqueFrom(value,captured,intent,now))}finally{clearTimeout(lateTimer)}}catch(error){try{await persistence.persistOpaqueResponse(opaqueFrom(value,error instanceof BodyReadError?error.bytes:new Uint8Array(),intent,now,false))}catch{}discard(value)}};

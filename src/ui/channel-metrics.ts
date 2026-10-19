@@ -1,6 +1,8 @@
-import type {Channel} from '../shared/types';
+import type {Channel,ChannelMetric,FinancePlatformCount} from '../shared/types';
+import {channelMetrics} from '../shared/channel-metrics';
+import {channelMetricLinkScope} from '../integrations/channel-authority-snapshots';
+import {authorityCopy} from './authority-copy';
 
-type Authority=NonNullable<Channel['authority']>;
 type Traffic=NonNullable<Channel['traffic']>;
 export type AuthorityChoice='ahrefs_dr'|'other';
 export type AuthorityScope='domain'|'subdomain'|'page';
@@ -8,6 +10,12 @@ export type AuthorityScope='domain'|'subdomain'|'page';
 const ahrefsDrNames=new Set(['dr','ahrefs dr','domain rating','ahrefs domain rating']);
 const oldGooglePrNames=new Set(['pr','googlepr','google pr','pagerank','page rank','google pagerank','google page rank']);
 const normalizeName=(name:string)=>name.trim().replace(/\s+/g,' ').toLowerCase();
+
+const financePlatformCopy={
+ runtime:(value:FinancePlatformCount)=>`免人工全自动平台 ${value.count} 个（已转正 ${value.acceptedCount}，试运行 ${value.trialCount}，待首篇验收 ${value.pendingAcceptanceCount??0}）；要你确认一次 ${value.confirmationRequiredIds?.length??0} 个，要你过一次验证 ${value.verificationRequiredIds?.length??0} 个。会随账号、试运行名额和选题变化。`,
+} as const;
+
+export function financePlatformRuntimeSummary(value:FinancePlatformCount):string{return financePlatformCopy.runtime(value)}
 
 export function authorityNameKind(name:string):'ahrefs_dr'|'old_google_pr'|'other'{
  const normalized=normalizeName(name);
@@ -24,48 +32,46 @@ export function otherAuthorityNameError(name:string):string|undefined{
  return undefined;
 }
 
-export function channelMetricView(channel:Pick<Channel,'authority'|'traffic'>){
- const authority=channel.authority;
- const kind=authority?authorityNameKind(authority.name):undefined;
- const drAvailable=kind==='ahrefs_dr'&&authority?.scope!=='page';
- const scopeText=authority?.scope==='domain'?'域名':authority?.scope==='subdomain'?'子域名':authority?.scope==='page'?'页面':'口径待补';
- const targetText=authority?.target?.trim()||'测量对象待补';
- const legacyNotes=[!authority?.scope&&'口径待补',!authority?.target&&'测量对象待补'].filter(Boolean).join('、');
- const dr=drAvailable?`DR ${authority!.value}${legacyNotes?`（${legacyNotes}）`:''}`:'DR 未知';
- const pr=kind==='old_google_pr'&&authority
-  ?`Google PR 无当前公开值 · 历史导入 ${authority.name} ${authority.value}`
-  :'Google PR 无当前公开值';
- const other=kind==='other'&&authority?`${authority.name} ${authority.value}`:
-  kind==='ahrefs_dr'&&authority?.scope==='page'?`页级历史导入 ${authority.name} ${authority.value}（不作 DR）`:undefined;
- const caveat=kind==='old_google_pr'?'历史导入，不能作为当前 Google PR':
-  kind==='ahrefs_dr'&&authority?.scope==='page'?'页级历史导入，不能作为 Ahrefs DR':
-  authority&&/^open\s?page\s?rank$/i.test(authority.name.trim())?'OpenPageRank 与 Google PR 不同':undefined;
- const dataDate=authority?.dataMonth?`数据月份：${authority.dataMonth} · 核查：${authority.checkedAt??'未知'}`:`数据日期：${authority?.asOf??'未知'}`;
- const origin=authority?.provenance==='official_snapshot'?'官方公开快照，非实时查询':'用户导入，未经系统核实';
- const measurement=authority?`${scopeText} · ${targetText} · ${authority.dataMonth??authority.asOf??'日期未知'}`:undefined;
- const authorityDetail=authority
-  ?`${authority.name} ${authority.value} · ${origin} · 来源：${authority.source} · ${dataDate} · 口径：${scopeText} · 测量对象：${targetText}${authority.dataMonth?' · 具体测量日及算法版本未披露':''}${caveat?` · ${caveat}`:''}`
-  :'未知（未导入）';
+export function channelMetricView(channel:Pick<Channel,'metrics'|'authority'|'traffic'>&Partial<Pick<Channel,'domain'>>){
+ const metrics=channelMetrics(channel);
+ // A live or imported Ahrefs DR wins; otherwise the built-in public snapshot shipped with the app, labelled as such.
+ const pick=(provider:string)=>{const found=metrics.filter(metric=>metric.provider===provider);return found.find(metric=>metric.linkScope==='same-host')??found[0]};
+ const live=pick('ahrefs-dr'),selected=live??pick('built-in-dr');
+ const dr=selected?authorityCopy.dr(selected.value):authorityCopy.unknown;
+ const subtitle=selected?(selected.linkScope==='platform-root'?authorityCopy.platform:live?authorityCopy.dated(selected.asOf):authorityCopy.builtIn(selected.asOf)):authorityCopy.pending;
+ const visibleMetrics=metrics.filter(metric=>!metric.provider.startsWith('legacy:')||authorityNameKind(metric.provider.slice(7))!=='old_google_pr');
+ const authorityDetail=visibleMetrics.length?visibleMetrics.map(metric=>{
+  const name=metric.provider==='ahrefs-dr'?'Ahrefs DR':metric.provider==='built-in-dr'?authorityCopy.builtInName:metric.provider.replace(/^legacy:/,'');
+  return `${name} ${metric.value} · 来源：${metric.source} · 数据月份：${metric.asOf||authorityCopy.unknownMonth} · 测量对象：${metric.target}${metric.note?` · ${metric.note}`:''}`;
+ }).join('；'):authorityCopy.pending;
  const traffic=channel.traffic;
- const trafficSummary=traffic?`${traffic.monthly.toLocaleString()} / 月`:'流量未知';
  const trafficDetail=traffic
-  ?`${traffic.monthly.toLocaleString()} ${traffic.metric==='organicVisits'?'自然访问':'访问'} / 月${traffic.estimated?' · 第三方估算':''} · 用户导入，未经系统核实 · 来源：${traffic.source} · ${traffic.period?`数据月份：${traffic.period} · 核查：${traffic.asOf}`:`数据日期：${traffic.asOf}`}`
-  :'未知（不会以 0 代替）';
- return {dr,pr,other,authorityDetail,trafficSummary,trafficDetail,measurement,origin,drAvailable};
+  ?`${traffic.monthly.toLocaleString()} ${traffic.metric==='organicVisits'?'自然访问':'访问'} / 月${traffic.estimated?' · 第三方估算':''} · 用户导入，未经外链助手核实 · 来源：${traffic.source} · ${traffic.period?`数据月份：${traffic.period} · 核查：${traffic.asOf}`:`数据日期：${traffic.asOf}`}`
+  :undefined;
+ return {dr,subtitle,authorityDetail,trafficDetail,drAvailable:!!selected};
+}
+
+export function metricImportLinkScope(channel:(Pick<Channel,'id'|'domain'|'metrics'|'authority'>)|undefined,target:string):ChannelMetric['linkScope']{
+ if(!channel)return 'platform-root';
+ const measuredTarget=target.trim().toLowerCase();
+ const knownScope=channelMetrics(channel).find(metric=>metric.provider==='ahrefs-dr'&&metric.target.toLowerCase()===measuredTarget)?.linkScope;
+ if(knownScope)return knownScope;
+ if(channel.domain.toLowerCase()!==measuredTarget)return 'platform-root';
+ return channelMetricLinkScope(channel.id);
 }
 
 export interface MetricFormInput{
  channelId:string;authorityChoice:AuthorityChoice;otherName:string;authorityValue:string;scope:AuthorityScope;target:string;
- traffic:string;source:string;asOf:string;estimated:boolean;datePrecision?:'day'|'month';dataMonth?:string;checkedAt?:string;
+ traffic:string;source:string;asOf:string;estimated:boolean;datePrecision?:'day'|'month';dataMonth?:string;checkedAt?:string;linkScope?:ChannelMetric['linkScope'];
 }
 
-export function buildChannelMetricRow(input:MetricFormInput):{channelId:string;authority?:Authority;traffic?:Traffic}{
+export function buildChannelMetricRow(input:MetricFormInput):{channelId:string;metrics?:ChannelMetric[];traffic?:Traffic}{
  const authorityFilled=input.authorityValue.trim()!=='';
  const trafficFilled=input.traffic.trim()!=='';
  if(!authorityFilled&&!trafficFilled)throw Error('请填写 DR、其他权威指标或月访问量。');
  const monthlyEvidence=input.datePrecision==='month';
  if(monthlyEvidence?(!input.dataMonth||!input.checkedAt):!input.asOf)throw Error('请填写来源给出的数据日期；仅提供月份时选择月度数据并记录核查日期。');
- const row:{channelId:string;authority?:Authority;traffic?:Traffic}={channelId:input.channelId};
+ const row:{channelId:string;metrics?:ChannelMetric[];traffic?:Traffic}={channelId:input.channelId};
  if(authorityFilled){
   const name=input.authorityChoice==='ahrefs_dr'?'Ahrefs DR':input.otherName.trim();
   if(input.authorityChoice==='other'){
@@ -77,7 +83,12 @@ export function buildChannelMetricRow(input:MetricFormInput):{channelId:string;a
   const value=Number(input.authorityValue);
   if(!Number.isFinite(value)||value<0||value>100)throw Error('权威值需在 0 到 100 之间。');
   if(/^open\s?page\s?rank$/i.test(name)&&value>10)throw Error('OpenPageRank 需在 0 到 10 之间。');
-  row.authority={name,value,source:input.source.trim(),...(monthlyEvidence?{dataMonth:input.dataMonth,checkedAt:input.checkedAt}:{asOf:input.asOf}),scope:input.scope,target:input.target.trim()};
+  row.metrics=[{
+   provider:input.authorityChoice==='ahrefs_dr'?'ahrefs-dr':`legacy:${name}`,
+   value,source:input.source.trim(),asOf:(monthlyEvidence?input.dataMonth!:input.asOf).slice(0,7),
+   target:input.target.trim(),linkScope:input.linkScope??'platform-root',version:'',
+   note:`用户导入，未经外链助手核实${monthlyEvidence?` · 核查：${input.checkedAt}`:''}`,
+  }];
  }
  if(trafficFilled){
   const monthly=Number(input.traffic);

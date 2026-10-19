@@ -65,6 +65,7 @@ function server(f: ReturnType<typeof fixture>, options: { lostCreate?: boolean; 
       assert.equal((init.headers as Record<string, string>).authorization, `Bearer ${TOKEN}`);
       assert.equal(init.redirect, 'manual');
       assert.deepEqual(JSON.parse(String(init.body)), { title: TITLE, body: BODY, slug: expected.slug });
+      assert.doesNotMatch(String(init.body),/linkflow|"slug":"lf-/i);
       published = true;
       if (options.lostPublish) throw Error('response lost');
       if (options.conflict) return json({ code: 'SLUG_TAKEN' }, 409);

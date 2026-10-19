@@ -9,7 +9,9 @@ const siteId='77777777-7777-4777-8777-777777777777';
 mkdirSync(process.env.LINKFLOW_DATA_DIR,{recursive:true});
 const db=new DatabaseSync(join(process.env.LINKFLOW_DATA_DIR,'linkflow.sqlite'));
 db.exec('CREATE TABLE state (id INTEGER PRIMARY KEY, body TEXT NOT NULL)');
-db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[{id:siteId,domain:'manual.example',url:'https://manual.example/',email:'owner@manual.example',name:'Manual fixture',description:'Original educational publication',category:'content',language:'en',monthlyTarget:1,topics:[{url:'https://manual.example/guide',discoveredAt:new Date().toISOString()}],topicsCheckedAt:new Date().toISOString(),status:'ready',createdAt:new Date().toISOString()}],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'codex',codexPath:join(process.env.LINKFLOW_DATA_DIR,'not-installed-cli'),model:'',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
+// Legacy profile: no reviewDefaultsVersion, no global or per-site review mode. Ghost(Pro) only accepts
+// the owner's own publication, so the fixture records the site's publication URL as that qualification.
+db.prepare('INSERT INTO state VALUES(1,?)').run(JSON.stringify({sites:[{id:siteId,domain:'manual.example',url:'https://manual.example/',email:'owner@manual.example',name:'Manual fixture',description:'Original educational publication',category:'content',language:'en',monthlyTarget:1,qualifications:{publication:'https://manual.example/'},topics:[{url:'https://manual.example/guide',discoveredAt:new Date().toISOString()}],topicsCheckedAt:new Date().toISOString(),status:'ready',createdAt:new Date().toISOString()}],tasks:[],accounts:[],events:[],usage:{},settings:{autoRun:false,provider:'codex',codexPath:join(process.env.LINKFLOW_DATA_DIR,'not-installed-cli'),model:'',hasApiKey:false,timezone:'Asia/Singapore'}}));db.close();
 require('../dist-electron/main.cjs');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 let win;const checks=[];
@@ -17,27 +19,44 @@ const evaluate=js=>win.webContents.executeJavaScript(js,true);
 const check=(name,condition)=>{assert(condition,name);checks.push({name,passed:true})};
 const invoke=(command,payload={})=>evaluate(`window.linkflow.invoke(${JSON.stringify(command)},${JSON.stringify(payload)})`);
 const waitUi=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(50)}throw Error('UI not ready: '+expression)};
+const eventually=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return true;await delay(50)}return false};
 const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.innerText.trim()===${JSON.stringify(text)}&&!b.disabled&&b.offsetParent!==null);if(!b)return false;b.click();return true})()`),'enabled button: '+text);await delay(100)};
+// Sidebar entries may carry a pending-count badge after their label (e.g. "待办1").
+const nav=async label=>{assert(await evaluate(`(()=>{const b=[...document.querySelectorAll('nav[aria-label="主导航"] button')].find(b=>b.innerText.trim().replace(/\\d+$/,'')===${JSON.stringify(label)});if(!b)return false;b.click();return true})()`),'navigation: '+label);await delay(120)};
+const selectPlatformSite=async value=>{await evaluate(`(()=>{const e=document.querySelector('[aria-label="看哪个网站"]');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);await delay(100)};
+const openPlatform=async name=>{assert(await evaluate(`(()=>{const b=[...document.querySelectorAll('.platform-table tbody button')].find(b=>b.innerText.trim()===${JSON.stringify(name)});if(!b)return false;b.click();return true})()`),'platform row: '+name);await delay(100)};
+const closeDrawer=async()=>{await evaluate(`document.querySelector('.side-drawer [aria-label="关闭"]')?.click()`);await delay(80)};
+const groupRows=group=>`[...document.querySelectorAll('.platform-group')].filter(g=>g.querySelector('.group-head strong')?.textContent===${JSON.stringify(group)}).flatMap(g=>[...g.querySelectorAll('tbody tr')])`;
 (async()=>{
  await app.whenReady();
  for(let i=0;i<150;i++){win=BrowserWindow.getAllWindows().find(w=>w.getTitle().includes('LINKFLOW'));if(win&&!win.webContents.isLoading()&&await evaluate('!!window.linkflow&&!!document.querySelector("h1")').catch(()=>false))break;await delay(100)}
  await waitUi('document.body.innerText.includes("manual.example")');
- await click('渠道');
- await evaluate(`document.querySelector('[aria-label="查看 Ghost(Pro) 详情"]').click()`);await delay(80);
- check('selection is required before channel task creation',await evaluate('(()=>{const r=document.querySelector(".channel-details-row:not([hidden])");return r.innerText.includes("先在上方选择网站")&&[...r.querySelectorAll("button")].find(b=>b.innerText.trim()==="建立人工待办")?.disabled})()'));
- await evaluate(`(()=>{const e=document.querySelector('[aria-label="按网站筛选相关渠道"]');e.value=${JSON.stringify(siteId)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);await delay(100);
- await click('建立人工待办');await waitUi('document.body.innerText.includes("返回总览")');
+ const initial=await invoke('snapshot');
+ check('legacy site keeps its inherited manual review while the default for new sites becomes automatic',initial.reviewDefaultsVersion===1&&initial.sites.find(s=>s.id===siteId)?.articleReviewMode==='manual'&&initial.settings.articleReviewMode==='ai'&&initial.settings.autoRun===false);
+ check('first-run wizard stays closed for a profile that already has websites',!(await evaluate('!!document.querySelector(\'[role=dialog][aria-label="开始使用外链助手"]\')')));
+ await nav('平台与账号');
+ await selectPlatformSite('all');
+ await openPlatform('Ghost');
+ check('selection is required before channel task creation',await evaluate(`(()=>{const d=document.querySelector('.side-drawer[aria-label="Ghost"]');return !!d&&!d.querySelector('.channel-task-action')&&![...d.querySelectorAll('button')].some(b=>['建立人工待办','加入执行计划'].includes(b.innerText.trim()))})()`));
+ await closeDrawer();
+ await selectPlatformSite(siteId);
+ check('qualified manual platform is offered as owner-posted work for the selected site',await evaluate(`${groupRows('软件写好、你来发')}.some(r=>r.cells[0].innerText.includes('Ghost')&&r.cells[4].innerText.trim()==='你来发')`));
+ await openPlatform('Ghost');
+ await click('建立人工待办');await waitUi('!!document.querySelector(\'[aria-label="网站详情"]\')&&document.body.innerText.includes("返回网站")');
  const snapshot=await invoke('snapshot'),tasks=snapshot.tasks.filter(t=>t.siteId===siteId&&t.channelId==='ghost-pro');
  check('actual IPC creates one manual task without publishing',tasks.length===1&&tasks[0].channelId==='ghost-pro'&&tasks[0].status==='needs_input'&&!tasks[0].submittedAt&&!tasks[0].publicUrl&&snapshot.settings.autoRun===false);
- await click('渠道');
- await evaluate(`(()=>{const e=document.querySelector('[aria-label="按网站筛选相关渠道"]');e.value=${JSON.stringify(siteId)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`);await delay(80);
- await evaluate(`document.querySelector('[aria-label="查看 Ghost(Pro) 详情"]').click()`);await delay(80);
- check('existing source offers continuation rather than duplicate creation',await evaluate('document.querySelector(".channel-details-row:not([hidden])").innerText.includes("查看已有任务")'));
+ await nav('平台与账号');
+ await selectPlatformSite(siteId);
+ await openPlatform('Ghost');
+ check('existing source offers continuation rather than duplicate creation',await evaluate(`(()=>{const a=document.querySelector('.side-drawer .channel-task-action');return !!a&&[...a.querySelectorAll('button')].some(b=>b.innerText.trim()==='查看已有任务')&&![...a.querySelectorAll('button')].some(b=>b.innerText.trim()==='建立人工待办')})()`));
  check('backend rejects duplicate source',await invoke('site:queue-channel',{id:siteId,channelId:'ghost-pro'}).then(()=>false,()=>true));
- await evaluate('document.querySelector(".channel-details-row:not([hidden]) .channel-task-action").scrollIntoView({block:"center"})');await delay(80);writeFileSync('.evidence/manual-channel-workflow.png',(await win.webContents.capturePage()).toPNG());
- await click('任务');await click('需你处理');
- await evaluate('document.querySelector(".work-identity").click()');await delay(80);
- check('manual task exposes AI material preparation',await evaluate('document.body.innerText.includes("AI 准备材料")'));
+ await evaluate('document.querySelector(".side-drawer .channel-task-action").scrollIntoView({block:"center"})');await delay(80);writeFileSync('.evidence/manual-channel-workflow.png',(await win.webContents.capturePage()).toPNG());
+ await closeDrawer();
+ await nav('待办');
+ check('manual task waits in the owner-posting todo group',await evaluate(`[...document.querySelectorAll('.todo-group')].some(g=>g.querySelector('h2')?.textContent==='软件写好、等你发'&&[...g.querySelectorAll('.todo-card')].some(c=>c.innerText.includes('manual.example · Ghost(Pro)')&&[...c.querySelectorAll('button')].some(b=>b.innerText.trim()==='去发布')))`));
+ await nav('网站');await click('manual.example');await click('排期');
+ await evaluate(`[...document.querySelectorAll('.task-card .task-summary')].find(b=>b.innerText.includes('Ghost(Pro)'))?.click()`);await delay(80);
+ check('manual task exposes AI material preparation',await evaluate(`[...document.querySelectorAll('.task-card')].some(c=>c.innerText.includes('Ghost(Pro)')&&[...c.querySelectorAll('.task-actions button')].some(b=>b.innerText.trim()==='生成草稿'&&!b.disabled))`));
  await invoke('site:queue-channel',{id:siteId,channelId:'blogger'});await delay(100);
  const beforeOpen=await invoke('snapshot'),blogger=beforeOpen.tasks.find(t=>t.siteId===siteId&&t.channelId==='blogger'),windowCount=BrowserWindow.getAllWindows().length;
  check('Blogger API work stays queued while execution is paused',blogger?.status==='queued'&&!blogger.submittedAt&&beforeOpen.settings.autoRun===false);
@@ -45,7 +64,17 @@ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.query
  const afterOpen=await invoke('snapshot');
  check('Blogger opens the catalog submission URL in the preferred external browser',openedUrls.length===1&&openedUrls[0]==='https://www.blogger.com/');
  check('manual open creates no Electron task window, account, draft or AI usage',BrowserWindow.getAllWindows().length===windowCount&&afterOpen.accounts.length===beforeOpen.accounts.length&&JSON.stringify(afterOpen.tasks.find(t=>t.id===blogger.id))===JSON.stringify(blogger)&&JSON.stringify(afterOpen.usage)===JSON.stringify(beforeOpen.usage));
+ await nav('平台与账号');
+ await selectPlatformSite(siteId);
+ await evaluate(`(()=>{const b=[...document.querySelectorAll('.platform-group .group-head')].find(b=>b.querySelector('strong')?.textContent==='不适合这个网站');if(b&&b.getAttribute('aria-expanded')!=='true')b.click()})()`);await delay(100);
+ check('blocked candidates explain missing real qualifications instead of disappearing',await evaluate(`${groupRows('不适合这个网站')}.some(r=>r.cells[0].querySelector('button')?.innerText.trim()==='GitHub'&&r.cells[1].innerText.includes('只收开发项目')&&!r.cells[4].querySelector('button'))`));
+ await openPlatform('GitHub');
+ check('unqualified platform details state the missing qualification and offer no task creation',await evaluate(`(()=>{const d=document.querySelector('.side-drawer[aria-label="GitHub"]');return !!d&&d.innerText.includes('不适合这个网站：只收开发项目')&&!d.querySelector('.channel-task-action')})()`));
+ await closeDrawer();
+ await invoke('site:update',{id:siteId,category:'finance'});
+ check('a finance site keeps finance restrictions visible instead of hiding platforms',await eventually(`${groupRows('不适合这个网站')}.some(r=>r.cells[1].innerText.trim()==='不收金融内容')&&${groupRows('连一次后自动')}.some(r=>r.cells[0].querySelector('button')?.innerText.trim()==='Blogger')`));
  await invoke('site:update',{id:siteId,category:'developer',qualifications:{developer:'https://manual.example/project'}});
+ check('a confirmed developer project moves GitHub out of the unsuitable group',await eventually(`!${groupRows('不适合这个网站')}.some(r=>r.cells[0].querySelector('button')?.innerText.trim()==='GitHub')&&${groupRows('连一次后自动')}.some(r=>r.cells[0].querySelector('button')?.innerText.trim()==='GitHub')`));
  await invoke('site:queue-channel',{id:siteId,channelId:'github'});
  await invoke('account:save',{channelId:'github',email:'owner@manual.example',username:'fixture-account',siteIds:[siteId]});
  const browserTask=(await invoke('snapshot')).tasks.find(t=>t.siteId===siteId&&t.channelId==='github');
@@ -53,7 +82,8 @@ const click=async text=>{assert(await evaluate(`(()=>{const b=[...document.query
  const originalLoad=BrowserWindow.prototype.loadURL;
  let loadCalls=0;
  try{
-  BrowserWindow.prototype.loadURL=async function(){loadCalls++;throw Error("ERR_BLOCKED_BY_CLIENT (-20) loading 'https://accounts.example/?token=fixture-secret'")};
+  // Same shape as Electron's own loadURL rejection: message plus structured code/errno/url.
+  BrowserWindow.prototype.loadURL=async function(){loadCalls++;throw Object.assign(Error("ERR_BLOCKED_BY_CLIENT (-20) loading 'https://accounts.example/?token=fixture-secret'"),{code:'ERR_BLOCKED_BY_CLIENT',errno:-20,url:'https://accounts.example/?token=fixture-secret'})};
   const failure=await invoke('task:open',{id:browserTask.id}).then(()=>'',error=>String(error));
   check('blocked browser redirect reports a redacted error and closes the failed window',failure.includes('允许域名')&&!failure.includes('fixture-secret')&&!failure.includes('accounts.example')&&BrowserWindow.getAllWindows().length===windowCount);
   BrowserWindow.prototype.loadURL=async function(){loadCalls++};

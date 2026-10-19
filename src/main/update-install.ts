@@ -74,7 +74,7 @@ export async function prepareInstallJob(input:{platform:UpdatePlatform;oldPid:nu
   const token=(ports.uuid??randomUUID)(),jobPath=join(input.updatesDirectory,`install-${id}.json`),common={schemaVersion:1 as const,token,platform:input.platform,oldPid:input.oldPid,targetVersion:input.targetVersion,updatesDirectory:input.updatesDirectory,artifactPath:input.artifactPath,artifactSize:input.artifactSize,artifactSha256:input.artifactSha256,applicationPath:input.applicationPath,executablePath:input.executablePath,helperRuntimePath:join(input.updatesDirectory,`helper-runtime-${id}`),readyPath:jobPath+'.ready',armPath:jobPath+'.armed',startupRequestPath:join(input.updatesDirectory,'startup-request.json'),startupAckPath:join(input.updatesDirectory,'startup-ack'),receiptPath:join(input.updatesDirectory,'installed.json'),errorPath:join(input.updatesDirectory,'install-error.json')};
   let job:UpdateHelperJob;
   if(input.platform==='darwin-arm64'){
-    if(extname(input.applicationPath)!=='.app'||macApplicationPath(input.executablePath)!==input.applicationPath||!inside(input.applicationPath,input.executablePath))throw Error('当前应用不是可原地更新的 macOS 应用');
+    if(extname(input.applicationPath)!=='.app'||macApplicationPath(input.executablePath)!==input.applicationPath||!inside(input.applicationPath,input.executablePath))throw Error('当前外链助手不是可原地更新的 macOS 安装版本');
     await files.access(parent,fsConstants.W_OK);const stageRoot=join(parent,`.linkflow-update-${input.targetVersion}`),freshRoot=join(parent,`.linkflow-update-${input.targetVersion}-fresh-${id}`),snapshotPath=join(freshRoot,'.verified-update.zip'),stagedApplicationPath=join(stageRoot,basename(input.applicationPath)),freshApplicationPath=join(freshRoot,basename(input.applicationPath)),backupPath=join(parent,`.${basename(input.applicationPath)}.linkflow-backup-${id}`);
     try{
       await files.rm(freshRoot,{recursive:true,force:true});await files.mkdir(freshRoot,{recursive:false,mode:0o700});const archivePathInfo=await files.lstat(input.artifactPath,{bigint:true}),expectedArchive=archiveIdentity(archivePathInfo);if(!archivePathInfo.isFile()||archivePathInfo.isSymbolicLink()||archivePathInfo.nlink!==1n||archivePathInfo.size!==BigInt(input.artifactSize))throw Error('macOS 更新安装包路径或大小无效');const archiveHandle=await files.open(input.artifactPath,fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW);
@@ -89,14 +89,14 @@ export async function prepareInstallJob(input:{platform:UpdatePlatform;oldPid:nu
       }finally{await archiveHandle.close()}
       const topLevel=await files.readdir(freshRoot,{withFileTypes:true});if(topLevel.length!==1||topLevel[0].name!==basename(input.applicationPath)||!topLevel[0].isDirectory()||topLevel[0].isSymbolicLink())throw Error('macOS 更新压缩包顶层结构无效');const freshTreeSha256=await hashUpdateTree(freshApplicationPath);
       await files.rm(stageRoot,{recursive:true,force:true});await files.rename(freshRoot,stageRoot);
-      if((await files.stat(stageRoot)).dev!==(await files.stat(parent)).dev)throw Error('更新暂存目录与应用不在同一磁盘');
-      const info=await files.lstat(stagedApplicationPath);if(!info.isDirectory()||info.isSymbolicLink())throw Error('更新压缩包不含预期的应用');
-      const executableRelative=relative(input.applicationPath,input.executablePath),stagedExecutable=join(stagedApplicationPath,executableRelative),executableInfo=await files.lstat(stagedExecutable);if(!executableInfo.isFile()||executableInfo.isSymbolicLink())throw Error('更新应用缺少可执行文件');
+      if((await files.stat(stageRoot)).dev!==(await files.stat(parent)).dev)throw Error('更新暂存目录与外链助手不在同一磁盘');
+      const info=await files.lstat(stagedApplicationPath);if(!info.isDirectory()||info.isSymbolicLink())throw Error('更新安装包中没有预期的外链助手');
+      const executableRelative=relative(input.applicationPath,input.executablePath),stagedExecutable=join(stagedApplicationPath,executableRelative),executableInfo=await files.lstat(stagedExecutable);if(!executableInfo.isFile()||executableInfo.isSymbolicLink())throw Error('外链助手更新文件中缺少可执行文件');
       await verifyVerifiedMacStageQuarantineFree({updatesDirectory:input.updatesDirectory,artifactPath:input.artifactPath,artifactSize:input.artifactSize,artifactSha256:input.artifactSha256,applicationPath:input.applicationPath,executablePath:input.executablePath,stagedApplicationPath,targetVersion:input.targetVersion,treeSha256:freshTreeSha256},{execute:run,...(ports.probeMacQuarantine?{probeQuarantine:ports.probeMacQuarantine}:{}),...(ports.verifyMacQuarantineProbe?{verifyProbe:ports.verifyMacQuarantineProbe}:{})});
       job={...common,backupPath,stagedApplicationPath,stagedTreeSha256:freshTreeSha256};
     }catch(error){await Promise.allSettled([files.rm(freshRoot,{recursive:true,force:true}),files.rm(stageRoot,{recursive:true,force:true})]);throw error}
   }else{
-    const installDirectory=dirname(input.executablePath);if(input.applicationPath!==installDirectory||extname(input.executablePath).toLowerCase()!=='.exe'||!inside(installDirectory,input.executablePath))throw Error('当前应用不是可原地更新的 Windows 安装');
+    const installDirectory=dirname(input.executablePath);if(input.applicationPath!==installDirectory||extname(input.executablePath).toLowerCase()!=='.exe'||!inside(installDirectory,input.executablePath))throw Error('当前外链助手不是可原地更新的 Windows 安装版本');
     await files.access(parent,fsConstants.W_OK);const backupPath=join(parent,`.linkflow-backup-${id}`);await files.cp(installDirectory,backupPath,{recursive:true,errorOnExist:true,force:false,verbatimSymlinks:true});job={...common,backupPath};
   }
   try{

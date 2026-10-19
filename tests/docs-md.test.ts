@@ -518,9 +518,18 @@ test('receipt URL and source-hash tampering fail closed without any raw request'
   }
 });
 
-test('raw HTTP, media-type, redirect, and response-size failures stay source_unavailable', async () => {
+test('raw 404 and 410 identify an absent known source',async()=>{
+  for(const status of [404,410]){
+    const result=await compareDocsMdRawSource(expectedReceipt(),MARKDOWN,{fetch:async()=>new Response('missing',{status,headers:{'content-type':'text/markdown'}})});
+    assert.deepEqual(result,{status:'source_absent'});
+  }
+});
+
+test('other raw HTTP, media-type, redirect, and response-size failures stay source_unavailable', async () => {
   const responses = [
-    () => new Response('missing', { status: 404, headers: { 'content-type': 'text/markdown' } }),
+    () => new Response('forbidden', { status: 403, headers: { 'content-type': 'text/markdown' } }),
+    () => new Response('limited', { status: 429, headers: { 'content-type': 'text/markdown' } }),
+    () => new Response('failed', { status: 503, headers: { 'content-type': 'text/markdown' } }),
     () => new Response(MARKDOWN, { status: 200, headers: { 'content-type': 'text/html' } }),
     () => new Response(null, { status: 302, headers: { location: RAW_URL } }),
     () => new Response(MARKDOWN, {

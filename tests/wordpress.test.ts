@@ -61,7 +61,7 @@ function fixture(overrides: { task?: Partial<Task>; account?: Partial<Account> }
   };
   if (task.articleReview && task.articleReview.contentHash === 'a'.repeat(64)) {
     task.articleReview = { ...task.articleReview, reviewContractVersion: 4, contentHash: articleContentHash(task),
-      contextHash: articleContextHash(site, channel(), settings, account) };
+      contextHash: articleContextHash(site, channel(), settings, account,4) };
   }
   const secrets = new Map([[`account:${account.id}`, JSON.stringify({ version: 1, accessToken: TOKEN,
     expiresAt: EXPIRES_AT, blogId: BLOG_ID, ownerId: AUTHOR_ID })]]);
@@ -96,7 +96,7 @@ function writableSite(overrides: Record<string, unknown> = {}) {
 }
 
 function article(f: ReturnType<typeof fixture>) {
-  return wordpressTesting.approvedArticle(f.task, f.site.url, false);
+  return wordpressTesting.approvedArticle(f.task, f.site.url, false, f.site);
 }
 
 function postUrl(f: ReturnType<typeof fixture>) {
@@ -127,7 +127,7 @@ function publicPage(f: ReturnType<typeof fixture>, options: {
 
 function successfulServer(f: ReturnType<typeof fixture>, options: {
   disconnectPost?: boolean; remoteCreatedOnDisconnect?: boolean; legacy?: Record<string, unknown>;
-  created?: Record<string, unknown>; postResponse?: Response; page?: string; pageHeaders?: Record<string, string>;
+  created?: Record<string, unknown>; postResponse?: Response; page?: string; pageHeaders?: Record<string, string>;pageResponse?:Response;
 } = {}) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   let published = false;
@@ -158,6 +158,7 @@ function successfulServer(f: ReturnType<typeof fixture>, options: {
       assert.equal((init.headers as Record<string, string>).authorization, `Bearer ${TOKEN}`);
       const expected = article(f);
       assert.deepEqual(JSON.parse(String(init.body)), { title: TITLE, content: expected.html, status: 'publish', slug: expected.slug });
+      assert.doesNotMatch(String(init.body),/linkflow|"slug":"lf-/i);
       assert.equal(f.task.wordpress?.stage, 'submitting');
       assert.equal(f.task.checkpoint, 'wordpress_publish_submitting');
       assert.ok(f.task.submittedAt);
@@ -169,6 +170,7 @@ function successfulServer(f: ReturnType<typeof fixture>, options: {
     }
     if (url === postUrl(f)) {
       assert.equal((init.headers as Record<string, string>).authorization, undefined);
+      if(options.pageResponse)return options.pageResponse;
       return html(options.page ?? publicPage(f), 200, options.pageHeaders);
     }
     throw Error(`unexpected request ${init.method} ${url}`);
@@ -518,6 +520,18 @@ test('verification reports absence separately and accepts an exact nofollow/ugc 
   previewServer.markPublished();
   const previewFound = await verifyWordPressPublication(preview.task, preview.site.url, { fetch: previewServer.fetch });
   assert.equal(previewFound.found, true, 'max-image-preview:none must not be treated as robots none');
+});
+
+test('verification keeps local inconsistencies and remote outages unreachable while typed remote mismatches stay invalid',async t=>{
+  const published=()=>{const f=fixture(),expected=article(f);f.task.wordpress={blogId:BLOG_ID,authorId:AUTHOR_ID,slug:expected.slug,contentHash:expected.contentHash,stage:'published',postId:'987654',url:postUrl(f)};f.task.publicUrl=postUrl(f);return f};
+  const local=[published(),published(),published()];delete local[0].task.wordpress;local[1].task.wordpress!.contentHash='f'.repeat(64);local[2].task.draft={...local[2].task.draft!,body:`${local[2].task.draft!.body}\nchanged`};
+  for(const [index,f] of local.entries())await t.test(`local ${index}`,async()=>{let calls=0;const result=await verifyWordPressPublication(f.task,f.site.url,{fetch:async()=>{calls++;throw Error('must not read')}});assert.equal(result.outcome,'unreachable');assert.equal(calls,0)});
+  for(const status of [401,403,429,503])await t.test(`remote ${status}`,async()=>{const f=published(),result=await verifyWordPressPublication(f.task,f.site.url,{fetch:async()=>json({error:'temporarily unavailable'},status)});assert.equal(result.outcome,'unreachable')});
+  await t.test('public forbidden',async()=>{const f=published(),server=successfulServer(f,{pageResponse:html('forbidden',403)});server.markPublished();const result=await verifyWordPressPublication(f.task,f.site.url,{fetch:server.fetch});assert.equal(result.outcome,'unreachable')});
+  for(const status of [404,410])await t.test(`absent ${status}`,async()=>{const f=published(),result=await verifyWordPressPublication(f.task,f.site.url,{fetch:async()=>json({error:'not found'},status)});assert.equal(result.outcome,'absent')});
+  await t.test('typed rejected',async()=>{const f=published(),result=await verifyWordPressPublication(f.task,f.site.url,{fetch:async()=>json({error:'bad request'},400)});assert.equal(result.outcome,'invalid')});
+  await t.test('typed invalid response',async()=>{const f=published(),result=await verifyWordPressPublication(f.task,f.site.url,{fetch:async()=>json({unexpected:true})});assert.equal(result.outcome,'invalid')});
+  await t.test('unknown transport error',async()=>{const f=published(),result=await verifyWordPressPublication(f.task,f.site.url,{fetch:async()=>{throw Error('socket reset')}});assert.equal(result.outcome,'unreachable')});
 });
 
 test('authenticated redirects, oversized responses, and malformed create identities never leak or trigger a second POST', async t => {

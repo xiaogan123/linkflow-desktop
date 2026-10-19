@@ -93,7 +93,7 @@ function canonicalHttps(value: string): string {
     if (url.protocol !== 'https:' || url.username || url.password || !url.hostname || (url.port && url.port !== '443')) throw new Error();
     url.hash = '';
     return url.toString();
-  } catch { throw new Error('文章目标必须是不含凭据的 HTTPS 网址'); }
+  } catch { throw new Error('文章目标必须是不含账号密码的 HTTPS 网址'); }
 }
 
 function privateKey(value: unknown): PrivateKey {
@@ -240,7 +240,7 @@ function approvedArticle(task: Task, siteUrl: string, requireReview: boolean, au
   const approved = Number.isFinite(approvedAt) && (!task.draftUpdatedAt || Number.isFinite(draftUpdatedAt) && approvedAt >= draftUpdatedAt);
   const aiPassed = task.articleReview?.status === 'passed'
     && (typeof task.draftRevision !== 'number' || task.articleReview.draftRevision === task.draftRevision);
-  if (requireReview && !approved && !aiPassed) throw new Error('Hive 全文尚未通过独立 AI 核对或明确人工审批');
+  if (requireReview && !approved && !aiPassed) throw new Error('Hive 全文尚未通过 AI 复核或明确人工审批');
   if (typeof draft.title !== 'string' || !draft.title.trim() || Buffer.byteLength(draft.title, 'utf8') > 255
     || /[\u0000-\u001f\u007f]/.test(draft.title)) throw new Error('Hive 标题无效');
   if (typeof draft.body !== 'string' || draft.body !== draft.body.trim()
@@ -264,12 +264,17 @@ function approvedArticle(task: Task, siteUrl: string, requireReview: boolean, au
   if (draft.description && (draft.description.length > 300 || /[\u0000-\u001f\u007f]/.test(draft.description))) {
     throw new Error('Hive 摘要超过 300 字符或包含控制字符');
   }
-  const metadata = JSON.stringify({ tags: [ROOT_TAG], app: 'linkflow/1.0', format: 'markdown',
-    ...(draft.description ? { description: draft.description } : {}) });
+  const metadataFor=(legacy:boolean)=>JSON.stringify({tags:[ROOT_TAG],
+    ...(legacy?{app:'linkflow/1.0'}:{}),format:'markdown',
+    ...(draft.description?{description:draft.description}:{})});
+  const legacyMetadata=metadataFor(true);
+  const legacyHash=sha256(JSON.stringify({author,title:draft.title,body:draft.body,json_metadata:legacyMetadata,target}));
+  const legacy=task.hive?.contentHash===legacyHash;
+  const metadata=legacy?legacyMetadata:metadataFor(false);
   const material = JSON.stringify({ author, title: draft.title, body: draft.body, json_metadata: metadata, target });
   const contentHash = sha256(material);
   const stem = draft.title.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 70).replace(/-+$/g, '');
-  const permlink = `${stem || 'linkflow-article'}-${contentHash.slice(0, 20)}`;
+  const permlink = `${stem || (legacy?'linkflow-article':'article')}-${contentHash.slice(0, 20)}`;
   const comment: HiveComment = {
     parent_author: '', parent_permlink: ROOT_TAG, author, permlink, title: draft.title, body: draft.body, json_metadata: metadata,
   };
@@ -433,7 +438,7 @@ async function preflight(context: ExecutionContext, account: Json, article: Arti
     // The official statistic is an average, not a promise for this article. Leave headroom for its body size.
     const articleKiB = BigInt(Math.ceil(Buffer.byteLength(article.comment.body, 'utf8') / 1024));
     const needed = avg * (4n + articleKiB);
-    if (needed > max) return { status: 'needs_input', message: 'Hive 账号最大 RC 低于此篇全文的保守发文预算；需补充 RC 后再继续' };
+    if (needed > max) return { status: 'needs_input', message: 'Hive 账号的 RC 上限不足以发布这篇全文；请补充 RC 后继续' };
     if (current < needed) {
       const seconds = Number((needed - current) * BigInt(RC_REGEN_SECONDS) / max);
       const delay = Math.min(24 * 60 * 60, Math.max(5 * 60, Number.isFinite(seconds) ? seconds + 60 : 24 * 60 * 60));
@@ -494,18 +499,18 @@ export async function runHiveTask(context: ExecutionContext, deps: HiveDependenc
   try { article = approvedArticle(context.task, context.site.url, !context.task.hive, account.username); }
   catch (error) { return { status: 'needs_input', message: error instanceof Error ? error.message : 'Hive 稿件无效' }; }
   if (context.task.hive && !validState(context.task, article)) {
-    return { status: 'needs_input', message: 'Hive 原发布意图与当前作者或全文不一致；保留记录并停止操作' };
+    return { status: 'needs_input', message: 'Hive 原发布计划与当前作者或全文不一致；保留记录并停止操作' };
   }
   if (!context.task.hive && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt
     || ['hive_publish_submitting', 'hive_published'].includes(context.task.checkpoint ?? ''))) {
-    return { status: 'needs_input', message: 'Hive 任务已有提交痕迹却缺少幂等回执，不能创建新帖' };
+    return { status: 'needs_input', message: 'Hive 任务已有提交痕迹却缺少防重复确认记录，不能创建新帖' };
   }
   if (context.task.hive) {
     const found = await reconcileHiveTask(context, deps);
     if (found.status === 'found') {
       context.checkpoint({ hive: found.hive, checkpoint: 'hive_published', publicUrl: found.publicUrl,
         submittedAt: context.task.submittedAt });
-      return { status: 'review', message: 'Hive 链上原帖全文已精确回读；等待匿名公开页面核验',
+      return { status: 'review', message: 'Hive 链上原帖全文已精确回读；等待匿名公开页面检查',
         publicUrl: found.publicUrl, checkpoint: 'hive_published', submittedAt: context.task.submittedAt };
     }
     return pending(context.task.hive, context.task.submittedAt, 'Hive 原广播结果仍未确认；只会回读原作者和 permlink，不会再次广播');
@@ -564,12 +569,12 @@ export async function runHiveTask(context: ExecutionContext, deps: HiveDependenc
       context.checkpoint({ hive: recordedReceipt, submittedAt });
     }
   } catch {
-    return pending(recordedReceipt, submittedAt, 'Hive 广播结果不明；原意图已保留，后续只读对账，绝不盲目重发');
+    return pending(recordedReceipt, submittedAt, 'Hive 广播结果不明；原提交信息已保留，后续检查原记录，绝不盲目重发');
   }
   const found = await reconcileHiveTask({ ...context, task: { ...context.task, hive: recordedReceipt, submittedAt } }, deps);
   if (found.status === 'found') {
     context.checkpoint({ hive: found.hive, checkpoint: 'hive_published', publicUrl: found.publicUrl, submittedAt });
-    return { status: 'review', message: 'Hive 链上原帖已按作者、permlink、全文和元数据回读，等待匿名页面核验',
+    return { status: 'review', message: 'Hive 链上原帖已按作者、permlink、全文和元数据回读，等待匿名页面检查',
       publicUrl: found.publicUrl, checkpoint: 'hive_published', submittedAt };
   }
   return pending(recordedReceipt, submittedAt, 'Hive 交易已提交，但完整链上内容尚未回读；后续只核对原帖');
@@ -584,12 +589,12 @@ export async function verifyHivePublication(
 ): Promise<LinkResult> {
   const state = task.hive;
   const fallback = task.publicUrl ?? `${PUBLIC_ORIGIN}/`;
-  if (!validReceipt(state)) return unavailable(fallback, 'Hive 任务缺少有效作者、permlink 或全文回执', 'invalid');
+  if (!validReceipt(state)) return unavailable(fallback, 'Hive 任务缺少有效作者、permlink 或全文记录', 'invalid');
   let article: Article;
   try {
     article = approvedArticle(task, targetSiteUrl, false, state.author);
     if (!validState(task, article)) throw new Error();
-  } catch { return unavailable(fallback, 'Hive 任务全文或作者与原提交意图不一致', 'invalid'); }
+  } catch { return unavailable(fallback, 'Hive 任务全文或作者与原提交信息不一致', 'invalid'); }
   const url = publicUrl(state.author, state.permlink);
   if (task.publicUrl && task.publicUrl !== url) return unavailable(task.publicUrl, 'Hive 公开网址与原作者或 permlink 不一致', 'invalid');
   try {
@@ -602,9 +607,9 @@ export async function verifyHivePublication(
     for (const selector of selectors) {
       const match = inspectRenderedArticle(html.text, article.comment.body, article.target, selector, { title: article.comment.title,pageUrl:url,robotsHeader:html.robotsHeader });
       if (match.found) return { found: true, outcome: 'found', url, rel: match.rel,
-        reason: 'Hive 链上原帖与匿名公开页面完整正文和可见目标 href 均已一致核验' };
-      if(match.reason==='policy')return unavailable(url,'Hive 链上原帖已保留，但公开页有索引限制、跳转或 canonical 冲突，不能计为合格来源','invalid');
+        reason: 'Hive 链上原帖与匿名公开页面完整正文和可见目标 href 均已一致检查' };
+      if(match.reason==='policy')return unavailable(url,'Hive 链上原帖已保留，但公开页有索引限制、跳转或规范网址冲突，不能计为合格来源','invalid');
     }
     return unavailable(url, 'Hive 匿名页面尚未完整呈现原文及可见目标链接');
-  } catch { return unavailable(url, 'Hive 公开 RPC 或匿名页面暂时无法核验'); }
+  } catch { return unavailable(url, 'Hive 公开 RPC 或匿名页面暂时无法检查'); }
 }

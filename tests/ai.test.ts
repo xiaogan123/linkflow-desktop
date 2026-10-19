@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAi, parseAiJson } from '../src/integrations/ai';
+import { createAi, discoverApiModels, parseAiJson } from '../src/integrations/ai';
+import {errorReasonCode} from '../src/shared/task-reasons';
 import type { SecretStore, Settings } from '../src/shared/types';
 
 const emptySecrets = { get: async () => undefined, set: async () => {}, delete: async () => {} } as SecretStore;
@@ -39,9 +40,9 @@ async function assertTerminated(pid: number): Promise<void> {
 
 test('AI accepts only bounded JSON objects', () => {
   assert.deepEqual(parseAiJson('{"ok":true}'), { ok: true });
-  assert.throws(() => parseAiJson('```json\n{"ok":true}\n```'), /JSON/);
-  assert.throws(() => parseAiJson('[1]'), /格式/);
-  assert.throws(() => parseAiJson('x'.repeat(65_000)), /长度/);
+  assert.throws(() => parseAiJson('```json\n{"ok":true}\n```'), error=>errorReasonCode(error)==='format_invalid'&&/JSON/.test(String(error)));
+  assert.throws(() => parseAiJson('[1]'), error=>errorReasonCode(error)==='format_invalid'&&/格式/.test(String(error)));
+  assert.throws(() => parseAiJson('x'.repeat(65_000)), error=>errorReasonCode(error)==='format_invalid'&&/长度/.test(String(error)));
 });
 
 test('aborted requests never spend an AI call', async () => {
@@ -49,8 +50,25 @@ test('aborted requests never spend an AI call', async () => {
   const settings = { provider: 'api', apiBase: 'https://example.com/v1', model: 'test' } as Settings;
   const secrets = { get: async () => undefined, set: async () => {}, delete: async () => {} } as SecretStore;
   const controller = new AbortController(); controller.abort();
-  await assert.rejects(createAi(settings, secrets, () => { calls++; }).json('test', {}, undefined, controller.signal), /取消/);
+  await assert.rejects(createAi(settings, secrets, () => { calls++; }).json('test', {}, undefined, controller.signal), error=>errorReasonCode(error)==='temporary_failure'&&/取消/.test(String(error)));
   assert.equal(calls, 0);
+});
+
+test('API failure classification follows status metadata instead of message text', async () => {
+  const original = globalThis.fetch;
+  const settings = { provider: 'api', apiBase: 'https://example.com/v1', model: 'test' } as Settings;
+  const secrets = { ...emptySecrets, get: async () => 'synthetic-key' } as SecretStore;
+  try {
+    globalThis.fetch = async () => new Response('rate limited', { status: 429 });
+    await assert.rejects(createAi(settings, secrets).json('test', {}), error=>errorReasonCode(error)==='ai_rate_limited');
+    globalThis.fetch = async () => { throw Error('HTTP 429 rate limit malformed JSON'); };
+    await assert.rejects(createAi(settings, secrets).json('test', {}), error=>errorReasonCode(error)==='temporary_failure');
+  } finally { globalThis.fetch = original; }
+});
+
+test('model discovery rate limiting belongs to AI, not the publication platform', async () => {
+  const settings={provider:'api',apiBase:'https://example.com/v1',model:'test'} as Settings;
+  await assert.rejects(discoverApiModels(settings,{...emptySecrets,get:async()=>'synthetic-key'},async()=>new Response('',{status:429})),error=>errorReasonCode(error)==='ai_rate_limited');
 });
 
 test('daily AI budget rejection stops before network', async () => {
@@ -77,6 +95,19 @@ test('API requests refuse redirects while keeping the key out of the prompt', as
     assert.equal(seen, true);
     assert.deepEqual(usage, [{ inputTokens: 12, outputTokens: 3, amount: 0.004, currency: 'USD' }]);
   } finally { globalThis.fetch = original; }
+});
+
+test('API completion token ceiling follows the caller option', async () => {
+  const original=globalThis.fetch,seen:number[]=[];
+  globalThis.fetch=async(_url,options)=>{seen.push((JSON.parse(String(options?.body)) as {max_completion_tokens:number}).max_completion_tokens);return new Response(JSON.stringify({choices:[{message:{content:'{"ok":true}'}}]}),{status:200})};
+  try{
+    const settings={provider:'api',apiBase:'https://example.com/v1',model:'test'} as Settings;
+    const secrets={...emptySecrets,get:async()=>'synthetic-key'} as SecretStore;
+    const ai=createAi(settings,secrets);
+    await ai.json('return ok',{});
+    await ai.json('return ok',{},undefined,undefined,{maxCompletionTokens:6000});
+    assert.deepEqual(seen,[2000,6000]);
+  }finally{globalThis.fetch=original}
 });
 
 test('Codex timeout gives only ultra 600 seconds while preserving every lower budget', { skip: process.platform === 'win32' }, async t => {

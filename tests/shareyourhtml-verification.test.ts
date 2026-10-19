@@ -8,6 +8,8 @@ import type {ShareYourHtmlReadbackResult} from '../src/integrations/shareyourhtm
 import {verifyStoredShareYourHtmlPublication} from '../src/main/shareyourhtml-verification';
 import {shareYourHtmlDraftHash,shareYourHtmlSiteIdentityHash} from '../src/main/shareyourhtml-publication';
 import {Store} from '../src/main/store';
+import {Controller} from '../src/main/controller';
+import {validateBackup} from '../src/main/backup-validation';
 import type {Vault} from '../src/main/vault';
 import type {Channel,Site,Task} from '../src/shared/types';
 
@@ -28,6 +30,25 @@ function fixture(){
 }
 const visible=(page:'not_restricted'|'restricted'='not_restricted'):ShareYourHtmlReadbackResult=>({status:'visible_match',message:'raw ignored',publicUrl:url,content:'visible',targetLinks:[{href:topic,rel:['nofollow','ugc']}],indexing:{page,directives:page==='restricted'?['noindex']:[],robots:'unknown'}});
 const failed=(status:'visibility_unknown'|'content_mismatch'|'unreachable'):ShareYourHtmlReadbackResult=>({status,message:'raw ignored',publicUrl:url,content:status==='content_mismatch'?'mismatch':'unknown',targetLinks:[],indexing:{page:'unknown',directives:[],robots:'unknown'}});
+
+test('periodic HTML observations preserve accepted receipt and encrypted key through backup restoration',async()=>{const f=fixture();try{
+ await verifyStoredShareYourHtmlPublication(f.store,f.vault,{taskId,resolveChannel:f.resolve,now:()=>new Date(checked)},{verifyReadback:async()=>visible()});
+ const original=f.store.read().tasks[0],secret=await f.vault.get(`publication:${taskId}`);
+ for(const outcome of ['found','absent','invalid','unreachable','found'] as const){
+  const reasonCode=({found:'link_found',absent:'link_absent',invalid:'page_noindex',unreachable:'page_unreachable'} as const)[outcome];
+  const controller=new Controller(f.store,f.vault,'fixture',{channelCatalog:[channel()],recheckLink:async(publicPage,_current,_old,expectedHost)=>{
+   assert.equal(publicPage,url);assert.equal(expectedHost,new URL(url).hostname);
+   return {found:outcome==='found',outcome,url:url+'/',rel:outcome==='found'?'nofollow':'',reason:'fixture',reasonCode,indexable:outcome!=='invalid'};
+  }});
+  await controller.verify(taskId);
+  const current=f.store.read().tasks[0];
+  assert.equal(current.linkCheck,outcome);assert.equal(current.publicUrl,url);assert.equal(current.firstLiveAt,checked);
+  assert.deepEqual(current.shareYourHtml,original.shareYourHtml);assert.deepEqual(current.shareYourHtmlReadback,original.shareYourHtmlReadback);
+  assert.equal(f.store.getCipher(`publication:${taskId}`),'cipher');
+  const restored=validateBackup({state:{...f.store.read(),customChannels:[]},secrets:{[`publication:${taskId}`]:secret!}});
+  assert.equal(restored.state.tasks[0].linkCheckReason,reasonCode);
+ }
+}finally{f.cleanup()}});
 
 test('trusted wrapper verifies exact receipt and keeps noindex separate from visible content',async()=>{const f=fixture();try{
  const out=await verifyStoredShareYourHtmlPublication(f.store,f.vault,{taskId,resolveChannel:f.resolve,now:()=>new Date(checked)},{verifyReadback:async()=>visible('restricted')});
@@ -74,3 +95,16 @@ test('oversized or unsupported observation metadata is conservatively stored as 
  const out=await verifyStoredShareYourHtmlPublication(f.store,f.vault,{taskId,resolveChannel:f.resolve,now:()=>new Date(checked)},{verifyReadback:async()=>oversized});
  assert.equal(out.status,'pending');const saved=f.store.read().tasks[0];assert.equal(saved.firstLiveAt,undefined);assert.equal(saved.shareYourHtmlReadback?.status,'visibility_unknown');assert.deepEqual(saved.shareYourHtmlReadback?.targetLinks,[]);
 }finally{f.cleanup()}});
+
+test('frozen first verification persists evidence and restores backup after current metadata changes',async()=>{
+ const f=fixture();try{
+  const {capturePublicationSnapshots}=await import('../src/main/publication-snapshot');
+  f.store.update(state=>capturePublicationSnapshots({tasks:state.tasks.map(value=>({...value,submittedAt:undefined}))},state));
+  f.store.update(state=>{state.sites[0].topics=[];state.sites[0].name='Updated site';state.sites[0].language='zh';state.tasks[0].draft={title:'Edited locally',description:'Local description',body:'Local replacement content.'}});
+  let reads=0;
+  const out=await verifyStoredShareYourHtmlPublication(f.store,f.vault,{taskId,resolveChannel:f.resolve,now:()=>new Date(checked)},{verifyReadback:async(task,site)=>{reads++;assert.deepEqual(task.draft,draft);assert.equal(site.language,'en');assert.equal(site.name,'Example');return visible()}});
+  assert.equal(out.status,'verified');assert.equal(reads,1);assert.equal(f.store.read().tasks[0].firstLiveAt,checked);assert.equal(f.store.read().tasks[0].draft!.title,'Edited locally');
+  const backed=validateBackup({state:{...f.store.read(),customChannels:[]},secrets:{[`publication:${taskId}`]:(await f.vault.get(`publication:${taskId}`))!}});
+  assert.equal(backed.state.tasks[0].firstLiveAt,checked);assert.equal(backed.state.tasks[0].publicationSnapshot?.draft.title,draft.title);
+ }finally{f.cleanup()}
+});

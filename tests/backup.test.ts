@@ -43,13 +43,13 @@ test('a read-only Prose SSH identity with unknown invitation eligibility survive
 test('local restore accepts bounded ciphertext for valid long secrets and preserves portable validation',()=>{
   const state=emptyState();state.settings.hasApiKey=true;
   for(const value of ['x'.repeat(12000),'字'.repeat(8000)]){const cipher=Buffer.from(value).toString('base64');assert.ok(cipher.length>10000);assert.deepEqual(validateLocalBackup({state,ciphers:{apiKey:cipher}},bytes=>bytes.toString('utf8')),{state,secrets:{apiKey:value}})}
-  assert.throws(()=>validateLocalBackup({state,ciphers:{apiKey:Buffer.from('x'.repeat(16385)).toString('base64')}},bytes=>bytes.toString('utf8')),/备份凭据超过允许长度/);
+  assert.throws(()=>validateLocalBackup({state,ciphers:{apiKey:Buffer.from('x'.repeat(16385)).toString('base64')}},bytes=>bytes.toString('utf8')),/备份中的加密信息超过允许长度/);
   assert.throws(()=>validateLocalBackup({state,ciphers:{apiKey:'YWJj'}},()=>{throw Error('private OS diagnostic')}),/^Error: 本机备份与当前系统账号不匹配$/);
 });
 
 test('local restore rejects invalid keys, cipher encodings and oversized input before OS decrypt',()=>{
   let calls=0;const decrypt=()=>{calls++;return 'secret'};
-  for(const ciphers of [{unknown:'YWJj'},{apiKey:null},{apiKey:''},{apiKey:'YWJj '},{apiKey:'YQ'},{apiKey:'YR=='},{apiKey:'A'.repeat(4*Math.ceil((3_000_000+64*1024)/3)+4)}])assert.throws(()=>validateLocalBackup({state:emptyState(),ciphers},decrypt),/本机备份凭据结构无效/);
+  for(const ciphers of [{unknown:'YWJj'},{apiKey:null},{apiKey:''},{apiKey:'YWJj '},{apiKey:'YQ'},{apiKey:'YR=='},{apiKey:'A'.repeat(4*Math.ceil((3_000_000+64*1024)/3)+4)}])assert.throws(()=>validateLocalBackup({state:emptyState(),ciphers},decrypt),/本机备份中的加密信息格式无效/);
   assert.equal(calls,0);
   for(const value of [null,[],{}, {state:{},ciphers:[]}])assert.throws(()=>validateLocalBackup(value,decrypt),/本机备份结构无效/);
   assert.equal(calls,0);

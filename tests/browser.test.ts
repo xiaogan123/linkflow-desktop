@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import vm from 'node:vm';
 import type {BrowserWindow} from 'electron';
-import { classifyAccountPage, classifyControl, isAllowedTaskUrl, isDestructiveControl, isTaskVerificationUrl, loadTaskVerificationUrl, redactStructuredSecrets, redactTaskVerificationData, selectPublicUrl, taskBrowserLoadError, taskObservationScript, taskVerificationNeedsConfirmation } from '../src/integrations/browser';
+import { classifyAccountPage, classifyControl, ensureAccount, isAllowedTaskUrl, isAllowedVerificationUrl, isDestructiveControl, isTaskVerificationUrl, loadTaskVerificationUrl, redactStructuredSecrets, redactTaskVerificationData, selectPublicUrl, taskBrowserLoadError, taskObservationScript, taskVerificationNeedsConfirmation, verifyPendingAccount } from '../src/integrations/browser';
+import type {ExecutionContext,Account} from '../src/shared/types';
 
 const control = (label: string, type = 'button') => ({ id: 0, tag: 'button', type, label, name: '', href: '', signature: '' });
 
@@ -16,8 +17,17 @@ test('navigation is limited to HTTPS channel hosts', () => {
   assert.equal(isAllowedTaskUrl('https://user:pass@example.com/', hosts), false);
 });
 
+test('verification links cannot target another user-hosted platform subdomain',async()=>{
+  assert.equal(isAllowedVerificationUrl('https://attacker.carrd.co/confirm?token=private',['carrd.co','carrd.com']),false);
+  assert.equal(isAllowedVerificationUrl('https://attacker.prose.sh/verify?token=private',['prose.sh']),false);
+  assert.equal(isAllowedVerificationUrl('https://attacker.mataroa.blog/verify?token=private',['mataroa.blog']),false);
+  assert.equal(isAllowedVerificationUrl('https://carrd.co/confirm?token=private',['carrd.co']),true);
+  const {window}=verificationWindow();
+  await assert.rejects(loadTaskVerificationUrl(window,'https://attacker.carrd.co/confirm?token=private',['carrd.co'],new AbortController().signal),/允许/);
+});
+
 test('browser load errors explain blocked redirects without exposing URLs or credentials', () => {
-  const blocked=taskBrowserLoadError(new Error("ERR_BLOCKED_BY_CLIENT (-20) loading 'https://accounts.google.com/?token=fixture-secret'"));
+  const blocked=taskBrowserLoadError(Object.assign(new Error("placeholder"),{code:"ERR_BLOCKED_BY_CLIENT",errno:-20}));
   assert.match(blocked.message,/允许域名/);
   assert.doesNotMatch(blocked.message,/accounts\.google|fixture-secret|https:/);
   const offline=taskBrowserLoadError(new Error("ERR_NAME_NOT_RESOLVED loading 'https://private.example/?password=fixture-secret'"));
@@ -69,6 +79,61 @@ test('authenticated and verified evidence wins only when explicit',()=>{
   assert.equal(classifyAccountPage(accountPage('Your account has been suspended.',false,['My account','Log out'])),'restricted');
   assert.equal(classifyAccountPage(accountPage('Email has been verified',false)),'verified');
   assert.equal(classifyAccountPage(accountPage('Verification failed',false)),'unknown');
+});
+
+test('registration human outcomes leave the submitted checkpoint and do not re-enter mail waiting',async()=>{
+  for(const scenario of [
+    {text:'This email is already registered.',emailRequired:true,attempts:1},
+    {text:'Registration failed.',emailRequired:true,attempts:1},
+    {text:'That username is already taken.',emailRequired:true,attempts:2},
+    {text:'We could not complete your request.',emailRequired:false,attempts:1},
+  ]){
+    const contents=new EventEmitter();let account={status:'draft',source:'generated',registrationAttempts:scenario.attempts} as Account;
+    const window={isDestroyed:()=>false,webContents:Object.assign(contents,{executeJavaScriptInIsolatedWorld:async()=>({text:scenario.text,controls:[]})})} as unknown as BrowserWindow;
+    let mailCalls=0;
+    const context={task:{checkpoint:'account_registration_submitted'},channel:{emailRequired:scenario.emailRequired},getAccount:()=>account,saveAccount:async(value:Account)=>{account=value;},signupHooks:{awaitEmail:async()=>{mailCalls++;return undefined;}},site:{domain:'example.com'},signal:new AbortController().signal} as unknown as ExecutionContext;
+    const result=await verifyPendingAccount(context,window);
+    assert.equal(result&&result!=='retrying'?result.checkpoint:undefined,'account_registration_human');
+    assert.equal(result&&result!=='retrying'?result.status:undefined,'needs_input');
+    assert.equal(mailCalls,0);
+  }
+});
+
+test('an opened verification link with unknown result becomes a registration human checkpoint',async()=>{
+  const contents=new EventEmitter();let current='https://example.com/signup',account={status:'draft',source:'generated',registrationAttempts:1} as Account;
+  const window=Object.assign(new EventEmitter(),{isDestroyed:()=>false,webContents:Object.assign(contents,{
+    getURL:()=>current,
+    executeJavaScriptInIsolatedWorld:async()=>({text:current.includes('/verify')?'No confirmed status yet.':'Check your inbox. A verification email was sent.',controls:[]}),
+  }),loadURL:async(url:string)=>{current=url;}}) as unknown as BrowserWindow;
+  const context={task:{checkpoint:'account_registration_submitted'},channel:{emailRequired:true,allowedHosts:['example.com']},getAccount:()=>account,saveAccount:async(value:Account)=>{account=value;},signupHooks:{awaitEmail:async()=> 'https://example.com/verify?token=private'},site:{domain:'example.com'},signal:new AbortController().signal} as unknown as ExecutionContext;
+  const result=await verifyPendingAccount(context,window);
+  assert.equal(result&&result!=='retrying'?result.checkpoint:undefined,'account_registration_human');
+  assert.equal(result&&result!=='retrying'?result.status:undefined,'needs_input');
+});
+
+test('an email-exists diagnostic survives an inconclusive manual recheck without reading mail',async()=>{
+  const contents=new EventEmitter();let text='This email is already registered.',account={status:'draft',source:'generated',registrationAttempts:1} as Account;
+  let mailCalls=0;
+  const window={isDestroyed:()=>false,webContents:Object.assign(contents,{executeJavaScriptInIsolatedWorld:async()=>({text,controls:[]})})} as unknown as BrowserWindow;
+  const context={task:{checkpoint:'account_registration_submitted'},channel:{emailRequired:true},getAccount:()=>account,saveAccount:async(value:Account)=>{account=value;},signupHooks:{awaitEmail:async()=>{mailCalls++;return undefined;}},site:{domain:'example.com'},signal:new AbortController().signal} as unknown as ExecutionContext;
+  const first=await verifyPendingAccount(context,window);assert.equal(first&&first!=='retrying'?first.checkpoint:undefined,'account_registration_human');
+  assert.equal(account.diagnostic?.code,'email_exists');
+  text='No conclusive account status.';
+  const second=await verifyPendingAccount(context,window,true);
+  assert.equal(second&&second!=='retrying'?second.checkpoint:undefined,'account_registration_human');
+  assert.equal(account.diagnostic?.code,'email_exists');assert.equal(mailCalls,0);
+});
+
+test('browser identity uses an alias only when the mailbox is verified and healthy',async()=>{
+  const mailbox={id:'mailbox',host:'imap.gmail.com',user:'owner@gmail.com',hasPassword:true,verifiedAt:'2026-10-18T00:00:00.000Z'};
+  for(const [candidate,alias] of [[mailbox,true],[{...mailbox,verifiedAt:undefined},false],[{...mailbox,lastError:'Authentication failed'},false]] as const){
+    let saved:Account|undefined;
+    const context={getAccount:()=>undefined,saveAccount:async(value:Account)=>{saved=value;},channel:{id:'mock-local'},site:{id:'site',domain:'example.com',publicEmail:'owner@example.com',email:'owner@example.com'},mailbox:candidate} as unknown as ExecutionContext;
+    await ensureAccount(context);
+    assert(saved);
+    if(alias)assert.match(saved.email,/^owner\+lf[a-z0-9]+@gmail\.com$/);
+    else assert.equal(saved.email,'owner@example.com');
+  }
 });
 
 test('structured secret redaction handles JSON-sensitive passwords before serialization',()=>{

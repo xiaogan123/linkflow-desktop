@@ -207,7 +207,7 @@ async function get(runtimeValue: Runtime, url: URL, accessToken: string): Promis
     const request = runtimeValue.dependencies.request ?? ((input: string, init: RequestInit) => fetch(input, init));
     const responsePromise = request(url.toString(), {
       method: 'GET',
-      headers: { accept: 'application/json', authorization: `Bearer ${accessToken}`, 'user-agent': 'Linkflow-Desktop' },
+      headers: { accept: 'application/json', authorization: `Bearer ${accessToken}`, 'user-agent': 'Mozilla/5.0' },
       redirect: 'error', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal,
     });
     try { response = await waitFor(responsePromise, controller.signal); }

@@ -356,7 +356,7 @@ test('task deletion, draft replacement, and public identity replacement fail clo
         ...receipt(),
         publicId: 'different_note',
         publicUrl: 'https://supanote.app/n/different_note',
-      }), /不能更换文章身份/);
+      }), /不能更换文章标识/);
       assert.equal(f.store.read().tasks[0].publicUrl, PUBLIC_URL);
     } finally { f.cleanup(); }
   });

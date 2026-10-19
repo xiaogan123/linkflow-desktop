@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import https from 'node:https';
+import {EventEmitter} from 'node:events';
 import test from 'node:test';
-import { analyzeWebsiteHtml, createPinnedLookup, fetchPublicHtml, fetchPublicResourceBytes, findDirectLink, isProxyFakeDnsAddress, isPublicIpAddress, nextHtmlByteCount, normalizePublicUrl, parsePublicDnsResponse, verifyLink } from '../src/integrations/web.js';
+import { analyzeWebsiteHtml, createPinnedLookup, fetchPublicHtml, fetchPublicResourceBytes, findDirectLink, isProxyFakeDnsAddress, isPublicIpAddress, nextHtmlByteCount, normalizePublicUrl, parsePublicDnsResponse, PublicFetchError, verifyLink } from '../src/integrations/web.js';
 
 test('public URL parser rejects SSRF primitives and credentials', () => {
   for (const address of [
@@ -11,6 +13,12 @@ test('public URL parser rejects SSRF primitives and credentials', () => {
     'file:///etc/passwd', 'https://example.com:8443/',
   ]) assert.throws(() => normalizePublicUrl(address), address);
   assert.equal(normalizePublicUrl('example.com/path#frag').href, 'https://example.com/path');
+});
+
+test('public fetch failures expose stable codes while retaining their display text', () => {
+  assert.throws(() => normalizePublicUrl('file:///etc/passwd'), error=>error instanceof PublicFetchError&&error.code==='invalid_request'&&/HTTP/.test(error.message));
+  assert.throws(() => normalizePublicUrl('http://127.0.0.1/'), error=>error instanceof PublicFetchError&&error.code==='unsafe_address'&&/Private/.test(error.message));
+  assert.throws(() => nextHtmlByteCount(999_999, 2), error=>error instanceof PublicFetchError&&error.code==='size_limit'&&/size limit/.test(error.message));
 });
 
 test('IP classifier rejects private and transition addresses', () => {
@@ -235,6 +243,32 @@ test('verifier distinguishes an unreachable page from an absent link', async () 
   assert.equal(absent.outcome, 'absent');
 });
 
+test('verifier treats HTTP 404 and 410 as absent, while server errors remain unreachable', async () => {
+  for(const status of [404,410,503]){
+    const result=await verifyLink('https://source.example/page','https://target.example/',undefined,undefined,{
+      resolve:async()=>[{address:'8.8.8.8',family:4}],
+      request:async()=>({status,headers:{'content-type':'text/html'},body:Buffer.alloc(0)}),
+    });
+    assert.equal(result.outcome,status===503?'unreachable':'absent');
+  }
+});
+
+test('encrypted DNS HTTP 404 is unreachable and never evidence of a missing publication', async t => {
+  let pageRequests=0,dnsRequests=0;
+  t.mock.method(https,'request',(_url:unknown,_options:unknown,callback:(reply:unknown)=>void)=>{
+    dnsRequests++;
+    const request=new EventEmitter() as EventEmitter&{end:()=>void;destroy:()=>void};
+    request.destroy=()=>{request.emit('close');};
+    request.end=()=>queueMicrotask(()=>{callback({statusCode:404,resume(){}});request.emit('close');});
+    return request;
+  });
+  const result=await verifyLink('https://source.example/page','https://target.example/',undefined,undefined,{
+    resolve:async()=>[{address:'198.18.0.1',family:4}],
+    request:async()=>{pageRequests++;throw Error('must not reach the page');},
+  });
+  assert.equal(dnsRequests,2);assert.equal(pageRequests,0);assert.equal(result.outcome,'unreachable');
+});
+
 test('guarded raw bytes preserve exact status, normalized headers, body and pinned identity', async () => {
   const calls:string[]=[];
   const result=await fetchPublicResourceBytes('https://bytes.example/article',undefined,{
@@ -242,7 +276,7 @@ test('guarded raw bytes preserve exact status, normalized headers, body and pinn
     request:async(url,pinned)=>{calls.push(`request:${url.href}:${pinned.address}`);return {status:200,headers:{'Content-Type':'text/html; charset=utf-8','X-Robots-Tag':['noindex','nofollow'],'Content-Length':'5'},body:Buffer.from('exact')}},
   },{maxBytes:32,accept:'text/html',mediaTypes:['text/html'],redirect:'error'});
   assert.equal(result.url,'https://bytes.example/article');assert.equal(result.status,200);assert.equal(result.mediaType,'text/html');assert.equal(result.body.toString(),'exact');
-  assert.deepEqual(result.headers,{'content-type':'text/html; charset=utf-8','x-robots-tag':'noindex,nofollow','content-length':'5'});
+  assert.deepEqual(result.headers,{'content-type':'text/html; charset=utf-8','x-robots-tag':'noindex\nnofollow','content-length':'5'});
   assert.deepEqual(calls,['resolve:bytes.example','request:https://bytes.example/article:8.8.8.8']);
 });
 

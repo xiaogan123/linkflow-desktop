@@ -257,7 +257,7 @@ test('an unknown create is never POSTed again and reconciliation remains read-on
     },
   });
   assert.equal(second.status, 'needs_input');
-  assert.match(second.message, /不会再次 POST/);
+  assert.match(second.message, /即使列表暂未显示也不会重复提交/);
   assert.equal(posts, 1);
   assert.ok(methods.every(method => method === 'GET'));
 });
@@ -355,7 +355,7 @@ test('an unknown publish is not PUT again even when the immediate read still say
     },
   });
   assert.equal(second.status, 'needs_input');
-  assert.match(second.message, /不会再次 PUT/);
+  assert.match(second.message, /不会再次提交/);
   assert.equal(posts, 1);
   assert.equal(puts, 1);
   assert.ok(draftReads >= 2);
@@ -383,7 +383,7 @@ test('wrong publication identity and changed content hash both fail before a wri
   let calls = 0;
   const changedResult = await runParagraphTask(changed.context, { fetch: async () => { calls++; return json({}); } });
   assert.equal(changedResult.status, 'needs_input');
-  assert.match(changedResult.message, /哈希不一致/);
+  assert.match(changedResult.message, /正文校验值不一致/);
   assert.equal(calls, 0);
 });
 

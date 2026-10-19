@@ -57,7 +57,7 @@ test('Deno bounds response body and timeout without exposing token or contacting
   await assert.rejects(readDenoApps(token,{timeoutMs:5,fetch:async(_url,init)=>{signal=init.signal as AbortSignal;return new Promise(()=>{})}}),/超时/);
   assert.equal(signal?.aborted,true);
   await assert.rejects(readDenoApps(token,{fetch:async()=>{throw Error('network '+token)}}),error=>error instanceof Error&&!error.message.includes(token));
-  await assert.rejects(checkDenoSelectedApp(token,appId,{fetch:async(url)=>url.endsWith('/revisions/rev-1')?json({id:'other'}):url.includes('/revisions?')?json([{id:'rev-1'}]):url.endsWith(appId)?json(app):json([app])}),/详情与列表身份不一致/);
+  await assert.rejects(checkDenoSelectedApp(token,appId,{fetch:async(url)=>url.endsWith('/revisions/rev-1')?json({id:'other'}):url.includes('/revisions?')?json([{id:'rev-1'}]):url.endsWith(appId)?json(app):json([app])}),/详情与列表标识不一致/);
 });
 
 test('Deno rejects missing app, detail mismatch, revision malformed, auth errors and cancellation without saving',async()=>{

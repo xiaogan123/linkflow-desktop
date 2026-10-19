@@ -74,7 +74,7 @@ export function parseAgentboardFirst(value:unknown,draft:AgentboardFirstDraft,bo
   return {credential:value.credential,handle:value.agent.handle,name:value.agent.name as string,agentUrl:value.agent.url as string,thread};
 }
 export async function createAgentboardFirst(input:{accountId:string;taskId:string;requestKey:string;targetUrl:string;boardId:string;draft:AgentboardFirstDraft},persistence:AgentboardFirstPersistence,deps:OpenAgentChatDependencies={}){
-  if(!UUID.test(input.accountId)||!UUID.test(input.taskId)||!BOARD.test(input.boardId))throw Error('Agentboard 固定身份或版块无效');
+  if(!UUID.test(input.accountId)||!UUID.test(input.taskId)||!BOARD.test(input.boardId))throw Error('Agentboard 固定发布账号或版块无效');
   const request=agentboardFirstRequest(input.draft,input.targetUrl,input.requestKey);
   // Even corrupt prior intent blocks a second atomic registration. A platform
   // replay rotates its credential; this client never silently replays it.
@@ -90,9 +90,9 @@ export async function createAgentboardFirst(input:{accountId:string;taskId:strin
   catch{return {status:'persistence_unknown' as const,intent}}
 }
 export async function readAgentboardOwnedThread(receipt:AgentboardFirstReceipt,draft:AgentboardFirstDraft,boardId:string,deps:OpenAgentChatDependencies={}){
-  if(!validAgentboardCredential(receipt.credential)||!THREAD.test(receipt.thread.id))throw Error('Agentboard 私密回执无效');
+  if(!validAgentboardCredential(receipt.credential)||!THREAD.test(receipt.thread.id))throw Error('Agentboard 私密记录无效');
   const own=parseAgentboardAgent(await readOpenAgentChatJson(AGENTBOARD_ME,receipt.credential,deps));
-  if(!own||own.handle!==receipt.handle||own.publicUrl!==receipt.agentUrl||own.name!==draft.agent.name||own.description!==draft.agent.description||own.homepage!==draft.agent.homepage||own.operatorName!==draft.agent.operatorName||own.id!==receipt.thread.agentId)throw Error('Agentboard 原身份未匹配');
+  if(!own||own.handle!==receipt.handle||own.publicUrl!==receipt.agentUrl||own.name!==draft.agent.name||own.description!==draft.agent.description||own.homepage!==draft.agent.homepage||own.operatorName!==draft.agent.operatorName||own.id!==receipt.thread.agentId)throw Error('Agentboard 原账号未匹配');
   const thread=parseAgentboardThread(await readOpenAgentChatJson(agentboardThreadApi(receipt.thread.id),undefined,deps));
   if(!thread||thread.agentId!==own.id||thread.boardId!==boardId||thread.title!==draft.title||thread.body!==draft.body||JSON.stringify(thread)!==JSON.stringify(receipt.thread))throw Error('Agentboard 原首帖回读未匹配');
   return {agent:own,thread};
@@ -110,17 +110,17 @@ export interface AgentboardDiscussionPersistence {
   persistCreated(intent:AgentboardDiscussionIntent,thread:AgentboardThread):Promise<void>;
 }
 export function agentboardDiscussionRequest(value:unknown,target:string,requestKey:string){
-  if(!record(value)||Object.keys(value).sort().join(',')!=='board,body,title'||typeof value.board!=='string'||value.board==='introductions'||!/^[a-z0-9][a-z0-9-]{1,79}$/.test(value.board)||!line(value.title,1,200)||!text(value.body,40,20_000)||!targetUrl(target)||!value.body.includes(target)||!/^[A-Za-z0-9_.:-]{8,128}$/.test(requestKey))throw Error('Agentboard 后续讨论需要独立审核的相关内容，不能重复项目介绍');
+  if(!record(value)||Object.keys(value).sort().join(',')!=='board,body,title'||typeof value.board!=='string'||value.board==='introductions'||!/^[a-z0-9][a-z0-9-]{1,79}$/.test(value.board)||!line(value.title,1,200)||!text(value.body,40,20_000)||!targetUrl(target)||!value.body.includes(target)||!/^[A-Za-z0-9_.:-]{8,128}$/.test(requestKey))throw Error('Agentboard 后续讨论需要 AI 复核的相关内容，不能重复项目介绍');
   const draft=value as unknown as AgentboardDiscussionDraft,url=agentboardBoardThreadsApi(draft.board),body=JSON.stringify({title:draft.title,body:draft.body});
   return {url,body,sourceHash:agentboardHash(body),requestHash:agentboardHash(`POST\n${url}\ncontent-type:application/json\nidempotency-key:${requestKey}\n\n${body}`)};
 }
 export async function createAgentboardDiscussion(input:{accountId:string;taskId:string;requestKey:string;targetUrl:string;boardId:string;agent:AgentboardAgent;credential:string;draft:AgentboardDiscussionDraft},persistence:AgentboardDiscussionPersistence,deps:OpenAgentChatDependencies={}){
-  if(!UUID.test(input.accountId)||!UUID.test(input.taskId)||!BOARD.test(input.boardId)||!validAgentboardCredential(input.credential)||!parseAgentboardAgent({...input.agent,status:'active',url:input.agent.publicUrl}))throw Error('Agentboard 原账号或私密凭据无效');
+  if(!UUID.test(input.accountId)||!UUID.test(input.taskId)||!BOARD.test(input.boardId)||!validAgentboardCredential(input.credential)||!parseAgentboardAgent({...input.agent,status:'active',url:input.agent.publicUrl}))throw Error('Agentboard 原账号或私密登录信息无效');
   const request=agentboardDiscussionRequest(input.draft,input.targetUrl,input.requestKey);
   if(await persistence.loadPriorRaw()!==undefined)return {status:'prior_intent' as const};
   // Reconfirm the same identity before saving the one-shot mutation intent.
   const owner=parseAgentboardAgent(await readOpenAgentChatJson(AGENTBOARD_ME,input.credential,deps));
-  if(!owner||JSON.stringify(owner)!==JSON.stringify(input.agent))throw Error('Agentboard 原身份已改变');
+  if(!owner||JSON.stringify(owner)!==JSON.stringify(input.agent))throw Error('Agentboard 原账号已改变');
   const intent:AgentboardDiscussionIntent={version:1,accountId:input.accountId,agentId:owner.id,taskId:input.taskId,requestKey:input.requestKey,requestHash:request.requestHash,sourceHash:request.sourceHash,targetUrl:input.targetUrl,createdAt:(deps.now?.()??new Date()).toISOString(),board:input.draft.board};
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started' as const}};
   const opaque=await openAgentChatStreamingMutation(request.url,{method:'POST',headers:{accept:'application/json','content-type':'application/json',authorization:`Bearer ${input.credential}`,'idempotency-key':input.requestKey},body:request.body},v=>persistence.persistOpaque(intent,v),()=>persistence.assertAuthorized(intent),deps);

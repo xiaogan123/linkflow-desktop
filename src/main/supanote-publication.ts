@@ -54,7 +54,7 @@ export function supanoteTaskContentHash(task: Pick<Task, 'draft'>): string | und
 }
 
 function expectedPublicUrl(publicId: string): string {
-  if (!PUBLIC_ID.test(publicId)) throw Error('Supanote 公开文章身份无效');
+  if (!PUBLIC_ID.test(publicId)) throw Error('Supanote 公开文章标识无效');
   return `${ORIGIN}/n/${publicId}`;
 }
 
@@ -84,14 +84,14 @@ function assertStoredIntent(task: Task, expected: SupanoteIntent): NonNullable<T
   if (!saved || saved.operationId !== expected.operationId || saved.contentHash !== expected.contentHash
     || saved.createdAt !== expected.createdAt || !validIntent(saved)
     || task.submittedAt !== saved.createdAt || task.status !== 'review' || task.health !== 'pending')
-    throw Error('Supanote 提交意图与原任务不一致');
+    throw Error('Supanote 提交信息与原任务不一致');
   if (saved.stage === 'submitting') {
     if (saved.publicId || task.publicUrl || task.checkpoint !== 'supanote_publish_submitting')
-      throw Error('Supanote 提交意图阶段无效');
+      throw Error('Supanote 提交信息阶段无效');
   } else if (!saved.publicId || task.publicUrl !== expectedPublicUrl(saved.publicId)
-    || task.checkpoint !== 'supanote_api_receipt') throw Error('Supanote 公开回执阶段无效');
+    || task.checkpoint !== 'supanote_api_receipt') throw Error('Supanote 公开返回记录阶段无效');
   if (task.verifiedAt || task.firstLiveAt || task.linkCheck || task.linkRel)
-    throw Error('Supanote API 回执不能标记为公开验收通过');
+    throw Error('Supanote 平台返回记录不能标记为公开验收通过');
   return saved;
 }
 
@@ -134,13 +134,13 @@ export function createSupanotePublicationPersistence(
   const taskId = options.taskId, siteId = options.siteId;
   const authorize = options.assertSubmissionAuthorized, now = options.now;
   let claimedIntent = options.expectedIntent ? { ...options.expectedIntent } : undefined;
-  if (claimedIntent && !validIntent(claimedIntent)) throw Error('Supanote 恢复意图无效');
+  if (claimedIntent && !validIntent(claimedIntent)) throw Error('Supanote 恢复提交信息无效');
   const updatedAt = () => (now?.() ?? new Date()).toISOString();
   return {
     async persistIntent(intent) {
-      if (claimedIntent) throw Error('Supanote 恢复上下文禁止创建新提交意图');
+      if (claimedIntent) throw Error('Supanote 恢复上下文禁止创建新提交信息');
       const proposed = { ...intent };
-      if (!validIntent(proposed)) throw Error('Supanote 提交意图无效');
+      if (!validIntent(proposed)) throw Error('Supanote 提交信息无效');
       store.update(state => {
         const { task, site } = currentBinding(state, taskId, siteId, proposed.contentHash);
         assertBackupCompatibleDraft(task);
@@ -159,22 +159,22 @@ export function createSupanotePublicationPersistence(
         task.status = 'review';
         task.health = 'pending';
         task.updatedAt = updatedAt();
-        task.message = 'Supanote 提交意图已保存；结果未核清前不会重发。';
+        task.message = 'Supanote 提交信息已保存；结果未核清前不会重发。';
       });
       claimedIntent = proposed;
     },
     async persistReceipt(receipt: SupanoteReceipt) {
       const returned = { ...receipt };
       if (!CONTENT_HASH.test(returned.contentHash) || !PUBLIC_ID.test(returned.publicId)
-        || returned.publicUrl !== expectedPublicUrl(returned.publicId)) throw Error('Supanote 公开回执无效');
+        || returned.publicUrl !== expectedPublicUrl(returned.publicId)) throw Error('Supanote 公开返回记录无效');
       const expected = claimedIntent && { ...claimedIntent };
-      if (!expected || returned.contentHash !== expected.contentHash) throw Error('Supanote 公开回执缺少原提交意图');
+      if (!expected || returned.contentHash !== expected.contentHash) throw Error('Supanote 公开返回记录缺少原提交信息');
       store.update(state => {
         const { task } = currentBinding(state, taskId, siteId, expected.contentHash);
         const saved = assertStoredIntent(task, expected);
         if (saved.stage === 'api_receipt') {
           if (saved.publicId !== returned.publicId || task.publicUrl !== returned.publicUrl)
-            throw Error('Supanote 公开回执不能更换文章身份');
+            throw Error('Supanote 外链记录不能更换文章标识');
           return;
         }
         task.supanote = { ...saved, stage: 'api_receipt', publicId: returned.publicId };
@@ -183,20 +183,20 @@ export function createSupanotePublicationPersistence(
         task.status = 'review';
         task.health = 'pending';
         task.updatedAt = updatedAt();
-        task.message = 'Supanote API 回执已保存；等待公开页面渲染核验，不计为有效来源。';
+        task.message = 'Supanote 平台返回记录已保存；等待公开页面渲染检查，不计为有效来源。';
       });
     },
     async persistManageToken(secret) {
       const returned = { ...secret };
-      if (!PUBLIC_ID.test(returned.publicId) || !validToken(returned.token)) throw Error('Supanote 管理凭据无效');
+      if (!PUBLIC_ID.test(returned.publicId) || !validToken(returned.token)) throw Error('Supanote 管理密钥无效');
       const expected = claimedIntent && { ...claimedIntent };
-      if (!expected) throw Error('Supanote 管理凭据缺少原提交意图');
+      if (!expected) throw Error('Supanote 管理密钥缺少原提交前记录');
       const key = `publication:${taskId}`;
-      if (store.getCipher(key)) throw Error('Supanote 管理凭据已经保存，禁止替换');
+      if (store.getCipher(key)) throw Error('Supanote 管理密钥已经保存，禁止替换');
       const before = store.read(), { task } = currentBinding(before, taskId, siteId, expected.contentHash);
       const receipt = assertStoredIntent(task, expected);
       if (receipt.stage !== 'api_receipt' || receipt.publicId !== returned.publicId)
-        throw Error('Supanote 管理凭据缺少匹配的公开回执');
+        throw Error('Supanote 管理密钥缺少匹配的外链记录');
       const serialized = JSON.stringify({
         version: SECRET_VERSION,
         taskId: task.id,
@@ -204,15 +204,15 @@ export function createSupanotePublicationPersistence(
         publicUrl: expectedPublicUrl(receipt.publicId),
         token: returned.token,
       } satisfies SerializedSupanoteSecret);
-      if (serialized.length > 16_384) throw Error('Supanote 管理凭据超出可备份范围');
+      if (serialized.length > 16_384) throw Error('Supanote 管理密钥超出可备份范围');
       const publicUrl = task.publicUrl;
       const ciphers = vault.encryptSecrets({ [key]: serialized });
-      if (typeof ciphers[key] !== 'string' || !ciphers[key]) throw Error('Supanote 管理凭据未能加密');
+      if (typeof ciphers[key] !== 'string' || !ciphers[key]) throw Error('Supanote 管理密钥未能加密');
       store.updateWithCiphers(state => {
         const { task: current } = currentBinding(state, taskId, siteId, expected.contentHash);
         const stored = assertStoredIntent(current, expected);
         if (stored.stage !== 'api_receipt' || stored.publicId !== receipt.publicId || current.publicUrl !== publicUrl)
-          throw Error('Supanote 管理凭据与公开回执不一致');
+          throw Error('Supanote 管理密钥与外链记录不一致');
       }, { [key]: ciphers[key] });
     },
   };

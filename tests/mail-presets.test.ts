@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_MAIL_PRESET_ID, getMailPreset, inferMailPreset } from '../src/shared/mail-presets';
+import { DEFAULT_MAIL_PRESET_ID, MAIL_PRESETS, getMailPreset, inferMailPreset } from '../src/shared/mail-presets';
+import {mailboxAutomationReadiness,mailboxAutomationReady} from '../src/shared/mail-automation';
 
 test('Gmail is the default password-based TLS preset', () => {
   const gmail = getMailPreset(DEFAULT_MAIL_PRESET_ID);
@@ -29,5 +30,21 @@ test('does not infer a provider for custom addresses or custom servers', () => {
 test('marks Outlook.com as unavailable to the current password-only client', () => {
   const outlook = inferMailPreset({ email: 'person@outlook.com' });
   assert.equal(outlook?.support, 'oauth-required');
-  assert.match(outlook?.hint ?? '', /OAuth2/);
+  assert.match(outlook?.hint ?? '', /需要浏览器登录授权/);
+});
+
+test('preset readiness distinguishes automatic Gmail from per-message confirmation',()=>{
+  for(const preset of MAIL_PRESETS){
+    const ready={host:preset.host,hasPassword:true,verifiedAt:'2026-10-18T00:00:00.000Z'};
+    const level=preset.id==='gmail'?'automatic':preset.id==='outlook'?'unavailable':'confirmation_required';
+    assert.equal(preset.automationLevel,level);
+    assert.deepEqual(mailboxAutomationReadiness(ready),{ready:preset.id!=='outlook',level});
+    assert.equal(mailboxAutomationReady(ready),preset.id!=='outlook');
+  }
+  const custom={host:'imap.example.com',hasPassword:true,verifiedAt:'2026-10-18T00:00:00.000Z'};
+  assert.deepEqual(mailboxAutomationReadiness(custom),{ready:true,level:'confirmation_required'});
+  for(const value of [undefined,{...custom,hasPassword:false},{...custom,verifiedAt:undefined},{...custom,lastError:'fixture connection error'}]){
+    assert.deepEqual(mailboxAutomationReadiness(value),{ready:false,level:'unavailable'});
+    assert.equal(mailboxAutomationReady(value),false);
+  }
 });

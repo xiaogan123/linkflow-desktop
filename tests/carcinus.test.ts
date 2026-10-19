@@ -1,3 +1,6 @@
+import {fixtureTerms,profileWriterResult,selectDueFixtureTask} from './writing-fixture';
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["planner-created task runs draft to exact AI review, one mock POST and restart-safe publication", "a durable preflight resumes through Controller after restart and sends exactly one POST"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});});
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -10,7 +13,7 @@ import {publisherFor} from '../src/integrations/publishers';
 import {validateBackup} from '../src/main/backup-validation';
 import {Controller} from '../src/main/controller';
 import {carcinusLocalAccountId,carcinusPublicationTesting,carcinusReviewedMain,carcinusTaskIdentity,createCarcinusPublicationPersistence,createCarcinusReviewedInput,parseCarcinusOpaqueResponseSecret,validCarcinusAccount} from '../src/main/carcinus-publication';
-import {articleContentHash,articleContextHash,reviewArticleDraft} from '../src/main/article-review';
+import {ARTICLE_REVIEW_CONTRACT_VERSION,articleContentHash,articleContextHash,articleReviewBindingHash,reviewArticleDraft} from '../src/main/article-review';
 import {supportsOfficialGuidanceReview} from '../src/main/channel-policy';
 import {emptyState,Store} from '../src/main/store';
 import {saveTaskDraft} from '../src/main/task-draft';
@@ -20,7 +23,7 @@ import type {Account,CarcinusPublicAcceptance,CarcinusReviewedInput,ExecutionCon
 import {channelAutomationKind} from '../src/ui/channel-automation';
 import {connectionOverview} from '../src/ui/channel-connections';
 
-const at='2026-10-18T08:00:00.000Z',preflightAt='2026-10-18T07:59:59.000Z';
+const at='2026-10-18T10:00:00.000Z',preflightAt='2026-10-18T09:59:59.000Z';
 const taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222';
 const targetUrl='https://example.com/guide',title='A reviewed public guide';
 const draft={title,description:'A public guide with its publishing relationship disclosed.',body:'This article explains a useful public workflow. The author publishes this promotional article for the linked website and is not an independent third-party recommender.\n\nRead the [reviewed source](https://example.com/guide).'};
@@ -28,7 +31,7 @@ const token='carcinus_fixture_token_12345678901234567890';
 
 function site():Site{return {id:siteId,domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'Example Publisher',description:'Synthetic publication fixture',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'ai',qualifications:{software:targetUrl,developer:targetUrl},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:targetUrl,discoveredAt:at}]}}
 function baseTask():Task{return {id:taskId,siteId,channelId:'carcinus',sourceDomain:'carcinus.org',status:'running',createdAt:at,scheduledAt:at,updatedAt:at,attempts:1,message:'fixture',topicUrl:targetUrl,draft:{...draft},draftRevision:1,health:'pending'}}
-function reviewBinding(){const prepared=createCarcinusReviewedInput(baseTask(),site());assert.ok(prepared);const reviewTask={...baseTask(),carcinusInput:prepared},settings=emptyState().settings;return {method:'ai' as const,reviewedAt:at,contentHash:articleContentHash(reviewTask),contextHash:articleContextHash(site(),channel(),settings)}}
+function reviewBinding(){const prepared=createCarcinusReviewedInput(baseTask(),site());assert.ok(prepared);const reviewTask={...baseTask(),carcinusInput:prepared},settings=emptyState().settings;return {method:'ai' as const,reviewedAt:at,contentHash:articleContentHash(reviewTask),contextHash:articleContextHash(site(),channel(),settings,undefined,4)}}
 function input():CarcinusReviewedInput{const value=createCarcinusReviewedInput(baseTask(),site(),reviewBinding());assert.ok(value);return value}
 const html=input().htmlTemplate,publicHtml=carcinusReviewedMain(html,targetUrl)!.mainHtml,publicUrl=carcinusPublicUrl(input().identity),restoreUrl=carcinusRestoreUrl(input().identity);
 // Synthetic compatibility values used by the transport/concurrency regressions below.
@@ -50,7 +53,7 @@ function vault(store:Store):Vault{return {ready:true,available:()=>true,get:asyn
 function acceptance(rel:string[]=[]):CarcinusPublicAcceptance{return {checkedAt:at,httpStatus:200,publicHtmlSha256:carcinusHash(publicHtml),reviewedMainSha256:input().mainSha256,reviewedMainMatches:true,title:null,titlePresent:false,canonical:null,canonicalPresent:false,targetUrl,nativeAnchorCount:1,rel,robotsStatus:200,robotsAllowed:true,metaNoindex:false,xRobotsNoindex:false,restoreStatus:200,identityBinding:'restore_and_reviewed_main',retention:CARCINUS_RETENTION}}
 
 // The source adapter stays disabled until the exact native candidate is independently reviewed.
-test('catalog, UI and planner expose the accepted single-page Carcinus adapter',()=>{const original=CHANNELS.find(item=>item.id==='carcinus');assert.ok(original);assert.equal(original.enabled,true);assert.equal(original.accountRequired,true);assert.equal(original.articleRequired,true);assert.equal(original.automation,'api');assert.equal(channelAutomationKind(original),'ai_auto');assert.ok(publisherFor({...original,enabled:true}));const data={accounts:[],accountBindings:[],sites:[site()],tasks:[],channels:CHANNELS} as unknown as Pick<Snapshot,'accounts'|'accountBindings'|'sites'|'tasks'|'channels'>;const row=connectionOverview(data).find(item=>item.id==='carcinus');assert.equal(row?.state,'no_setup');assert.match(row?.detail??'',/首个任务自动.*独立审核.*一张固定公开页.*不会为多个网站重复创建/);const enabled={...original,enabled:true},now=new Date(at),first=publicationOpportunity(site(),enabled,[],now,'UTC');assert.equal(first.allowed,true);assert.equal(first.topicUrl,targetUrl);const occupied=publicationOpportunity(site(),enabled,[task({status:'live',firstLiveAt:at,publicUrl,carcinus:{...intent(),stage:'published',publicUrl,restoreUrl,tokenFingerprint:carcinusHash(token),acceptance:acceptance()}})],now,'UTC');assert.equal(occupied.allowed,false);assert.match(occupied.reason,/一张固定公开页/) });
+test('catalog, UI and planner expose the accepted single-page Carcinus adapter',()=>{const original=CHANNELS.find(item=>item.id==='carcinus');assert.ok(original);assert.equal(original.enabled,true);assert.equal(original.accountRequired,true);assert.equal(original.articleRequired,true);assert.equal(original.automation,'api');assert.equal(channelAutomationKind(original),'ai_auto');assert.ok(publisherFor({...original,enabled:true}));const data={accounts:[],accountBindings:[],sites:[site()],tasks:[],channels:CHANNELS} as unknown as Pick<Snapshot,'accounts'|'accountBindings'|'sites'|'tasks'|'channels'>;const row=connectionOverview(data).find(item=>item.id==='carcinus');assert.equal(row?.state,'no_setup');assert.match(row?.detail??'',/第一篇稿件通过 AI 复核.*固定页面.*每个网站只建一张/);const enabled={...original,enabled:true},now=new Date(at),first=publicationOpportunity(site(),enabled,[],now,'UTC');assert.equal(first.allowed,true);assert.equal(first.topicUrl,targetUrl);const occupied=publicationOpportunity(site(),enabled,[task({status:'live',firstLiveAt:at,publicUrl,carcinus:{...intent(),stage:'published',publicUrl,restoreUrl,tokenFingerprint:carcinusHash(token),acceptance:acceptance()}})],now,'UTC');assert.equal(occupied.allowed,false);assert.match(occupied.reason,/一张固定公开页/) });
 
 test('one existing Carcinus page blocks another website and an unreviewed prepared payload cannot publish',()=>{
   const enabled=channel(),existing=task({status:'live',firstLiveAt:at,publicUrl,carcinus:{...intent(),stage:'published',publicUrl,restoreUrl,tokenFingerprint:carcinusHash(token),acceptance:acceptance()}}),other={...site(),id:'33333333-3333-4333-8333-333333333333',domain:'other.example.com',url:'https://other.example.com/',name:'Other Example'};
@@ -60,20 +63,48 @@ test('one existing Carcinus page blocks another website and an unreviewed prepar
 
 test('reviewed synthetic task and outbound request are byte-bound to the exact four public fields',()=>{const reviewed=input();assert.equal(carcinusHash(html),carcinusRequest(reviewed).sourceHash);assert.ok(identity());const payload=carcinusPayload(reviewed);assert.deepEqual(Object.keys(payload),['identity','purpose','htmlTemplate','isAssistantMemoryBackup']);assert.deepEqual(payload,{identity:reviewed.identity,purpose:reviewed.purpose,htmlTemplate:html,isAssistantMemoryBackup:false});assert.equal(JSON.stringify(payload).includes('memoryBoundaries'),false);assert.equal(JSON.stringify(payload).includes('restoreInstructions'),false);const request=carcinusRequest(reviewed);assert.equal(request.sourceHash,carcinusHash(html));assert.equal(request.requestHash,intent().requestHash) });
 
-test('ordinary independent review receives the exact safe publication payload through official-guidance mode',async()=>{
-  const current={...baseTask(),carcinusInput:createCarcinusReviewedInput(baseTask(),site())};
+test('independent fact review receives the exact safe publication payload when fixture terms explicitly permit it',async()=>{
+  const raw=baseTask();raw.draft!.body=`Commercial disclosure: this article promotes the linked website.\n\n${raw.draft!.body}`;
+  const currentSite=site(),official=channel();
+  assert.equal(supportsOfficialGuidanceReview(official),true);
+  const policyUrl='https://carcinus.org/__synthetic_test_policy__';
+  const policyQuote='Financial education and promotional links are allowed when the author discloses the relationship at the end.';
+  const selected={...official,evidenceSources:[...official.evidenceSources!,{url:policyUrl,kind:'content_policy' as const,appliesTo:'carcinus',applicability:'verified' as const}]};
+  const current={...raw,carcinusInput:createCarcinusReviewedInput(raw,currentSite)};
   assert.ok(current.carcinusInput);
-  const selected=channel();assert.equal(supportsOfficialGuidanceReview(selected),true);let reviewedPayload:unknown;
+  let reviewedPayload:unknown,factCalls=0,termsCalls=0;
   const siteQuote='Synthetic publication facts confirm this public workflow.',channelQuote='Custom htmlTemplate is the full-page ownership path.';
   const ai={json:async<T>(instruction:string,data:unknown)=>{
-    assert.match(instruction,/Carcinus publicationPayload/);
+    factCalls++;
+    assert.match(instruction,/事实|fact/i);
     reviewedPayload=(data as {publicationPayload:unknown}).publicationPayload;
-    return {verdict:'unknown',reason:'The exact synthetic article and known official constraints are consistent.',knownChannelRestrictions:'pass',checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'unknown'},citations:[{url:'https://example.com/',quote:siteQuote},{url:'https://carcinus.org/docs/agents',quote:channelQuote}]} as T;
+    return {verdict:'pass',reason:'The exact synthetic article is supported by the source.',citations:[{url:'https://example.com/',quote:siteQuote}]} as T;
   }};
-  const result=await reviewArticleDraft(current,site(),selected,emptyState().settings,ai,undefined,{now:()=>new Date(at),fetchHtml:async url=>({url,html:`<main><p>${url.startsWith('https://carcinus.org/')?channelQuote:siteQuote} Additional bounded public evidence for review.</p></main>`})});
-  assert.equal(result.status,'passed');
+  const termsAi={json:async<T>()=>{termsCalls++;return {finance:'allowed',promotion:'allowed',disclosurePlacement:'end',reason:'The synthetic fixture permits both topics with disclosure.',citations:[{url:policyUrl,quote:policyQuote}]} as T}};
+  const fetchHtml=async(url:string)=>({url,html:`<main><p>${url===policyUrl?policyQuote:url.startsWith('https://carcinus.org/')?channelQuote:siteQuote} Additional bounded public evidence for review.</p></main>`});
+  const result=await reviewArticleDraft(current,currentSite,selected,emptyState().settings,ai,undefined,{now:()=>new Date(at),termsAi,fetchHtml});
+  assert.equal(result.status,'passed',JSON.stringify(result));
+  assert.equal(termsCalls,1);assert.equal(factCalls,1);
   assert.deepEqual(reviewedPayload,{identity:current.carcinusInput.identity,purpose:current.carcinusInput.purpose,targetUrl:current.carcinusInput.targetUrl,htmlTemplate:current.carcinusInput.htmlTemplate,payloadSha256:current.carcinusInput.payloadSha256,mainSha256:current.carcinusInput.mainSha256});
   assert.equal(result.contentHash,articleContentHash(current));
+});
+
+test('Carcinus guidance without a stated prohibition goes on to fact review; a cited prohibition stops it',async()=>{
+  const raw=baseTask();raw.draft!.body=`Commercial disclosure: this article promotes the linked website.\n\n${raw.draft!.body}`;
+  const current={...raw,carcinusInput:createCarcinusReviewedInput(raw,site())};assert.ok(current.carcinusInput);
+  const guidance='<main><p>Custom htmlTemplate is the full-page ownership path. Additional bounded public evidence for review.</p></main>';
+  for(const terms of [
+    {finance:'unknown',promotion:'unknown',disclosurePlacement:'unknown',reason:'Only API and product guidance are available.',citations:[]},
+    {finance:'unknown',promotion:'forbidden',disclosurePlacement:'unknown',reason:'Guidance forbids it.',citations:[{url:'',quote:'Custom htmlTemplate is the full-page ownership path'}]},
+  ]){
+    let factCalls=0,termsCalls=0;
+    const result=await reviewArticleDraft(current,site(),channel(),emptyState().settings,{json:async()=>{factCalls++;throw Error('fact review reached')}},undefined,{now:()=>new Date(at),
+      termsAi:{json:async<T>(_instruction:string,input:unknown)=>{termsCalls++;const sources=(input as {sources:{url:string}[]}).sources;return {...terms,citations:terms.citations.map(item=>({...item,url:sources[0].url}))} as T}},
+      fetchHtml:async url=>({url,html:guidance})});
+    assert.equal(termsCalls,1);
+    if(terms.promotion==='forbidden'){assert.equal(result.reasonCode,'content_rejected');assert.equal(factCalls,0)}
+    else{assert.notEqual(result.reasonCode,'policy_unknown');assert.equal(factCalls,1)}
+  }
 });
 
 test('draft, site and persisted payload changes invalidate approval while public DOM remains exact',async()=>{
@@ -127,13 +158,13 @@ test('managed receipt atomically saves one token/account/binding and reviewed DO
   }finally{f.cleanup()}
 });
 
-test('planner-created task runs draft to exact AI review, one mock POST and restart-safe publication',async()=>{
+test('planner-created task runs draft to exact AI review, one mock POST and restart-safe publication',async t=>{
   const f=stateFixture(null),v=vault(f.store),calls:Array<{method:string;url:string}>=[];let drafts=0,reviews=0,posted:ReturnType<typeof carcinusPayload>|undefined;
   const fetch=async(url:string,init:RequestInit)=>{const method=init.method??'GET';calls.push({method,url});if(method==='POST'){posted=JSON.parse(String(init.body));assert.equal(posted?.isAssistantMemoryBackup,false);return new Response(JSON.stringify({urls:{publicHtml:carcinusPublicUrl(posted!.identity),restoreProfile:carcinusRestoreUrl(posted!.identity)},bot:{botName:posted!.identity,writeToken:token}}),{status:200,headers:{'content-type':'application/json'}})}if(url==='https://carcinus.org/robots.txt')return new Response('User-agent: *\nAllow: /',{status:200,headers:{'content-type':'text/plain'}});if(!posted&&url.includes('/restore'))return new Response('',{status:404,headers:{'content-type':'application/json'}});if(posted&&url===carcinusPublicUrl(posted.identity))return new Response(carcinusReviewedMain(posted.htmlTemplate,targetUrl)!.mainHtml,{status:200,headers:{'content-type':'text/html'}});if(posted&&url===carcinusRestoreUrl(posted.identity))return new Response(JSON.stringify({identity:posted.identity,publicHtml:carcinusPublicUrl(posted.identity),restoreEndpoint:carcinusRestoreUrl(posted.identity)}),{status:200,headers:{'content-type':'application/json'}});throw Error(`unexpected ${method} ${url}`)};
-  const controller=new Controller(f.store,v,'fixture',{channelCatalog:[channel()],carcinusDependencies:{fetch,now:()=>new Date(at)},readTopicEvidence:async(_site,url)=>({url,title:'Guide',text:'Synthetic public evidence for the selected guide.',contentHash:'d'.repeat(64)}),collectArticleEvidence:async()=>[],aiFactory:((_settings:unknown,_vault:unknown,onCall?:()=>void)=>({json:async<T>(instruction:string)=>{onCall?.();drafts++;assert.match(instruction,/Carcinus/);return {...draft} as T}})) as never,reviewArticle:async(current,currentSite,currentChannel,settings)=>{reviews++;assert.equal(current.carcinusInput?.version,2);assert.equal(current.carcinusInput?.approval,undefined);assert.ok(current.carcinusInput?.htmlTemplate.includes(title));return {status:'passed',reason:'synthetic independent review passed',reasonCode:'passed',reviewContractVersion:4,checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'},reviewedAt:at,evidenceUrls:['https://example.com/','https://carcinus.org/docs/agents'],draftRevision:current.draftRevision??0,contentHash:articleContentHash(current),contextHash:articleContextHash(currentSite,currentChannel,settings)}}});
+  const controller=new Controller(f.store,v,'fixture',{channelCatalog:[channel()],prepareChannelTerms:async current=>fixtureTerms(current),carcinusDependencies:{fetch,now:()=>new Date(at)},readTopicEvidence:async(_site,url)=>({url,title:'Guide',text:'Synthetic public evidence for the selected guide.',contentHash:'d'.repeat(64)}),collectArticleEvidence:async()=>[],aiFactory:((_settings:unknown,_vault:unknown,onCall?:()=>void)=>({json:async<T>(instruction:string,data:unknown)=>{onCall?.();drafts++;assert.match(instruction,/facts/);return profileWriterResult(draft,data) as T}})) as never,reviewArticle:async(current,currentSite,currentChannel,settings)=>{reviews++;assert.equal(current.carcinusInput?.version,2);assert.equal(current.carcinusInput?.approval,undefined);assert.ok(current.carcinusInput?.htmlTemplate.includes(title));return {status:'passed',reason:'synthetic independent review passed',reasonCode:'passed',reviewContractVersion:ARTICLE_REVIEW_CONTRACT_VERSION,bindingVersion:2,targetUrl:current.topicUrl??currentSite.url,termsHash:currentChannel.termsCache!.conclusionHash,checks:{factualAccuracy:'pass',authorRelationship:'pass',affiliateDisclosure:'pass',independentValue:'pass',financialSafety:'pass',channelRules:'pass'},reviewedAt:at,evidenceUrls:['https://example.com/','https://carcinus.org/docs/agents'],draftRevision:current.draftRevision??0,contentHash:articleContentHash(current),contextHash:articleReviewBindingHash(current,currentSite,currentChannel)}}});
   controller.runtime.aiReady=true;
   try{
-    controller.plan();const planned=f.store.read().tasks[0];assert.ok(planned);assert.equal(planned.channelId,'carcinus');assert.equal(planned.topicUrl,targetUrl);f.store.update(state=>{const current=state.tasks.find(value=>value.id===planned.id)!;current.status='queued';current.scheduledAt=new Date(Date.now()-60_000).toISOString();current.updatedAt=at});
+    const plannedId=selectDueFixtureTask(f.store,controller,t.mock.timers,channel()),planned=f.store.read().tasks.find(task=>task.id===plannedId)!;assert.equal(planned.channelId,'carcinus');assert.equal(planned.topicUrl,targetUrl);
     await controller.tick();const state=f.store.read(),savedTask=state.tasks[0],account=state.accounts[0];assert.equal(drafts,1,JSON.stringify({calls,savedTask,events:state.events}));assert.equal(reviews,1,JSON.stringify({calls,savedTask,events:state.events}));assert.equal(calls.filter(call=>call.method==='POST').length,1,JSON.stringify({calls,savedTask,events:state.events}));assert.equal(savedTask.id,planned.id);assert.equal(savedTask.status,'live',JSON.stringify(savedTask));assert.equal(savedTask.health,'healthy');assert.equal(savedTask.carcinus?.stage,'published');assert.equal(savedTask.carcinusInput?.approval?.method,'ai');assert.equal(savedTask.publicUrl,posted&&carcinusPublicUrl(posted.identity));assert.ok(validCarcinusAccount(account));assert.equal(account.carcinus?.siteId,siteId);assert.equal(await v.get('account:'+account.id),token);assert.equal(JSON.stringify(state).includes(token),false);assert.doesNotThrow(()=>validateBackup({state,secrets:{['account:'+account.id]:token}}));
     const cipherSnapshot=f.store.allCiphers(),validated=validateBackup(JSON.parse(JSON.stringify({state,secrets:{['account:'+account.id]:token}})));
     f.store.restore(validated.state,cipherSnapshot);
@@ -153,7 +184,7 @@ test('a durable preflight resumes through Controller after restart and sends exa
     await p.persistPreflight(intent());
     assert.doesNotThrow(()=>validateBackup({state:f.store.read(),secrets:{}}));
     const read=reads();
-    controller=new Controller(f.store,v,'isolated',{channelCatalog:[channel()],carcinusDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{
+    controller=new Controller(f.store,v,'isolated',{channelCatalog:[channel()],prepareChannelTerms:async current=>fixtureTerms(current),carcinusDependencies:{now:()=>new Date(at),fetch:async(url,init)=>{
       if(init.method==='POST'){posts++;assert.equal(url,CARCINUS_CREATE_URL);return createResponse()}
       if(url===restoreUrl&&posts===0)restoreBeforePost++;
       return read.fetch(url,init);

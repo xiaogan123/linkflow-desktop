@@ -8,19 +8,19 @@ export interface MemoryWikiRendererHooks {
 }
 
 export async function renderMemoryWikiArticle(html:string,pageUrl:string,selector:string,signal:AbortSignal,hooks:MemoryWikiRendererHooks={}):Promise<MemoryWikiRenderedArticle>{
-  if(!/^https:\/\/memory\.wiki\/[A-Za-z0-9_-]{8}$/.test(pageUrl)||selector!=='#memory-wiki-ssr-body > article[itemprop="articleBody"]')throw Error('Memory.wiki 原生核验参数无效');
+  if(!/^https:\/\/memory\.wiki\/[A-Za-z0-9_-]{8}$/.test(pageUrl)||selector!=='#memory-wiki-ssr-body > article[itemprop="articleBody"]')throw Error('Memory.wiki 原生检查参数无效');
   const prepared=prepareMemoryWikiReplay(html,pageUrl),partition=`memorywiki-verifier-${randomUUID()}`,documentUrl=`data:text/html;charset=utf-8;base64,${Buffer.from(prepared.html).toString('base64')}`;
   const win=new BrowserWindow({show:false,width:1080,height:900,webPreferences:{partition,sandbox:true,contextIsolation:true,nodeIntegration:false,javascript:true,webSecurity:true,allowRunningInsecureContent:false}}),ses=win.webContents.session;
   let externalRequests=0,violation='',rejectPending:((error:Error)=>void)|undefined;
   const physical=<T>(operation:Promise<T>)=>hooks.trackPhysical?hooks.trackPhysical(operation):operation;
   const fail=(message:string)=>{violation ||= message;rejectPending?.(Error(violation));if(!win.isDestroyed())win.destroy()};
   const cancellable=<T>(pending:Promise<T>)=>new Promise<T>((resolve,reject)=>{let settled=false;const finish=(complete:(value:any)=>void,value:any)=>{if(settled)return;settled=true;complete(value)};rejectPending=error=>finish(reject,error);void pending.then(value=>finish(resolve,value),error=>finish(reject,error))}).finally(()=>{rejectPending=undefined});
-  const stop=()=>fail('Memory.wiki 原生核验已取消');signal.addEventListener('abort',stop,{once:true});
+  const stop=()=>fail('Memory.wiki 原生检查已取消');signal.addEventListener('abort',stop,{once:true});
   ses.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));ses.setPermissionCheckHandler(()=>false);ses.on('will-download',event=>event.preventDefault());
   ses.webRequest.onBeforeRequest({urls:['<all_urls>']},(details,callback)=>{const document=details.url===documentUrl&&details.method==='GET'&&details.resourceType==='mainFrame',inert=details.method==='GET'&&prepared.allowedResourceUrls.has(details.url);if(!document&&!inert){externalRequests++;fail(`Memory.wiki 原生正文禁止外部资源: ${details.method} ${details.resourceType}`);callback({cancel:true});return}callback({cancel:false})});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(event,next)=>{if(next!==documentUrl){event.preventDefault();externalRequests++;fail('Memory.wiki 原生正文禁止导航')}});
   try{
-    if(signal.aborted)throw Error('Memory.wiki 原生核验已取消');await cancellable(physical(ses.clearStorageData()));await cancellable(physical(win.loadURL(documentUrl,{httpReferrer:''})));if(violation)throw Error(violation);
+    if(signal.aborted)throw Error('Memory.wiki 原生检查已取消');await cancellable(physical(ses.clearStorageData()));await cancellable(physical(win.loadURL(documentUrl,{httpReferrer:''})));if(violation)throw Error(violation);
     const result=await cancellable(physical(win.webContents.executeJavaScript(`(()=>{
       const selector=${JSON.stringify(selector)},roots=[...document.querySelectorAll(selector)],root=roots[0];
       const hasArea=rect=>rect.width>0&&rect.height>0;

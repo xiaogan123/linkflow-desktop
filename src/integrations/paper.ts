@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { inspectPaperRenderedArticle } from './paper-rendering';
+import {writeFreelyCollectionPostsPath,writeFreelyEnvelope,writeFreelyPost,writeFreelyPostMatches,writeFreelyPostPayload,writeFreelyPublicPostUrl,WRITEFREELY_SIGNUP_PATH,type WriteFreelyPost} from './writefreely-protocol';
 import type {
   Account, AccountDiagnostic, ExecutionContext, ExecutionResult, LinkResult, PaperReceipt, SecretStore, Site, Task,
 } from '../shared/types';
@@ -36,7 +37,7 @@ export class PaperError extends Error {
 
 interface PaperCredential { version: 1; username: string; password: string; token?: string }
 interface ApprovedArticle { title: string; description: string; markdown: string; target: string; slug: string; contentHash: string }
-interface PaperPost { id: string; slug: string; title: string; body: string; collectionAlias?: string }
+type PaperPost = WriteFreelyPost;
 
 function object(value: unknown): value is JsonObject { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function stamp(dependencies?: PaperDependencies): string {
@@ -50,8 +51,9 @@ function home(username: string): string {
   return `${ORIGIN}/${username}/`;
 }
 function postUrl(username: string, slug: string): string {
-  if (!USERNAME.test(username) || !SLUG.test(slug) || slug.length > 100) throw new PaperError('invalid_response');
-  return `${ORIGIN}/${username}/${slug}`;
+  const url=writeFreelyPublicPostUrl(ORIGIN,username,slug);
+  if(!url)throw new PaperError('invalid_response');
+  return url;
 }
 function apiUrl(path: string): URL {
   if (!/^\/api\/(?:auth\/(?:login|signup)|me(?:\/collections)?|collections\/[a-z0-9][a-z0-9-]{2,63}\/posts(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)?)$/.test(path)) {
@@ -65,7 +67,7 @@ function canonicalTarget(value: string): string {
     if (url.protocol !== 'https:' || url.username || url.password || !url.hostname || (url.port && url.port !== '443')) throw Error('invalid');
     url.hash = '';
     return url.toString();
-  } catch { throw new Error('Paper.wf 全文目标必须是不含凭据的 HTTPS 网址'); }
+  } catch { throw new Error('Paper.wf 全文目标必须是不含账号密码的 HTTPS 网址'); }
 }
 function validPassword(value: unknown): value is string {
   return typeof value === 'string' && Buffer.byteLength(value, 'utf8') >= 1 && Buffer.byteLength(value, 'utf8') <= 72
@@ -93,7 +95,7 @@ function approvedArticle(task: Task, site: Pick<Site, 'url'>): ApprovedArticle {
   }
   const description = draft.description ?? '';
   if (typeof description !== 'string' || description.length > 300 || /[\u0000-\u001f\u007f]/.test(description)) {
-    throw new Error('Paper.wf 摘要不符合已核对全文规格');
+    throw new Error('Paper.wf 摘要不符合已检查全文规格');
   }
   if (typeof draft.body !== 'string' || draft.body !== draft.body.trim()
     || /\r|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(draft.body)
@@ -108,10 +110,10 @@ function approvedArticle(task: Task, site: Pick<Site, 'url'>): ApprovedArticle {
     throw new Error('Paper.wf 需要至少两个段落及有实质信息的原创全文');
   }
   const target = canonicalTarget(task.topicUrl ?? site.url);
-  if (!draft.body.includes(target)) throw new Error('Paper.wf 全文缺少已核对目标页的 HTTPS 链接');
+  if (!draft.body.includes(target)) throw new Error('Paper.wf 全文缺少已检查目标页的 HTTPS 链接');
   const contentHash = hash(JSON.stringify({ title: draft.title, description, markdown: draft.body, target }));
   const stem = draft.title.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 45).replace(/-+$/g, '');
-  const slug = `${stem || 'linkflow-article'}-${hash(task.id).slice(0, 8)}-${contentHash.slice(0, 16)}`;
+  const slug = task.paper?.contentHash===contentHash?task.paper.slug:`${stem || 'article'}-${hash(task.id).slice(0, 8)}-${contentHash.slice(0, 16)}`;
   return { title: draft.title, description, markdown: draft.body, target, slug, contentHash };
 }
 function validReceipt(value: unknown): value is PaperReceipt {
@@ -205,9 +207,9 @@ async function api(path: string, options: { method?: 'GET' | 'POST'; token?: str
   }, dependencies, MAX_JSON_BYTES);
   try {
     const parsed: unknown = JSON.parse(value.text);
-    if (!object(parsed) || !Number.isInteger(parsed.code) || Number(parsed.code) < 200 || Number(parsed.code) >= 300
-      || !('data' in parsed)) throw Error('invalid');
-    return parsed.data;
+    const envelope=writeFreelyEnvelope(parsed);
+    if(!envelope)throw Error('invalid');
+    return envelope.data;
   } catch { throw new PaperError('invalid_response'); }
 }
 function loginData(value: unknown, username: string): string {
@@ -237,25 +239,17 @@ export async function connectPaperAccount(
 }
 
 function postFrom(value: unknown): PaperPost {
-  if (!object(value) || typeof value.id !== 'string' || !POST_ID.test(value.id)
-    || typeof value.slug !== 'string' || !SLUG.test(value.slug) || value.slug.length > 100
-    || typeof value.title !== 'string' || typeof value.body !== 'string'
-    || Buffer.byteLength(value.body, 'utf8') > MAX_ARTICLE_BYTES) throw new PaperError('invalid_response');
-  let collectionAlias: string | undefined;
-  if (value.collection !== undefined) {
-    if (!object(value.collection) || typeof value.collection.alias !== 'string' || !USERNAME.test(value.collection.alias)) {
-      throw new PaperError('invalid_response');
-    }
-    collectionAlias = value.collection.alias;
-  }
-  return { id: value.id, slug: value.slug, title: value.title, body: value.body, collectionAlias };
+  const post=writeFreelyPost(value);
+  if(!post)throw new PaperError('invalid_response');
+  return post;
 }
 function exactPost(post: PaperPost, article: ApprovedArticle, username: string, postId?: string): boolean {
-  return post.slug === article.slug && post.title === article.title && post.body === article.markdown
-    && (!postId || post.id === postId) && (!post.collectionAlias || post.collectionAlias === username);
+  return writeFreelyPostMatches(post,article,username,postId);
 }
 async function publicPost(article: ApprovedArticle, username: string, postId: string | undefined, dependencies: PaperDependencies): Promise<{ post: PaperPost; url: string; rel: string }> {
-  const value = await api(`/api/collections/${username}/posts/${article.slug}`, {}, dependencies);
+  const path=writeFreelyCollectionPostsPath(username,article.slug);
+  if(!path)throw new PaperError('invalid_response');
+  const value = await api(path, {}, dependencies);
   const post = postFrom(value);
   if (!exactPost(post, article, username, postId)) throw new PaperError('invalid_response');
   const url = postUrl(username, article.slug);
@@ -272,7 +266,7 @@ export async function verifyPaperPublication(
 ): Promise<LinkResult> {
   const saved = task.paper;
   const fallback = task.publicUrl ?? `${ORIGIN}/`;
-  if (!saved || !validReceipt(saved)) return unavailable(fallback, 'Paper.wf 任务缺少有效发布回执', 'invalid');
+  if (!saved || !validReceipt(saved)) return unavailable(fallback, 'Paper.wf 任务缺少有效发布记录', 'invalid');
   let article: ApprovedArticle;
   try {
     article = approvedArticle(task, { url: targetSiteUrl });
@@ -280,7 +274,7 @@ export async function verifyPaperPublication(
       || task.sourceDomain !== 'paper.wf' || task.channelId !== 'paper-wf') throw Error('mismatch');
     const expectedUrl = postUrl(saved.username, saved.slug);
     if (task.publicUrl && task.publicUrl !== expectedUrl) throw Error('url');
-  } catch { return unavailable(fallback, 'Paper.wf 回执、原文哈希或公开网址与当前任务不一致', 'invalid'); }
+  } catch { return unavailable(fallback, 'Paper.wf 记录、原文校验值或公开网址与当前任务不一致', 'invalid'); }
   const url = postUrl(saved.username, saved.slug);
   try {
     const found = await publicPost(article, saved.username, saved.postId, { ...dependencies, signal });
@@ -288,7 +282,7 @@ export async function verifyPaperPublication(
   } catch (error) {
     if (error instanceof PaperError && error.code === 'not_found') return unavailable(url, 'Paper.wf 原发布 slug 尚未公开', 'absent');
     if (error instanceof PaperError && error.code === 'invalid_response') return unavailable(url, 'Paper.wf 公开 API 或页面与原文、归属、可见链接不一致', 'invalid');
-    return unavailable(url, 'Paper.wf 匿名 API 或公开页面暂时无法核验');
+    return unavailable(url, 'Paper.wf 匿名 API 或公开页面暂时无法检查');
   }
 }
 export async function reconcilePaperTask(context: ExecutionContext, dependencies: PaperDependencies = {}): Promise<PaperReconcileResult> {
@@ -310,12 +304,12 @@ function diagnostic(code: AccountDiagnostic['code'], message: string, dependenci
   return { code, message, at: stamp(dependencies), retryable: false };
 }
 function accountMessage(error: unknown): string {
-  if (!(error instanceof PaperError)) return 'Paper.wf 身份状态无法确认，已停止自动创建账号';
+  if (!(error instanceof PaperError)) return 'Paper.wf 账号状态无法确认，已停止自动创建账号';
   if (error.code === 'conflict') return 'Paper.wf 用户名已被占用，已停止创建账号';
-  if (error.code === 'auth') return 'Paper.wf 拒绝了原账号凭据，请重新连接同一身份';
+  if (error.code === 'auth') return 'Paper.wf 拒绝了原账号登录信息，请重新连接同一账号';
   if (error.code === 'verification_required') return 'Paper.wf 首次需在浏览器完成平台验证，再于账号页连接同一用户名；本任务暂停，其他任务可继续。';
   if (error.code === 'forbidden') return 'Paper.wf 原账号或出版物不可用于公开发表';
-  return 'Paper.wf 账号状态待确认，只会核验已保存的身份';
+  return 'Paper.wf 账号状态待确认，只会检查已保存的发布账号';
 }
 function generatedUsername(site: Site): string {
   const stem = site.domain.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 28).replace(/-+$/g, '') || 'site';
@@ -325,7 +319,7 @@ async function readyAccount(context: ExecutionContext, dependencies: PaperDepend
   let account = context.getAccount();
   if (!account) {
     if (context.task.accountId || context.task.paper || context.task.submittedAt || context.task.publicUrl || context.signal.aborted) {
-      return { status: 'needs_input', message: 'Paper.wf 原账号或发布意图需要核对，不会创建替代身份' };
+      return { status: 'needs_input', message: 'Paper.wf 原账号或发布计划需要核对，不会创建替代账号' };
     }
     const username = generatedUsername(context.site);
     const credential: PaperCredential = { version: 1, username, password: randomBytes(32).toString('base64url') };
@@ -334,7 +328,7 @@ async function readyAccount(context: ExecutionContext, dependencies: PaperDepend
       credentialKind: 'api_token', status: 'draft', hasPassword: true, source: 'generated', registrationAttempts: 0,
       createdAt: at, updatedAt: at };
     try { await context.saveAccount(account, JSON.stringify(credential)); }
-    catch { return { status: 'queued', message: 'Paper.wf 账号凭据未能持久保存，尚未提交注册' }; }
+    catch { return { status: 'queued', message: 'Paper.wf 账号登录信息未能持久保存，尚未提交注册' }; }
   }
   if (account.channelId !== 'paper-wf' || account.id !== context.task.accountId && !!context.task.accountId
     || account.credentialKind !== 'api_token' || !USERNAME.test(account.username) || !account.hasPassword
@@ -346,19 +340,19 @@ async function readyAccount(context: ExecutionContext, dependencies: PaperDepend
   }
   let credential: PaperCredential;
   try { credential = credentialFrom(await context.secrets.get(`account:${account.id}`), account.username); }
-  catch { return { status: 'needs_input', message: 'Paper.wf 本机保险箱缺少原账号凭据' }; }
+  catch { return { status: 'needs_input', message: 'Paper.wf 本机保险箱缺少原账号登录信息' }; }
 
   if (account.source === 'generated' && account.status === 'draft' && account.registrationAttempts === 0) {
     const at = stamp(dependencies);
     const pending: Account = { ...account, status: 'unknown', registrationAttempts: 1, updatedAt: at,
-      diagnostic: diagnostic('registration_unknown', 'Paper.wf 注册即将提交；以后只认证此身份，不自动创建替代账号。', dependencies) };
+      diagnostic: diagnostic('registration_unknown', 'Paper.wf 注册即将提交；以后只认证此账号，不自动创建替代账号。', dependencies) };
     try {
       await context.saveAccount(pending);
       context.checkpoint({ checkpoint: 'paper_account_create_pending' });
-    } catch { return { status: 'queued', message: 'Paper.wf 注册意图未能安全持久化，未提交注册' }; }
+    } catch { return { status: 'queued', message: 'Paper.wf 注册计划未能安全保存，未提交注册' }; }
     account = pending;
     try {
-      const signedUp = await api('/api/auth/signup', {
+      const signedUp = await api(WRITEFREELY_SIGNUP_PATH, {
         method: 'POST', body: { alias: account.username, pass: credential.password },
       }, { ...dependencies, signal: context.signal });
       if (!object(signedUp) || object(signedUp.user) && signedUp.user.username !== account.username) throw new PaperError('invalid_response');
@@ -411,17 +405,17 @@ export async function preparePaperIdentity(
   context: ExecutionContext, dependencies: PaperDependencies = {},
 ): Promise<ExecutionResult | undefined> {
   if (context.channel.id !== 'paper-wf' || context.task.channelId !== 'paper-wf' || context.task.sourceDomain !== 'paper.wf') {
-    return { status: 'needs_input', message: '当前任务不属于 Paper.wf 出版渠道' };
+    return { status: 'needs_input', message: '当前任务不属于 Paper.wf 出版平台' };
   }
   if (!context.getAccount() && (context.task.paper || context.task.submittedAt || context.task.publicUrl)) {
-    return { status: 'needs_input', message: 'Paper.wf 原发布账号缺失，未创建替代身份' };
+    return { status: 'needs_input', message: 'Paper.wf 原发布账号缺失，未创建替代账号' };
   }
   const result = await readyAccount(context, { ...dependencies, signal: context.signal });
   if ('status' in result) return result;
   const account = result.account;
   if (account.status !== 'registered' || !account.hasPassword || account.credentialKind !== 'api_token'
     || account.publicationUrl !== home(account.username)) {
-    return { status: 'needs_input', message: 'Paper.wf 作者身份尚未验证' };
+    return { status: 'needs_input', message: 'Paper.wf 作者账号尚未验证' };
   }
   return undefined;
 }
@@ -430,7 +424,7 @@ export async function runPaperTask(context: ExecutionContext, dependencies: Pape
   if (context.channel.id !== 'paper-wf' || context.task.channelId !== 'paper-wf' || context.task.sourceDomain !== 'paper.wf'
     || context.channel.domain !== 'paper.wf' || context.channel.automation !== 'api' || context.channel.kind !== 'article'
     || !context.channel.articleRequired || !context.channel.accountRequired || context.channel.contentFormat === 'social') {
-    return { status: 'needs_input', message: '当前渠道规格不支持 Paper.wf 原创全文 API 发布' };
+    return { status: 'needs_input', message: '当前平台规格不支持 Paper.wf 原创全文 API 发布' };
   }
   let article: ApprovedArticle;
   try { article = approvedArticle(context.task, context.site); }
@@ -439,18 +433,18 @@ export async function runPaperTask(context: ExecutionContext, dependencies: Pape
   const remoteCheckpoint = ['paper_publish_submitting', 'paper_published'].includes(context.task.checkpoint ?? '');
   if (prior && (!validReceipt(prior) || prior.slug !== article.slug || prior.contentHash !== article.contentHash
     || context.getAccount()?.username !== prior.username || context.getAccount()?.id !== context.task.accountId)) {
-    return { status: 'needs_input', message: 'Paper.wf 原发布回执与账号、slug 或已核对全文不一致，已停止写入' };
+    return { status: 'needs_input', message: 'Paper.wf 原发布记录与账号、slug 或已检查全文不一致，已停止写入' };
   }
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
-    return { status: 'needs_input', message: 'Paper.wf 已有发布痕迹但缺少原回执，已停止创建替代文章' };
+    return { status: 'needs_input', message: 'Paper.wf 已有发布痕迹但缺少原记录，已停止创建替代文章' };
   }
   if (prior) {
     const reconciled = await reconcilePaperTask(context, dependencies);
-    if (reconciled.status === 'unknown') return { status: 'review', message: 'Paper.wf 原发布结果未能唯一核实；只读对账，不会再次 POST', paper: prior };
+    if (reconciled.status === 'unknown') return { status: 'review', message: 'Paper.wf 原发布结果未能唯一核实；检查原记录，不会重复提交', paper: prior };
     try { context.checkpoint({ paper: reconciled.paper, checkpoint: 'paper_published', publicUrl: reconciled.publicUrl,
       submittedAt: context.task.submittedAt }); }
     catch { /* keep the previously durable submitting intent */ }
-    return { status: 'review', message: 'Paper.wf 原文章通过匿名 API 与完整页面核验', publicUrl: reconciled.publicUrl,
+    return { status: 'review', message: 'Paper.wf 原文章通过匿名 API 与完整页面检查', publicUrl: reconciled.publicUrl,
       paper: reconciled.paper, checkpoint: 'paper_published', submittedAt: context.task.submittedAt };
   }
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未向 Paper.wf 提交' };
@@ -458,32 +452,32 @@ export async function runPaperTask(context: ExecutionContext, dependencies: Pape
   const access = await readyAccount(context, { ...dependencies, signal: context.signal });
   if ('status' in access) return access;
   if (!accountAtStart || accountAtStart.status !== 'registered' || accountAtStart.publicationUrl !== home(access.account.username)) {
-    return { status: 'queued', message: 'Paper.wf 作者身份已建立，请以该出版物身份重新核对全文后继续' };
+    return { status: 'queued', message: 'Paper.wf 作者账号已建立，请以该出版账号重新核对全文后继续' };
   }
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未向 Paper.wf 发布文章' };
   const username = access.account.username;
   try {
-    await api(`/api/collections/${username}/posts/${article.slug}`, {}, { ...dependencies, signal: context.signal });
+    await api(writeFreelyCollectionPostsPath(username,article.slug)!, {}, { ...dependencies, signal: context.signal });
     return { status: 'needs_input', message: 'Paper.wf 确定性 slug 已存在，已停止创建以免覆盖或重复' };
   } catch (error) {
     if (!(error instanceof PaperError) || error.code !== 'not_found') {
-      return { status: 'needs_input', message: 'Paper.wf 原 slug 可用性尚未确认，未执行发文 POST' };
+      return { status: 'needs_input', message: 'Paper.wf 原 slug 可用性尚未确认，尚未发文' };
     }
   }
   const pending = receipt(article, username, 'submitting');
   const submittedAt = stamp(dependencies);
   try { context.checkpoint({ paper: pending, checkpoint: 'paper_publish_submitting', submittedAt, draft: context.task.draft }); }
-  catch { return { status: 'queued', message: 'Paper.wf 发布意图未能持久化，未执行发文 POST' }; }
+  catch { return { status: 'queued', message: 'Paper.wf 发布计划未能保存，尚未发文' }; }
   let created: PaperPost;
   try {
-    const value = await api(`/api/collections/${username}/posts`, {
+    const value = await api(writeFreelyCollectionPostsPath(username)!, {
       method: 'POST', token: access.credential.token,
-      body: { title: article.title, body: article.markdown, slug: article.slug },
+      body: writeFreelyPostPayload(article.title,article.markdown,article.slug),
     }, { ...dependencies, signal: context.signal });
     created = postFrom(value);
     if (!exactPost(created, article, username)) throw new PaperError('invalid_response');
   } catch {
-    return { status: 'review', message: 'Paper.wf 发文结果不确定；已保存原账号、slug 和哈希，只读对账且不会重发',
+    return { status: 'review', message: 'Paper.wf 发文结果不确定；已保存原账号、slug 和校验值，检查原记录且不会重发',
       paper: pending, checkpoint: 'paper_publish_submitting', submittedAt };
   }
   const identified = receipt(article, username, 'submitting', created.id);
@@ -494,10 +488,10 @@ export async function runPaperTask(context: ExecutionContext, dependencies: Pape
     const published = receipt(article, username, 'published', found.post.id);
     try { context.checkpoint({ paper: published, checkpoint: 'paper_published', publicUrl: found.url, submittedAt }); }
     catch { /* original intent remains durable */ }
-    return { status: 'review', message: 'Paper.wf 原文、归属和公开页目标 href 已核验', publicUrl: found.url,
+    return { status: 'review', message: 'Paper.wf 原文、归属和公开页目标 href 已检查', publicUrl: found.url,
       paper: published, checkpoint: 'paper_published', submittedAt };
   } catch {
-    return { status: 'review', message: 'Paper.wf 已返回原 postId，匿名全文或页面尚待核验；不会重发',
+    return { status: 'review', message: 'Paper.wf 已返回原 postId，匿名全文或页面尚待检查；不会重发',
       paper: identified, checkpoint: 'paper_publish_submitting', submittedAt };
   }
 }

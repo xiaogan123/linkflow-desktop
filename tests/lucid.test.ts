@@ -142,7 +142,7 @@ test('a Vault failure never discards a verified public URL or leaks the one-time
   assert.equal(f.task.publicUrl, PAGE);
   assert.equal(f.task.lucid?.slug, SLUG);
   assert.equal(f.secrets.has(`publication:${f.task.id}`), false);
-  assert.match(result.message, /认领凭据未保存/);
+  assert.match(result.message, /一次性认领密钥未保存/);
   assert.equal(JSON.stringify({ result, checkpoints: f.checkpoints }).includes(CLAIM), false);
 });
 

@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store,defaultSettings,emptyState} from '../src/main/store';
 import {validateBackup} from '../src/main/backup-validation';
-import {connectRaindrop,discoverRaindropCollections} from '../src/main/raindrop-management';
+import {connectRaindrop,discoverRaindropCollections,RaindropManagementError} from '../src/main/raindrop-management';
 import {articleContentHash,articleContextHash} from '../src/main/article-review';
-import {listRaindropCollections,raindropTesting,raindropTokenFingerprint,reconcileRaindropTask,runRaindropTask,verifyRaindropPublicCollection,verifyRaindropTask,type RaindropTransport} from '../src/integrations/raindrop';
+import {listRaindropCollections,RaindropError,raindropTesting,raindropTokenFingerprint,reconcileRaindropTask,runRaindropTask,verifyRaindropPublicCollection,verifyRaindropTask,type RaindropTransport} from '../src/integrations/raindrop';
 import type {Account,Channel,ExecutionContext,Site,Task} from '../src/shared/types';
 
 const NOW='2026-10-10T12:00:00.000Z',TOKEN='synthetic-raindrop-token-12345',OWNER='32',COLLECTION='66';
@@ -27,7 +27,7 @@ function fixture(){
   const s=site(),c=channel(),settings={...defaultSettings(),articleReviewMode:'ai' as const};
   const account:Account={id:ACCOUNT_ID,channelId:'raindrop',email:'',username:OWNER,displayName:'Research resources',publicationUrl:PUBLIC,credentialKind:'api_token',hasPassword:true,status:'registered',source:'imported',createdAt:NOW,updatedAt:NOW,verifiedAt:NOW,raindrop:{version:1,ownerId:OWNER,collectionId:COLLECTION,publicUrl:PUBLIC,tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:NOW}};
   const task:Task={id:TASK_ID,siteId:SITE_ID,channelId:'raindrop',accountId:ACCOUNT_ID,sourceDomain:'raindrop.page',status:'running',createdAt:NOW,scheduledAt:NOW,updatedAt:NOW,attempts:1,message:'',topicUrl:TARGET,draftRevision:1,draft:{title:TITLE,description:'local only',body:EXCERPT}};
-  task.articleReview={status:'passed',reason:'review passed',reasonCode:'passed',reviewContractVersion:4,evidenceUrls:[],draftRevision:1,contentHash:articleContentHash(task),contextHash:articleContextHash(s,c,settings,account),reviewedAt:NOW};
+  task.articleReview={status:'passed',reason:'review passed',reasonCode:'passed',reviewContractVersion:4,evidenceUrls:[],draftRevision:1,contentHash:articleContentHash(task),contextHash:articleContextHash(s,c,settings,account,4),reviewedAt:NOW};
   const checkpoints:Partial<Task>[]=[],secrets=new Map([[`account:${ACCOUNT_ID}`,TOKEN]]);
   const abort=new AbortController();
   const context:ExecutionContext={site:s,task,channel:c,settings,signal:abort.signal,ai:{json:async<T>()=>({} as T)},secrets:{get:async key=>secrets.get(key),set:async(key,value)=>{secrets.set(key,value)},delete:async key=>{secrets.delete(key)}},getAccount:()=>account,saveAccount:async()=>undefined,checkpoint:partial=>{checkpoints.push(structuredClone(partial));Object.assign(task,partial)},log:()=>undefined};
@@ -42,7 +42,7 @@ test('collection discovery returns string owners and never promotes a child to a
 
 test('public binding rejects nested collections and hidden excerpts but accepts one strict visible root page',async()=>{
   await assert.rejects(verifyRaindropPublicCollection(PUBLIC,COLLECTION,OWNER,{fetch:async()=>html(publicHtml([],{parent:{$id:1}}))}),/mismatch|failed/);
-  await assert.rejects(verifyRaindropPublicCollection(PUBLIC,COLLECTION,OWNER,{fetch:async()=>html(publicHtml([],{hide:['list_excerpt']}))}),/隐藏了标题或摘要/);
+  await assert.rejects(verifyRaindropPublicCollection(PUBLIC,COLLECTION,OWNER,{fetch:async()=>html(publicHtml([],{hide:['list_excerpt']}))}),error=>error instanceof RaindropError&&error.code==='display_hidden'&&/隐藏了标题或摘要/.test(error.message));
   assert.deepEqual(await verifyRaindropPublicCollection(PUBLIC,COLLECTION,OWNER,{fetch:async()=>html(publicHtml())}),{title:'Research resources',view:'list'});
 });
 
@@ -61,8 +61,18 @@ test('a stale connection request cannot overwrite a newer public URL with pendin
   const store=new Store(':memory:'),newPublic='https://writer.raindrop.page/resources-new';try{
     const existing=fixture().account;existing.raindrop!.tokenFingerprint=raindropTokenFingerprint(TOKEN);store.update(state=>{state.sites=[site()];state.accounts=[existing];state.accountBindings=[{id:'44444444-4444-4444-8444-444444444444',siteId:SITE_ID,channelId:'raindrop',accountId:ACCOUNT_ID,createdAt:NOW,updatedAt:NOW}]});
     let injected=false;const fetch:RaindropTransport=async url=>{if(url.endsWith('/collections'))return json({result:true,items:[collectionItem()]});if(url.endsWith('/collections/childrens'))return json({result:true,items:[]});if(url.endsWith(`/collection/${COLLECTION}`))return json({result:true,item:collectionItem()});if(url===PUBLIC&&!injected){injected=true;store.update(state=>{const account=state.accounts[0];account.publicationUrl=newPublic;account.raindrop!.publicUrl=newPublic;account.updatedAt='2026-10-10T12:01:00.000Z';state.tasks=[{...fixture().task,status:'review',submittedAt:NOW,publicUrl:newPublic}]});return html(publicHtml())}throw Error(`unexpected ${url}`)};
-    await assert.rejects(connectRaindrop(store,{encryptSecrets:values=>values},{token:TOKEN,collectionId:COLLECTION,publicUrl:PUBLIC,siteIds:[SITE_ID],accountId:ACCOUNT_ID},{fetch}),/连接期间发生变化/);
+    await assert.rejects(connectRaindrop(store,{encryptSecrets:values=>values},{token:TOKEN,collectionId:COLLECTION,publicUrl:PUBLIC,siteIds:[SITE_ID],accountId:ACCOUNT_ID},{fetch}),error=>error instanceof RaindropManagementError&&error.code==='identity_changed'&&/连接期间发生变化/.test(error.message));
     assert.equal(store.read().accounts[0].raindrop?.publicUrl,newPublic);assert.equal(store.read().tasks[0].publicUrl,newPublic);
+  }finally{store.close()}
+});
+
+test('Raindrop display text cannot impersonate a coded cancellation',async()=>{
+  const store=new Store(':memory:');try{
+    store.update(state=>state.sites=[site()]);
+    await assert.rejects(
+      connectRaindrop(store,{encryptSecrets:values=>values},{token:TOKEN,collectionId:COLLECTION,publicUrl:PUBLIC,siteIds:[SITE_ID]},{fetch:async()=>{throw Error('Raindrop 连接已取消')}}),
+      error=>error instanceof RaindropManagementError&&error.code==='connection_failed'&&error.message.includes('连接未完成'),
+    );
   }finally{store.close()}
 });
 
@@ -89,7 +99,7 @@ test('first POST accepts current manual approval but rejects missing manual appr
   await assert.rejects(runRaindropTask(unapproved.context,{fetch:async()=>{unapprovedRequests++;return json({result:true})}}),/人工批准/);assert.equal(unapprovedRequests,0);
 
   const staleAi=fixture();staleAi.task.articleReview!.contentHash='0'.repeat(64);let staleRequests=0;
-  await assert.rejects(runRaindropTask(staleAi.context,{fetch:async()=>{staleRequests++;return json({result:true})}}),/独立审核/);assert.equal(staleRequests,0);
+  await assert.rejects(runRaindropTask(staleAi.context,{fetch:async()=>{staleRequests++;return json({result:true})}}),/尚未通过当前 AI 复核/);assert.equal(staleRequests,0);
 });
 
 test('unknown POST outcome is reconciled by bounded reads and a rerun never POSTs again',async()=>{

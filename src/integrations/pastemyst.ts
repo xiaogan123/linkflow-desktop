@@ -58,9 +58,9 @@ async function bounded(response:Response,signal:AbortSignal):Promise<Uint8Array>
 function opaqueFrom(response:Response,bytes:Uint8Array,intent:PasteMystIntent):PasteMystOpaqueResponse{return {...intent,version:1,kind:'pastemyst_opaque_response',status:response.status,contentType:response.headers.get('content-type')??'',responseUrl:response.url,redirected:response.redirected,responseType:response.type,bodyBase64:Buffer.from(bytes).toString('base64'),bodySha256:pastemystHash(bytes)}}
 
 export async function createPasteMystPaste(input:{operationId:string;title:string;content:string;reviewed:true},persistence:PasteMystPersistence,deps:PasteMystDependencies={}):Promise<PasteMystCreateResult>{
-  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('PasteMyst 缺少已审核的单次发布身份');
+  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('PasteMyst 缺少已审核的单次发布编号');
   const request=pastemystRequest(input.title,input.content);if(!input.title||input.title!==input.title.trim()||input.title.length>120||!input.content||input.content!==input.content.trim()||Buffer.byteLength(input.content,'utf8')>MAX_CONTENT||Buffer.byteLength(request.body)>MAX_CONTENT+1024)return {status:'not_started',reason:'invalid_content'};
-  const intent:PasteMystIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validPasteMystIntent(intent))throw Error('PasteMyst 发布身份无效');
+  const intent:PasteMystIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validPasteMystIntent(intent))throw Error('PasteMyst 提交信息无效');
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}
   try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   const controller=new AbortController(),external=()=>controller.abort();deps.signal?.addEventListener('abort',external,{once:true});if(deps.signal?.aborted)controller.abort();const timeout=Math.min(60_000,Math.max(50,deps.timeoutMs??25_000)),timer=setTimeout(()=>controller.abort(),timeout);timer.unref?.();let response:Response|undefined;

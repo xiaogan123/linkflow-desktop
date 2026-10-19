@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindBloggerBlog, bindBloggerBlogs, connectBlogger, disconnectBlogger, listBloggerBlogs, reconnectBlogger } from '../src/main/blogger-management';
+import { bindBloggerBlog, bindBloggerBlogs, connectBlogger, disconnectBlogger, getBloggerGuidance, listBloggerBlogs, reconnectBlogger } from '../src/main/blogger-management';
 import { BLOGGER_SCOPE, type BloggerLoopback, type BloggerTransport } from '../src/integrations/blogger';
 import { Store } from '../src/main/store';
 import type { Account, SecretStore, Task } from '../src/shared/types';
@@ -9,6 +9,8 @@ const USER_ID = '9876543210987654321';
 const OTHER_USER_ID = '1111111111111111111';
 const BLOG_ID = '1234567890123456789';
 const BLOG_URL = 'https://example-owner.blogspot.com/';
+const SECOND_BLOG_ID = '2234567890123456789';
+const SECOND_BLOG_URL = 'https://example-second.blogspot.com/';
 const ACCESS_TOKEN = 'synthetic-access-token-that-is-not-real';
 const REFRESH_TOKEN = 'synthetic-refresh-token-that-is-not-real';
 const NOW = new Date('2026-10-04T12:00:00.000Z');
@@ -98,19 +100,25 @@ function secondSite(status: 'ready' | 'paused' = 'ready') {
   };
 }
 
-function managementRequest(options: { admin?: boolean } = {}): BloggerTransport {
+function managementRequest(options: { admin?: boolean; secondBlog?: boolean } = {}): BloggerTransport {
   return async (input, init) => {
     const url = new URL(input);
     assert.equal((init.headers as Record<string, string>).authorization, `Bearer ${ACCESS_TOKEN}`);
     if (url.pathname === '/blogger/v3/users/self') return json({ kind: 'blogger#user', id: USER_ID, displayName: 'Example Publisher' });
     if (url.pathname === '/blogger/v3/users/self/blogs') return json({ kind: 'blogger#blogList', items: [
       { kind: 'blogger#blog', id: BLOG_ID, name: 'Example Owner Blog', url: BLOG_URL },
+      ...(options.secondBlog ? [{ kind: 'blogger#blog', id: SECOND_BLOG_ID, name: 'Second Example Blog', url: SECOND_BLOG_URL }] : []),
     ] });
-    if (url.pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}`) return json({
+    if (url.pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}` || options.secondBlog && url.pathname === `/blogger/v3/users/self/blogs/${SECOND_BLOG_ID}`) {
+      const second = url.pathname.endsWith(SECOND_BLOG_ID);
+      const id = second ? SECOND_BLOG_ID : BLOG_ID;
+      const publicUrl = second ? SECOND_BLOG_URL : BLOG_URL;
+      return json({
       kind: 'blogger#blogUserInfo',
-      blog: { kind: 'blogger#blog', id: BLOG_ID, name: 'Example Owner Blog', url: BLOG_URL },
-      blog_user_info: { kind: 'blogger#blogPerUserInfo', userId: USER_ID, blogId: BLOG_ID, hasAdminAccess: options.admin ?? true },
+      blog: { kind: 'blogger#blog', id, name: second ? 'Second Example Blog' : 'Example Owner Blog', url: publicUrl },
+      blog_user_info: { kind: 'blogger#blogPerUserInfo', userId: USER_ID, blogId: id, hasAdminAccess: options.admin ?? true },
     });
+    }
     throw new Error(`unexpected ${init.method} ${url}`);
   };
 }
@@ -125,6 +133,8 @@ test('connect saves one encrypted account secret, returns metadata only, and reu
     assert.equal(first.account.displayName, 'Example Publisher');
     assert.equal(first.account.credentialKind, 'oauth');
     assert.deepEqual(first.blogs, [{ id: BLOG_ID, name: 'Example Owner Blog', url: BLOG_URL }]);
+    assert.deepEqual(first.guidance, getBloggerGuidance());
+    assert.equal(first.guidance.createBlogUrl, 'https://www.blogger.com/');
     assert.equal(store.read().accounts.length, 1);
     assert.equal(JSON.stringify(store.read()).includes(ACCESS_TOKEN), false);
     assert.equal(JSON.stringify(first).includes(ACCESS_TOKEN), false);
@@ -144,7 +154,7 @@ test('reconnect cannot replace an existing account with a different Google Blogg
   try {
     const first = await connectBlogger(store, vault, installedClient(), connectDeps(oauthRequest()));
     const other = oauthRequest(OTHER_USER_ID);
-    await assert.rejects(connectBlogger(store, vault, installedClient(), { ...connectDeps(other), existingAccountId: first.account.id }), /不同 Google Blogger 身份/);
+    await assert.rejects(connectBlogger(store, vault, installedClient(), { ...connectDeps(other), existingAccountId: first.account.id }), /不同 Google Blogger 发布账号/);
     assert.equal(store.read().accounts.length, 1);
     assert.equal(store.read().accounts[0].username, USER_ID);
     assert.equal(JSON.parse(secrets.get(`account:${first.account.id}`)!).userId, USER_ID);
@@ -222,31 +232,75 @@ test('bind rechecks list, exact blog identity and admin write access before savi
   } finally { store.close(); }
 });
 
-test('batch binding verifies the remote blog once and commits every selected site together', async () => {
+test('one Google OAuth account can bind separate blogs to two sites, while one blog belongs to only one site', async () => {
   const { store, secrets, vault } = fixture();
   const accountId = '31313131-3131-4131-8131-313131313131';
   store.update(state => { state.sites.push(secondSite()); state.accounts.push(savedAccount(accountId)); });
   secrets.set(`account:${accountId}`, savedCredential());
-  let remoteVerifications = 0;
-  const request: BloggerTransport = async (...args) => {
-    if (new URL(args[0]).pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}`) remoteVerifications++;
-    return managementRequest()(...args);
-  };
+  const request = managementRequest({ secondBlog: true });
   try {
-    const result = await bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, { request, now: () => NOW });
-    assert.equal(result.id, BLOG_ID);
-    assert.equal(remoteVerifications, 1);
+    const blogs = await listBloggerBlogs(store, vault, accountId, { request, now: () => NOW });
+    assert.deepEqual(blogs.map(blog => blog.id), [BLOG_ID, SECOND_BLOG_ID]);
+    await bindBloggerBlog(store, vault, SITE_ID, accountId, BLOG_ID, { request, now: () => NOW });
+    let requests = 0;
+    await assert.rejects(bindBloggerBlog(store, vault, SECOND_SITE_ID, accountId, BLOG_ID, {
+      request: async (...args) => { requests++; return request(...args); }, now: () => NOW,
+    }), /独立博客/);
+    assert.equal(requests, 0);
+    await bindBloggerBlog(store, vault, SECOND_SITE_ID, accountId, SECOND_BLOG_ID, { request, now: () => NOW });
     const state = store.read();
     assert.deepEqual(state.sites.map(site => site.blogger), [
       { blogId: BLOG_ID, url: BLOG_URL },
-      { blogId: BLOG_ID, url: BLOG_URL },
+      { blogId: SECOND_BLOG_ID, url: SECOND_BLOG_URL },
     ]);
     assert.deepEqual(state.accountBindings.map(binding => binding.siteId).sort(), [SECOND_SITE_ID, SITE_ID].sort());
     assert.equal(state.accountBindings.every(binding => binding.accountId === accountId), true);
   } finally { store.close(); }
 });
 
-test('batch binding validates every remote-intent guard before network access or any binding write', async () => {
+test('batch binding of one blog to multiple sites fails before network access or any binding write', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '32323232-3232-4232-8232-323232323232';
+  store.update(state => { state.sites.push(secondSite()); state.accounts.push(savedAccount(accountId)); });
+  secrets.set(`account:${accountId}`, savedCredential());
+  let requests = 0;
+  try {
+    await assert.rejects(bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, {
+      request: async (...args) => { requests++; return managementRequest()(...args); }, now: () => NOW,
+    }), /请逐站连接/);
+    assert.equal(requests, 0);
+    assert.equal(store.read().sites.every(site => site.blogger === undefined), true);
+    assert.equal(store.read().accountBindings.length, 0);
+  } finally { store.close(); }
+});
+
+test('a submitted task keeps its blog reserved after a connection is removed', async () => {
+  const { store, secrets, vault } = fixture();
+  const accountId = '36363636-3636-4636-8636-363636363636';
+  store.update(state => {
+    state.sites.push(secondSite());
+    state.accounts.push(savedAccount(accountId));
+    state.tasks.push({
+      id: 'old-post', siteId: SITE_ID, channelId: 'blogger', accountId,
+      sourceDomain: 'example-owner.blogspot.com', status: 'needs_input',
+      createdAt: NOW.toISOString(), scheduledAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+      attempts: 1, message: 'Stored remote intent', submittedAt: NOW.toISOString(),
+      blogger: { blogId: BLOG_ID, postId: '3434343434343434343',
+        operationId: '37373737-3737-4737-8737-373737373737', contentHash: 'a'.repeat(64), stage: 'draft' },
+    });
+  });
+  secrets.set(`account:${accountId}`, savedCredential());
+  let requests = 0;
+  try {
+    await assert.rejects(bindBloggerBlog(store, vault, SECOND_SITE_ID, accountId, BLOG_ID, {
+      request: async (...args) => { requests++; return managementRequest()(...args); }, now: () => NOW,
+    }), /example\.com.*独立博客/);
+    assert.equal(requests, 0);
+    assert.equal(store.read().sites[1].blogger, undefined);
+  } finally { store.close(); }
+});
+
+test('single-site binding validates its remote-intent guard before network access', async () => {
   const { store, secrets, vault } = fixture();
   const accountId = '32323232-3232-4232-8232-323232323232';
   const blocked: Task = {
@@ -259,7 +313,7 @@ test('batch binding validates every remote-intent guard before network access or
   secrets.set(`account:${accountId}`, savedCredential());
   let requests = 0;
   try {
-    await assert.rejects(bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, {
+    await assert.rejects(bindBloggerBlog(store, vault, SECOND_SITE_ID, accountId, BLOG_ID, {
       request: async (...args) => { requests++; return managementRequest()(...args); }, now: () => NOW,
     }), /second\.example.*待处理/);
     assert.equal(requests, 0);
@@ -268,33 +322,33 @@ test('batch binding validates every remote-intent guard before network access or
   } finally { store.close(); }
 });
 
-test('batch binding rolls back all selected binding writes when one site changes during remote verification', async () => {
+test('binding rechecks exclusive blog ownership after remote verification', async () => {
   const { store, secrets, vault } = fixture();
   const accountId = '34343434-3434-4434-8434-343434343434';
   store.update(state => { state.sites.push(secondSite()); state.accounts.push(savedAccount(accountId)); });
   secrets.set(`account:${accountId}`, savedCredential());
-  let removed = false;
+  let occupied = false;
   const request: BloggerTransport = async (...args) => {
-    if (!removed && new URL(args[0]).pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}`) {
-      removed = true;
-      store.update(state => { state.sites = state.sites.filter(site => site.id !== SECOND_SITE_ID); });
+    if (!occupied && new URL(args[0]).pathname === `/blogger/v3/users/self/blogs/${BLOG_ID}`) {
+      occupied = true;
+      store.update(state => { state.sites.find(site => site.id === SECOND_SITE_ID)!.blogger = { blogId: BLOG_ID, url: BLOG_URL }; });
     }
     return managementRequest()(...args);
   };
   try {
-    await assert.rejects(bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, { request, now: () => NOW }), /绑定期间发生变化/);
+    await assert.rejects(bindBloggerBlog(store, vault, SITE_ID, accountId, BLOG_ID, { request, now: () => NOW }), /独立博客/);
     const state = store.read();
     assert.equal(state.sites.find(site => site.id === SITE_ID)?.blogger, undefined);
     assert.equal(state.accountBindings.length, 0);
   } finally { store.close(); }
 });
 
-test('batch binding preserves the site pause and terminal work while retaining drafts, history and cumulative cost', async () => {
+test('single-site binding preserves the site pause and terminal work while retaining drafts, history and cumulative cost', async () => {
   const { store, secrets, vault } = fixture();
   const accountId = '35353535-3535-4535-8535-353535353535';
   const draft = { title: 'Preserved', description: 'Preserved description', body: 'Preserved body with enough useful detail.' };
   const paused: Task = {
-    id: 'paused-work', siteId: SECOND_SITE_ID, channelId: 'blogger', sourceDomain: 'blogspot.com', status: 'needs_input', checkpoint: 'account_handoff',
+    id: 'paused-work', siteId: SITE_ID, channelId: 'blogger', sourceDomain: 'blogspot.com', status: 'needs_input', checkpoint: 'account_handoff',
     createdAt: NOW.toISOString(), scheduledAt: '2026-10-09T12:00:00.000Z', updatedAt: NOW.toISOString(), attempts: 2, message: 'Waiting', draft,
     history: [{ at: NOW.toISOString(), status: 'needs_input', message: 'Waiting' }], cost: { aiCalls: 4, inputTokens: 70 },
   };
@@ -303,12 +357,12 @@ test('batch binding preserves the site pause and terminal work while retaining d
   };
   const skipped: Task = { ...structuredClone(paused), id: 'skipped-stop', siteId: SITE_ID, status: 'skipped', message: 'Skipped explicitly' };
   const expired: Task = { ...structuredClone(paused), id: 'expired-stop', siteId: SITE_ID, status: 'expired', message: 'Expired explicitly' };
-  store.update(state => { state.sites.push(secondSite('paused')); state.accounts.push(savedAccount(accountId)); state.tasks.push(paused, budget, skipped, expired); });
+  store.update(state => { state.sites[0].status = 'paused'; state.accounts.push(savedAccount(accountId)); state.tasks.push(paused, budget, skipped, expired); });
   secrets.set(`account:${accountId}`, savedCredential());
   try {
-    await bindBloggerBlogs(store, vault, [SITE_ID, SECOND_SITE_ID], accountId, BLOG_ID, { request: managementRequest(), now: () => NOW });
+    await bindBloggerBlog(store, vault, SITE_ID, accountId, BLOG_ID, { request: managementRequest(), now: () => NOW });
     const state = store.read();
-    assert.equal(state.sites.find(site => site.id === SECOND_SITE_ID)?.status, 'paused');
+    assert.equal(state.sites.find(site => site.id === SITE_ID)?.status, 'paused');
     for (const id of ['paused-work', 'budget-stop', 'skipped-stop', 'expired-stop']) {
       const task = state.tasks.find(item => item.id === id)!;
       assert.deepEqual(task.draft, draft);

@@ -110,10 +110,10 @@ async function bounded(response:Response,signal:AbortSignal,track?:(work:Promise
 function opaqueFrom(response:Response,bytes:Uint8Array,intent:MemoryWikiIntent):MemoryWikiOpaqueResponse{return {...intent,version:1,kind:'memorywiki_opaque_response',status:response.status,contentType:response.headers.get('content-type')??'',responseUrl:response.url,redirected:response.redirected,responseType:response.type,bodyBase64:Buffer.from(bytes).toString('base64'),bodySha256:memoryWikiHash(bytes)}}
 
 export async function createMemoryWikiDocument(input:{operationId:string;title:string;markdown:string;reviewed:true},persistence:MemoryWikiPersistence,deps:MemoryWikiDependencies={}):Promise<MemoryWikiCreateResult>{
-  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Memory.wiki 缺少已审核的单次发布身份');
+  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Memory.wiki 缺少已审核的单次发布编号');
   if(deps.signal?.aborted)return {status:'not_started',reason:'authorization_changed'};
   const request=memoryWikiRequest(input.title,input.markdown),first=input.markdown.split(/\r?\n/,1)[0];if(!input.title||input.title!==input.title.trim()||first!==`# ${input.title}`||Buffer.byteLength(input.markdown,'utf8')>MEMORYWIKI_MAX_MARKDOWN_BYTES||Buffer.byteLength(request.body,'utf8')>MEMORYWIKI_MAX_REQUEST_BYTES)return {status:'not_started',reason:'invalid_content'};
-  const intent:MemoryWikiIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validMemoryWikiIntent(intent))throw Error('Memory.wiki 发布身份无效');
+  const intent:MemoryWikiIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validMemoryWikiIntent(intent))throw Error('Memory.wiki 提交信息无效');
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}
   try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   if(deps.signal?.aborted)return {status:'unknown',intent,diagnostic:'transport',opaqueResponseSaved:false};

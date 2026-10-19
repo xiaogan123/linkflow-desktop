@@ -9,11 +9,11 @@ function mediaType(headers:Record<string,string[]>){const values=headers['conten
 function validDeclaredLength(headers:Record<string,string[]>){const values=headers['content-length']??[];if(values.length===0)return true;if(values.length!==1||!/^\d+$/.test(values[0]))return false;const size=Number(values[0]);return Number.isSafeInteger(size)&&size>0&&size<=MDVIEW_MAX_HTML_BYTES}
 
 export async function renderMDViewPage(url:string,signal:AbortSignal,hooks:MDViewRenderHooks={}):Promise<MDViewRenderedPage>{
-  if(!exactMDViewPublicUrl(url))throw Error('MDView 原生核验 URL 无效');
+  if(!exactMDViewPublicUrl(url))throw Error('MDView 原生检查 URL 无效');
   const partition=`mdview-verifier-${randomUUID()}`,win=new BrowserWindow({show:false,width:1080,height:900,webPreferences:{partition,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,javascript:false,images:false,backgroundThrottling:false}}),ses=win.webContents.session;
   const nativeRequests:MDViewNativeRequest[]=[],responseRobots:string[]=[];let initializing=true,sent=false,debuggerAttached=false,violation='',rawHeaders:Record<string,string[]>={},webHeadersSeen=false,webStatus=0,responseStatus=0,responseMediaType='',responseBodyBytes=0,responseEncodedBodyBytes=0,documentRequestId='',responseFinished=false,rejectLoad:((error:Error)=>void)|undefined;
   const fail=(message:string)=>{violation ||= message;rejectLoad?.(Error(violation));try{if(!win.isDestroyed())win.webContents.stop()}catch{}};
-  const stop=()=>fail('MDView 原生核验已取消');signal.addEventListener('abort',stop,{once:true});
+  const stop=()=>fail('MDView 原生检查已取消');signal.addEventListener('abort',stop,{once:true});
   const onDebuggerMessage=(_event:unknown,method:string,params:Record<string,unknown>)=>{
     if(method==='Network.responseReceived'){
       const response=params.response as {url?:string;status?:number;mimeType?:string;headers?:Record<string,string|number>}|undefined;
@@ -49,7 +49,7 @@ export async function renderMDViewPage(url:string,signal:AbortSignal,hooks:MDVie
   ses.webRequest.onBeforeRedirect({urls:['<all_urls>']},()=>fail('MDView 原生页面禁止重定向'));
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',(event,next)=>{if(!initializing&&next!==url){event.preventDefault();fail('MDView 原生页面禁止导航')}});
   try{
-    if(signal.aborted)throw Error('MDView 原生核验已取消');await ses.clearStorageData();await win.loadURL('about:blank');if(signal.aborted||violation)throw Error(violation||'MDView 原生核验已取消');
+    if(signal.aborted)throw Error('MDView 原生检查已取消');await ses.clearStorageData();await win.loadURL('about:blank');if(signal.aborted||violation)throw Error(violation||'MDView 原生检查已取消');
     win.webContents.debugger.attach('1.3');debuggerAttached=true;win.webContents.debugger.on('message',onDebuggerMessage);await win.webContents.debugger.sendCommand('Network.enable');initializing=false;
     const loading=win.loadURL(url,{httpReferrer:''});await new Promise<void>((resolve,reject)=>{let done=false;const finish=(complete:(value?:any)=>void,value?:any)=>{if(done)return;done=true;complete(value)};rejectLoad=error=>finish(reject,error);void loading.then(()=>finish(resolve),error=>finish(reject,error))}).finally(()=>{rejectLoad=undefined});
     if(violation||signal.aborted||!sent||nativeRequests.length!==1||!documentRequestId||!responseFinished)throw Error(violation||'MDView 原生主文档未按一次请求加载');

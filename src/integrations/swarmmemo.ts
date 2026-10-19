@@ -17,7 +17,9 @@ export const SWARMMEMO_PAGE = 'main';
 export const SWARMMEMO_DATA = '{"schema":1,"format":"markdown"}';
 export const SWARMMEMO_MAX_TEXT_BYTES = 16 * 1024;
 export const SWARMMEMO_MAX_RESPONSE_BYTES = 512 * 1024;
-export const SWARMMEMO_DISCLOSURE = 'Publisher disclosure: This article was prepared and published by Linkflow Assistant, an automated agent acting for the site owner. Its claims are based on the cited public material, not personal use.';
+export const SWARMMEMO_DISCLOSURE = 'Publisher disclosure: This article was prepared and published by an automated assistant acting for the site owner. Its claims are based on the cited public material, not personal use.';
+/** Only for validating articles that already have a saved publication receipt. */
+export const SWARMMEMO_LEGACY_DISCLOSURE = 'Publisher disclosure: This article was prepared and published by Linkflow Assistant, an automated agent acting for the site owner. Its claims are based on the cited public material, not personal use.';
 
 const HEX_32 = /^[a-f0-9]{32}$/;
 const SHA = /^[a-f0-9]{64}$/;
@@ -177,7 +179,7 @@ function exactObject(value: unknown, required: string[], optional: string[] = []
 function canonicalHttps(value: unknown): string | undefined { if (typeof value !== 'string' || value.length > 2048) return; try { const url = new URL(value); if (url.protocol !== 'https:' || url.username || url.password || url.port) return; return url.href; } catch { return; } }
 
 export function generateSwarmMemoIdentity(accountId: string, createdAt: string): SwarmMemoIdentitySecret {
-  if (!UUID.test(accountId) || !exactDate(createdAt)) throw Error('SwarmMemo 身份参数无效');
+  if (!UUID.test(accountId) || !exactDate(createdAt)) throw Error('SwarmMemo 账号信息无效');
   const pair = generateKeyPairSync('ed25519');
   const privateKeyPkcs8 = Buffer.from(pair.privateKey.export({format: 'der', type: 'pkcs8'})).toString('base64');
   const spki = Buffer.from(pair.publicKey.export({format: 'der', type: 'spki'}));

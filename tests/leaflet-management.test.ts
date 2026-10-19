@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
-import {connectLeaflet} from '../src/main/leaflet-management';
+import {connectLeaflet,LeafletManagementError} from '../src/main/leaflet-management';
 import type {LeafletManagementDependencies} from '../src/main/leaflet-management';
 import type {Site,Task} from '../src/shared/types';
 
@@ -17,17 +17,20 @@ function fixture(){
   const connect=(siteIds=[one],accountId?:string)=>connectLeaflet(store,vault,{handle:'author.bsky.social',appPassword:'aaaa-bbbb-cccc-dddd',siteIds,accountId},deps);
   return {store,vault,deps,connect,secret:(key:string)=>store.getCipher(key),ciphers:()=>store.allCiphers(),setDid:(value:string)=>{identity=value},calls:()=>sequence};
 }
-test('Leaflet connection saves only one independent account secret and explicit bindings',async()=>{
+test('Leaflet connection preserves one site per identity and permits same-site token renewal',async()=>{
   const f=fixture();try{
     const account=await f.connect();assert.equal(account.channelId,'leaflet');assert.equal(account.credentialKind,'api_token');assert.equal(account.publicationUrl,`https://leaflet.pub/p/${did}`);assert.equal(Object.keys(f.ciphers()).length,1);assert.ok(f.secret(`account:${account.id}`));assert.equal(f.store.read().accountBindings[0].siteId,one);assert.equal(JSON.stringify(account).includes('testSecret'),false);
-    const same=await f.connect([two]);assert.equal(same.id,account.id);assert.equal(Object.keys(f.ciphers()).length,1);assert.equal(f.store.read().accountBindings.length,2);
-    await f.connect([two],account.id);assert.deepEqual(f.store.read().accountBindings.map(item=>item.siteId),[two]);
+    const before=f.store.read(),cipher=f.secret(`account:${account.id}`);
+    await assert.rejects(f.connect([two]),error=>error instanceof LeafletManagementError&&error.code==='connection_failed'&&error.cause instanceof Error&&/归属其他网站/.test(error.cause.message));
+    assert.deepEqual(f.store.read(),before);assert.equal(f.secret(`account:${account.id}`),cipher);
+    const same=await f.connect([one]);assert.equal(same.id,account.id);assert.equal(Object.keys(f.ciphers()).length,1);
+    await f.connect([one],account.id);assert.deepEqual(f.store.read().accountBindings.map(item=>item.siteId),[one]);
   }finally{f.store.close()}
 });
 test('Leaflet reuses the same DID after a handle change in explicit and automatic reconnect flows',async()=>{
   for(const explicit of [true,false]){const f=fixture();try{
     f.deps.connect=async(vault,id,handle)=>{const key=`account:${id}`,prior=await vault.get(key);if(prior&&JSON.parse(prior).handle!==handle)throw Error('stale helper handle restriction');await vault.set(key,JSON.stringify({handle,did}));return {username:handle,did,publicationUrl:`https://leaflet.pub/p/${did}`}};
-    const first=await f.connect(),renamed=await connectLeaflet(f.store,f.vault,{handle:'renamed.bsky.social',appPassword:'aaaa-bbbb-cccc-dddd',siteIds:[two],accountId:explicit?first.id:undefined},f.deps);
+    const first=await f.connect(),renamed=await connectLeaflet(f.store,f.vault,{handle:'renamed.bsky.social',appPassword:'aaaa-bbbb-cccc-dddd',siteIds:[one],accountId:explicit?first.id:undefined},f.deps);
     assert.equal(renamed.id,first.id);assert.equal(renamed.username,'renamed.bsky.social');assert.equal(f.store.read().accounts.length,1);assert.equal(Object.keys(f.ciphers()).length,1);
   }finally{f.store.close()}}
 });
@@ -39,7 +42,7 @@ test('Leaflet missing selection or foreign repair account fails before credentia
 test('Leaflet reconnect cannot switch DID or expose temporary credentials',async()=>{
   const f=fixture();try{
     const account=await f.connect(),before=f.store.read(),saved=f.secret(`account:${account.id}`);f.setDid(otherDid);
-    await assert.rejects(f.connect([two],account.id),/另一个发布身份/);assert.deepEqual(f.store.read(),before);assert.equal(Object.keys(f.ciphers()).length,1);assert.equal(f.secret(`account:${account.id}`),saved);
+    await assert.rejects(f.connect([two],account.id),error=>error instanceof LeafletManagementError&&error.code==='identity_mismatch'&&/另一个发布账号/.test(error.message));assert.deepEqual(f.store.read(),before);assert.equal(Object.keys(f.ciphers()).length,1);assert.equal(f.secret(`account:${account.id}`),saved);
   }finally{f.store.close()}
 });
 test('Leaflet failed binding update rolls back the new credential and preserves pending intent',async()=>{
@@ -61,6 +64,12 @@ test('Leaflet hostile connection errors never reach IPC and temporary secrets ar
     await assert.rejects(f.connect(),error=>error instanceof Error&&!error.message.includes('never-echo-me')&&error.message.includes('连接未完成'));assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);
   }finally{f.store.close()}
 });
+test('Leaflet display text cannot impersonate a coded cancellation',async()=>{
+  const f=fixture();try{
+    f.deps.connect=async()=>{throw Error('Leaflet 连接已取消')};
+    await assert.rejects(f.connect(),error=>error instanceof LeafletManagementError&&error.code==='connection_failed'&&error.message.includes('连接未完成'));
+  }finally{f.store.close()}
+});
 test('Leaflet public identity must be the verified DID under the fixed hosting origin',async()=>{
   for(const url of ['https://evil.example.com/p/'+did,'https://leaflet.pub/p/'+otherDid,'https://leaflet.pub/p/'+did+'?x=1']){
     const f=fixture();try{f.deps.connect=async(vault,id)=>{await vault.set(`account:${id}`,'temporary');return {username:'author.bsky.social',did,publicationUrl:url}};await assert.rejects(f.connect());assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);}finally{f.store.close()}
@@ -69,14 +78,14 @@ test('Leaflet public identity must be the verified DID under the fixed hosting o
 test('Leaflet cancellation after credential verification performs no persistent write',async()=>{
   const f=fixture(),abort=new AbortController();try{
     f.deps.signal=abort.signal;f.deps.connect=async(vault,id)=>{await vault.set(`account:${id}`,'temporary-sensitive');abort.abort();return {username:'author.bsky.social',did,publicationUrl:`https://leaflet.pub/p/${did}`}};
-    await assert.rejects(f.connect(),/取消/);assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);
+    await assert.rejects(f.connect(),error=>error instanceof LeafletManagementError&&error.code==='cancelled'&&/取消/.test(error.message));assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);
   }finally{f.store.close()}
 });
 test('Leaflet SQLite cipher failure rolls back account state and the prior credential together',async()=>{
   const f=fixture();try{
     const account=await f.connect(),before=f.store.read(),saved=f.secret('account:'+account.id),setCipher=f.store.setCipher.bind(f.store);
     f.store.setCipher=()=>{throw Error('synthetic cipher failure')};
-    await assert.rejects(f.connect([two],account.id));f.store.setCipher=setCipher;
+    await assert.rejects(f.connect([one],account.id),error=>error instanceof LeafletManagementError&&error.cause instanceof Error&&/synthetic cipher failure/.test(error.cause.message));f.store.setCipher=setCipher;
     assert.deepEqual(f.store.read(),before);assert.equal(f.secret('account:'+account.id),saved);assert.equal(Object.keys(f.ciphers()).length,1);
   }finally{f.store.close()}
 });

@@ -1,3 +1,4 @@
+import {pinPublicationFixtures} from './helpers/publication-snapshot';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Controller } from '../src/main/controller';
@@ -23,7 +24,7 @@ const vault = { available: () => true, get: async () => undefined, set: async ()
 
 test('stopped original Lucid receipt needs explicit manual verification and settles only on exact readback', async () => {
   const store = fixture(); let reads = 0, ai = 0;
-  const controller = new Controller(store, vault, 'fixture', { verifyLucid: async current => { reads++; assert.equal(current.lucid?.stage, 'published'); return { found: true, outcome: 'found', url: publicUrl, rel: 'follow', reason: 'Synthetic exact readback' }; }, aiFactory: (() => { ai++; throw Error('no AI'); }) as never });
+  const controller = new Controller(pinPublicationFixtures(store), vault, 'fixture', { verifyLucid: async current => { reads++; assert.equal(current.lucid?.stage, 'published'); return { found: true, outcome: 'found', url: publicUrl, rel: 'follow', reason: 'Synthetic exact readback' }; }, aiFactory: (() => { ai++; throw Error('no AI'); }) as never });
   try {
     const before = store.read().tasks[0];
     await controller.verify('task');
@@ -44,7 +45,7 @@ test('failed, missing-identity, and stale manual reads preserve the original unc
     if (change === 'wrong-url') store.update(state => { state.tasks[0].publicUrl = 'https://lucid.page/other'; });
     if (change === 'missing-slug') store.update(state => { state.tasks[0].lucid!.slug = undefined; });
     if (change === 'prebound-account') store.update(state => { state.tasks[0].accountId = 'other-account'; });
-    const controller = new Controller(store, vault, 'fixture', { verifyLucid: async () => {
+    const controller = new Controller(pinPublicationFixtures(store), vault, 'fixture', { verifyLucid: async () => {
       reads++;
       if (change === 'stale-draft') store.update(state => { state.tasks[0].draft!.body += ' Concurrent edit.'; });
       return change === 'read-fails' ? { found: false, outcome: 'invalid', url: publicUrl, rel: 'unknown', reason: 'Synthetic mismatch' }
@@ -65,7 +66,7 @@ test('failed, missing-identity, and stale manual reads preserve the original unc
 test('manual readback cannot promote a task whose site, channel, or account changed during verification', async () => {
   for (const change of ['site', 'channel', 'account'] as const) {
     const store = fixture(); let reads = 0;
-    const controller = new Controller(store, vault, 'fixture', { verifyLucid: async () => {
+    const controller = new Controller(pinPublicationFixtures(store), vault, 'fixture', { verifyLucid: async () => {
       reads++;
       store.update(state => {
         const current = state.tasks[0];

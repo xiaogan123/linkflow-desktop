@@ -14,7 +14,7 @@ export function socialDraftError(task:Pick<Task,'draft'|'topicUrl'>,site:Pick<Si
   if(urls.length!==1)return '短内容须保留一个相关正文页面链接，不能堆放多个链接。';
   try {
     const expected=new URL(task.topicUrl??site.url),actual=new URL(urls[0]);
-    if(actual.protocol!=='https:'||actual.username||actual.password||actual.href!==expected.href)return '短内容链接须与本任务核对的正文页面一致。';
+    if(actual.protocol!=='https:'||actual.username||actual.password||actual.href!==expected.href)return '短内容链接须与本任务检查的正文页面一致。';
   }catch{return '短内容链接无效。';}
   return;
 }

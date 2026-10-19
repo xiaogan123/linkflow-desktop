@@ -49,6 +49,8 @@ if(!process.versions.electron){
   const permissionRequests=[];
   ipcMain.handle('linkflow:command',(_event,name,payload)=>{
     if(name==='snapshot')return {ok:true,value:clone(state)};
+    // The renderer acknowledges its first snapshot once; production main replies true.
+    if(name==='app:ready')return {ok:true,value:true};
     if(name==='task:update-draft'){
       const task=state.tasks.find(item=>item.id===payload.id);
       assert(task,'fixture task');
@@ -63,7 +65,8 @@ if(!process.versions.electron){
   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   let win,expectedRenderURL='';
   const {createDraftClipboardHandler}=require(join(dir,'draft-clipboard.cjs'));
-  const draftClipboardHandler=createDraftClipboardHandler({getWindow:()=>win,getRenderURL:()=>expectedRenderURL,getTasks:()=>state.tasks,writeText:value=>{writes.push(value)}});
+  // Same dependencies as src/main/main.ts wires (getSite feeds the main-side referral gate); only writeText is stubbed.
+  const draftClipboardHandler=createDraftClipboardHandler({getWindow:()=>win,getRenderURL:()=>expectedRenderURL,getTasks:()=>state.tasks,getSite:id=>state.sites.find(site=>site.id===id),writeText:value=>{writes.push(value)}});
   ipcMain.handle('linkflow:draft-copy',draftClipboardHandler);
   const evaluate=source=>win.webContents.executeJavaScript(source,true);
   const waitFor=async source=>{
@@ -71,15 +74,16 @@ if(!process.versions.electron){
     while(Date.now()<deadline){if(await evaluate(source))return;await delay(35)}
     throw new Error('UI readiness deadline: '+source);
   };
-  const clickText=async text=>{
-    const point=await evaluate(`(()=>{const button=[...document.querySelectorAll('button')].find(item=>item.innerText.trim()===${JSON.stringify(text)}&&!item.disabled&&item.offsetParent!==null);if(!button)return null;const rect=button.getBoundingClientRect();return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)}})()`);
-    assert(point,'button: '+text);
+  const clickButton=async(finder,label)=>{
+    const point=await evaluate(`(()=>{const button=(${finder})([...document.querySelectorAll('button')].filter(item=>!item.disabled&&item.offsetParent!==null));if(!button)return null;button.scrollIntoView({block:'center',inline:'nearest'});const rect=button.getBoundingClientRect();return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)}})()`);
+    assert(point,'button: '+label);
     win.show();win.focus();await delay(45);
     win.webContents.sendInputEvent({type:'mouseMove',x:point.x,y:point.y});
     win.webContents.sendInputEvent({type:'mouseDown',x:point.x,y:point.y,button:'left',clickCount:1});
     win.webContents.sendInputEvent({type:'mouseUp',x:point.x,y:point.y,button:'left',clickCount:1});
     await delay(60);
   };
+  const clickText=text=>clickButton(`buttons=>buttons.find(item=>item.innerText.trim()===${JSON.stringify(text)})`,text);
   const setField=async(label,value)=>{
     const changed=await evaluate(`(()=>{const labelText=${JSON.stringify(label)};const field=[...document.querySelectorAll('[role=dialog] .field')].find(item=>item.querySelector(':scope > span')?.textContent===labelText);const element=field?.querySelector('input,textarea');if(!element)return false;const proto=element instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(element,${JSON.stringify(value)});element.dispatchEvent(new Event('input',{bubbles:true}));element.dispatchEvent(new Event('change',{bubbles:true}));return element.value===${JSON.stringify(value)}})()`);
     assert(changed,'editable field: '+label);
@@ -146,11 +150,19 @@ if(!process.versions.electron){
     check('writeText maps to clipboard-sanitized-write and the exact production deny callback rejects it',exactPolicyDeniedWrite.writeResult==='rejected'&&exactPolicyDeniedWrite.errorName==='NotAllowedError'&&permissionRequests.some(item=>item.permission==='clipboard-sanitized-write'));
     check('permission probe reached no system clipboard read or write',true);
     await waitFor('document.body.innerText.includes("copy-fixture.example")');
-    await clickText('任务');
-    await waitFor('!!document.querySelector("button[aria-label=\\"\u7f16\u8f91\u7a3f\u4ef6\\"]")');
-    const opened=await evaluate(`(()=>{const button=document.querySelector('button[aria-label="编辑稿件"]');if(!button||button.disabled)return false;button.click();return true})()`);
-    assert(opened,'edit draft button');
+    // The old "任务" list (every active task, each with an edit-draft icon) is gone: the "待办" page now lists only
+    // tasks waiting on the user, and a queued task's draft is edited from its card on the site's "排期" tab.
+    check('no first-run wizard covers the UI when a site already exists',await evaluate('!document.querySelector("[role=dialog]")'));
+    await clickText('网站');
+    await clickText('copy-fixture.example');
+    await waitFor('document.querySelector(".page h1")?.textContent==="copy-fixture.example"');
+    await clickText('排期');
+    await waitFor('document.querySelector("[aria-label=\\"\u7f51\u7ad9\u8be6\u60c5\\"] button[aria-pressed=true]")?.textContent==="\u6392\u671f"');
+    await clickButton(`buttons=>buttons.find(item=>item.matches('.task-card > button.task-summary')&&item.innerText.includes('Manual fixture'))`,'fixture task card');
+    await waitFor('document.querySelector(".task-card > button.task-summary")?.getAttribute("aria-expanded")==="true"');
+    await clickText('编辑稿件');
     await waitFor('document.querySelector("[role=dialog]")?.getAttribute("aria-label")==="编辑投稿草稿"');
+    check('the edit dialog opened the fixture task\'s saved draft',await evaluate(`(()=>{const dialog=document.querySelector('[role=dialog]');const values=[...dialog.querySelectorAll('.field input,.field textarea')].map(item=>item.value);return JSON.stringify(values)===${JSON.stringify(JSON.stringify(['Saved title','Saved summary','Saved body']))}})()`));
 
     const edited={title:'Edited title · current',description:'Edited summary · current',body:'Edited body line 1\nEdited body line 2 · current'};
     await setField('标题',edited.title);
@@ -176,6 +188,8 @@ if(!process.versions.electron){
     check('a remote frame is rejected by the production handler without a write',remoteFrameResult.ok===false&&writes.length===beforeDenied);
     const unknownSenderResult=await draftClipboardHandler({sender:{},senderFrame:win.webContents.mainFrame},{id:'11111111-1111-4111-8111-111111111111',field:'title',value:'unknown sender'});
     check('an unknown sender is rejected by the production handler without a write',unknownSenderResult.ok===false&&writes.length===beforeDenied);
+    const referralResult=await draftClipboardHandler({sender:win.webContents,senderFrame:win.webContents.mainFrame},{id:'11111111-1111-4111-8111-111111111111',field:'body',value:'Sign up at https://exchange.example/register?ref=ABCD1234'});
+    check('the production handler refuses referral information from the trusted frame without a write',referralResult.ok===false&&referralResult.reasonCode==='referral_blocked'&&writes.length===beforeDenied);
     await capture('draft-copy.png');
     writeEvidence({passed:true,clipboardMode:'production preload copyDraft -> production draft clipboard handler -> injected final OS-write stub',finalProductionBoundary:'electron.clipboard.writeText',stubScope:'only the final OS clipboard writer dependency',nativeOsClipboard:false,systemClipboardRead:false,systemClipboardWritten:false,permissionProbe:'permission-probe.json',viewport:{width:1180,height:780},checks,writes});
     console.log(`DRAFT COPY UI PASSED: ${checks.length} checks; only final OS clipboard boundary stubbed`);

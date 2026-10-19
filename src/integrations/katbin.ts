@@ -56,9 +56,9 @@ async function bounded(response:Response,signal:AbortSignal):Promise<Uint8Array>
 function opaqueFrom(response:Response,bytes:Uint8Array,intent:KatbinIntent):KatbinOpaqueResponse{return {...intent,version:1,kind:'katbin_opaque_response',status:response.status,contentType:response.headers.get('content-type')??'',responseUrl:response.url,redirected:response.redirected,responseType:response.type,bodyBase64:Buffer.from(bytes).toString('base64'),bodySha256:katbinHash(bytes)}}
 
 export async function createKatbinPaste(input:{operationId:string;content:string;reviewed:true},persistence:KatbinPersistence,deps:KatbinDependencies={}):Promise<KatbinCreateResult>{
-  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Katbin 缺少已审核的单次发布身份');
+  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Katbin 缺少已审核的单次发布编号');
   const request=katbinRequest(input.content);if(!input.content||input.content!==input.content.trim()||Buffer.byteLength(input.content,'utf8')>MAX_CONTENT||Buffer.byteLength(request.body)>MAX_CONTENT+512)return {status:'not_started',reason:'invalid_content'};
-  const intent:KatbinIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validKatbinIntent(intent))throw Error('Katbin 发布身份无效');
+  const intent:KatbinIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validKatbinIntent(intent))throw Error('Katbin 提交信息无效');
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}
   try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   const controller=new AbortController(),external=()=>controller.abort();deps.signal?.addEventListener('abort',external,{once:true});if(deps.signal?.aborted)controller.abort();const timeout=Math.min(60_000,Math.max(50,deps.timeoutMs??25_000)),timer=setTimeout(()=>controller.abort(),timeout);timer.unref?.();let response:Response|undefined;

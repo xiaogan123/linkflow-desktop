@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["Controller default registry performs GET token + one POST + four verification GETs, then backup validates"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});});
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';

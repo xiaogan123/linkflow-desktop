@@ -78,12 +78,12 @@ function validEditToken(value: string): boolean {
 }
 
 function expectedPublicUrl(id: string): string {
-  if (!validPublicId(id)) throw Error('Docs MD 公开文章身份无效');
+  if (!validPublicId(id)) throw Error('Docs MD 公开文章标识无效');
   return `${ORIGIN}/${id}`;
 }
 
 function expectedRawUrl(id: string): string {
-  if (!validPublicId(id)) throw Error('Docs MD 原文身份无效');
+  if (!validPublicId(id)) throw Error('Docs MD 原文标识无效');
   return `${ORIGIN}/raw/${id}`;
 }
 
@@ -186,18 +186,18 @@ function assertStoredIntent(task: Task, expected: DocsMdIntent): NonNullable<Tas
     || saved.createdAt !== expected.createdAt || !validIntent(saved)
     || !['submitting', 'api_receipt'].includes(saved.stage)
     || task.submittedAt !== saved.createdAt || task.status !== 'review' || task.health !== 'pending') {
-    throw Error('Docs MD 提交意图与原任务不一致');
+    throw Error('Docs MD 提交信息与原任务不一致');
   }
   if (saved.stage === 'submitting') {
     if (saved.id || task.publicUrl || task.checkpoint !== 'docs_md_share_submitting') {
-      throw Error('Docs MD 提交意图阶段无效');
+      throw Error('Docs MD 提交信息阶段无效');
     }
   } else if (!saved.id || task.publicUrl !== expectedPublicUrl(saved.id)
     || task.checkpoint !== 'docs_md_api_receipt') {
-    throw Error('Docs MD API 回执阶段无效');
+    throw Error('Docs MD 平台返回记录阶段无效');
   }
   if (hasForbiddenPendingLifecycleState(task)) {
-    throw Error('Docs MD API 回执不能标记为公开验收通过');
+    throw Error('Docs MD 平台返回记录不能标记为公开验收通过');
   }
   return saved;
 }
@@ -240,14 +240,14 @@ export function createDocsMdPublicationPersistence(
   const authorize = options.assertSubmissionAuthorized;
   const now = options.now;
   let claimedIntent = options.expectedIntent ? { ...options.expectedIntent } : undefined;
-  if (claimedIntent && !validIntent(claimedIntent)) throw Error('Docs MD 恢复意图无效');
+  if (claimedIntent && !validIntent(claimedIntent)) throw Error('Docs MD 恢复提交信息无效');
   const updatedAt = () => (now?.() ?? new Date()).toISOString();
 
   return {
     async persistIntent(intent) {
-      if (claimedIntent) throw Error('Docs MD 恢复上下文禁止创建新提交意图');
+      if (claimedIntent) throw Error('Docs MD 恢复上下文禁止创建新提交信息');
       const proposed = { ...intent };
-      if (!validIntent(proposed)) throw Error('Docs MD 提交意图无效');
+      if (!validIntent(proposed)) throw Error('Docs MD 提交信息无效');
       store.update(state => {
         const { task, site } = currentBinding(state, taskId, siteId, proposed);
         assertBackupCompatibleDraft(task);
@@ -267,7 +267,7 @@ export function createDocsMdPublicationPersistence(
         task.status = 'review';
         task.health = 'pending';
         task.updatedAt = updatedAt();
-        task.message = 'Docs MD 提交意图已保存；结果未核清前不会重发。';
+        task.message = 'Docs MD 提交信息已保存；结果未核清前不会重发。';
       });
       claimedIntent = proposed;
     },
@@ -278,20 +278,20 @@ export function createDocsMdPublicationPersistence(
         || returned.publicUrl !== expectedPublicUrl(returned.id)
         || returned.rawUrl !== expectedRawUrl(returned.id) || returned.expiresAt !== 0
         || !HASH.test(returned.sourceHash) || !HASH.test(returned.requestHash)) {
-        throw Error('Docs MD API 回执无效');
+        throw Error('Docs MD 平台返回记录无效');
       }
       const expected = claimedIntent && { ...claimedIntent };
       if (!expected || returned.operationId !== expected.operationId
         || returned.sourceHash !== expected.sourceHash
         || returned.requestHash !== expected.requestHash) {
-        throw Error('Docs MD API 回执缺少原提交意图');
+        throw Error('Docs MD 平台返回记录缺少原提交信息');
       }
       store.update(state => {
         const { task } = currentBinding(state, taskId, siteId, expected);
         const saved = assertStoredIntent(task, expected);
         if (saved.stage === 'api_receipt') {
           if (saved.id !== returned.id || task.publicUrl !== returned.publicUrl) {
-            throw Error('Docs MD API 回执不能更换文章身份');
+            throw Error('Docs MD 平台返回记录不能更换文章标识');
           }
           return;
         }
@@ -301,7 +301,7 @@ export function createDocsMdPublicationPersistence(
         task.status = 'review';
         task.health = 'pending';
         task.updatedAt = updatedAt();
-        task.message = 'Docs MD API 回执已保存；公开 HTML 尚未验收，不计为有效来源。';
+        task.message = 'Docs MD 平台返回记录已保存；公开页尚未验收，不计为有效来源。';
       });
     },
 
@@ -309,19 +309,19 @@ export function createDocsMdPublicationPersistence(
       const returned = { ...secret };
       if (!OPERATION_ID.test(returned.operationId) || !validPublicId(returned.id)
         || !validEditToken(returned.editToken)) {
-        throw Error('Docs MD 编辑凭据无效');
+        throw Error('Docs MD 编辑密钥无效');
       }
       const expected = claimedIntent && { ...claimedIntent };
       if (!expected || returned.operationId !== expected.operationId) {
-        throw Error('Docs MD 编辑凭据缺少原提交意图');
+        throw Error('Docs MD 编辑密钥缺少原提交记录');
       }
       const key = `publication:${taskId}`;
-      if (store.getCipher(key)) throw Error('Docs MD 编辑凭据已经保存，禁止替换');
+      if (store.getCipher(key)) throw Error('Docs MD 编辑密钥已经保存，禁止替换');
       const before = store.read();
       const { task } = currentBinding(before, taskId, siteId, expected);
       const receipt = assertStoredIntent(task, expected);
       if (receipt.stage !== 'api_receipt' || receipt.id !== returned.id) {
-        throw Error('Docs MD 编辑凭据缺少匹配的 API 回执');
+        throw Error('Docs MD 编辑密钥缺少匹配的平台返回记录');
       }
       const publicUrl = expectedPublicUrl(returned.id);
       const serialized = JSON.stringify({
@@ -334,25 +334,25 @@ export function createDocsMdPublicationPersistence(
         requestHash: expected.requestHash,
         editToken: returned.editToken,
       } satisfies SerializedDocsMdSecret);
-      if (serialized.length > 16_384) throw Error('Docs MD 编辑凭据超出可备份范围');
+      if (serialized.length > 16_384) throw Error('Docs MD 编辑密钥超出可备份范围');
       let ciphers: Record<string, string>;
       try {
         ciphers = vault.encryptSecrets({ [key]: serialized });
       } catch {
-        throw Error('Docs MD 编辑凭据未能加密');
+        throw Error('Docs MD 编辑密钥未能加密');
       }
       if (typeof ciphers[key] !== 'string' || !ciphers[key] || ciphers[key] === serialized) {
-        throw Error('Docs MD 编辑凭据未能加密');
+        throw Error('Docs MD 编辑密钥未能加密');
       }
       store.updateWithCiphers(state => {
         // updateWithCiphers is synchronous. Recheck immediately before its
         // state+cipher transaction so a late same-process value cannot be replaced.
-        if (store.getCipher(key)) throw Error('Docs MD 编辑凭据已经保存，禁止替换');
+        if (store.getCipher(key)) throw Error('Docs MD 编辑密钥已经保存，禁止替换');
         const { task: current } = currentBinding(state, taskId, siteId, expected);
         const stored = assertStoredIntent(current, expected);
         if (stored.stage !== 'api_receipt' || stored.id !== returned.id
           || current.publicUrl !== publicUrl) {
-          throw Error('Docs MD 编辑凭据与 API 回执不一致');
+          throw Error('Docs MD 编辑密钥与平台返回记录不一致');
         }
       }, { [key]: ciphers[key] });
     },

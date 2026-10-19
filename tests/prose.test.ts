@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test,{beforeEach,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {marked} from 'marked';
@@ -7,7 +7,7 @@ import {ProseTransportError,type ExpectedProseIdentity,type ProseCredentials,typ
 import {validateBackup} from '../src/main/backup-validation';
 import {Controller} from '../src/main/controller';
 import {articleContentHash,articleContextHash} from '../src/main/article-review';
-import {recoverInterrupted} from '../src/main/planner';
+import {claimPublicationExecution,nextTask,publicationExecutionAt,recoverInterrupted} from '../src/main/planner';
 import {hasExternalAttempt} from '../src/main/task-recovery';
 import {saveTaskDraft} from '../src/main/task-draft';
 import {applySiteUpdate} from '../src/main/site-service';
@@ -17,6 +17,8 @@ import type {Account,Channel,ExecutionContext,ProseReceipt,Site,Task} from '../s
 import type {Vault} from '../src/main/vault';
 
 const NOW='2026-10-09T02:00:00.000Z';
+const CONTROLLER_NOW=Date.parse(NOW)+17*60000;
+beforeEach(t=>(t as TestContext).mock.timers.enable({apis:['Date'],now:CONTROLLER_NOW}));
 const SITE_ID='11111111-1111-4111-8111-111111111111';
 const TASK_ID='22222222-2222-4222-8222-222222222222';
 const ACCOUNT_ID='33333333-3333-4333-8333-333333333333';
@@ -65,7 +67,7 @@ function publicFetch(html=page(),status=200,headers:Record<string,string>={}):{f
 test('fresh publish persists the stable identity, filename and exact source hash before the only write',async()=>{
   const f=fixture(),transport=new MemoryTransport(),web=publicFetch();
   const originalWrite=transport.writeSource.bind(transport);
-  transport.writeSource=async(...args)=>{assert.equal(f.task.checkpoint,'prose_publish_submitting');assert.equal(f.task.submittedAt,NOW);assert.equal(f.task.prose?.filename,`lf-${TASK_ID.replaceAll('-','')}.md`);assert.equal(f.task.prose?.sourceHash,approvedProseArticle(f.task,f.site.url,false).sourceHash);return originalWrite(...args)};
+  transport.writeSource=async(...args)=>{assert.equal(f.task.checkpoint,'prose_publish_submitting');assert.equal(f.task.submittedAt,NOW);assert.equal(f.task.prose?.filename,approvedProseArticle(f.task,f.site.url,false,f.site).filename);assert.doesNotMatch(f.task.prose!.filename,/linkflow|^lf-/i);assert.equal(f.task.prose?.sourceHash,approvedProseArticle(f.task,f.site.url,false,f.site).sourceHash);return originalWrite(...args)};
   const result=await runProseTask(f.context,{transport,fetch:web.fetch,now:()=>new Date(NOW)});
   assert.equal(result.prose?.stage,'published');assert.equal(result.checkpoint,'prose_published');assert.equal(transport.writes,1);assert.equal(f.checkpoints.length,2);
   assert.equal(web.calls[0].init.redirect,'manual');assert.equal((web.calls[0].init.headers as Record<string,string>).authorization,undefined);assert.ok(!JSON.stringify(result).includes(RAW_KEY));
@@ -73,8 +75,8 @@ test('fresh publish persists the stable identity, filename and exact source hash
 
 test('real Controller accepts a valid independent AI approval without adding a manual approval timestamp',async()=>{
   const f=fixture(),store=new Store(':memory:'),entry=channel();f.site.category='content';f.site.articleReviewMode='ai';delete f.task.articleApprovedAt;f.task.status='running';
-  const state=emptyState();state.settings.autoRun=true;state.settings.articleReviewMode='ai';state.settings.channelOverrides={prose:true};state.sites=[f.site];state.accounts=[f.account()];state.accountBindings=[{id:BINDING_ID,siteId:SITE_ID,channelId:'prose',accountId:ACCOUNT_ID,createdAt:NOW,updatedAt:NOW}];
-  f.task.articleReview={status:'passed',reason:'synthetic independent review',reasonCode:'passed',reviewedAt:NOW,evidenceUrls:[f.site.url,entry.rulesUrl],draftRevision:f.task.draftRevision??0,contentHash:articleContentHash(f.task),contextHash:articleContextHash(f.site,entry,state.settings,f.account())};state.tasks=[f.task];store.update(current=>Object.assign(current,state));
+  const state=emptyState();state.settings.timezone='Asia/Singapore';state.settings.autoRun=true;state.settings.articleReviewMode='ai';state.settings.channelOverrides={prose:true};state.sites=[f.site];state.accounts=[f.account()];state.accountBindings=[{id:BINDING_ID,siteId:SITE_ID,channelId:'prose',accountId:ACCOUNT_ID,createdAt:NOW,updatedAt:NOW}];
+  f.task.articleReview={status:'passed',reason:'synthetic independent review',reasonCode:'passed',reviewedAt:NOW,evidenceUrls:[f.site.url,entry.rulesUrl],draftRevision:f.task.draftRevision??0,contentHash:articleContentHash(f.task),contextHash:articleContextHash(f.site,entry,state.settings,f.account(),4)};state.tasks=[f.task];store.update(current=>Object.assign(current,state));
   const secret=f.secrets.get(`account:${ACCOUNT_ID}`),vault={ready:true,available:()=>true,get:async(key:string)=>key===`account:${ACCOUNT_ID}`?secret:undefined,set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault;
   const catalogIndex=CHANNELS.findIndex(item=>item.id==='prose'),catalogEntry=catalogIndex>=0?CHANNELS[catalogIndex]:undefined;if(catalogIndex>=0)CHANNELS[catalogIndex]=entry;else CHANNELS.push(entry);try{
     const controller=new Controller(store,vault,'fixture');store.update(current=>{current.tasks[0].status='running'});const stored=store.read().tasks[0];assert.equal(stored.articleApprovedAt,undefined);
@@ -84,20 +86,63 @@ test('real Controller accepts a valid independent AI approval without adding a m
   }finally{if(catalogEntry)CHANNELS[catalogIndex]=catalogEntry;else CHANNELS.splice(CHANNELS.lastIndexOf(entry),1);store.close()}
 });
 
+test('Prose Controller honors the real publication gate at fixed Singapore clock boundaries',async t=>{
+  const cases=[
+    {local:'08:59',at:'2026-10-12T00:59:00.000Z',next:'2026-10-12T01:01:00.000Z',allowed:false},
+    {local:'09:00',at:'2026-10-12T01:00:00.000Z',next:'2026-10-12T01:01:00.000Z',allowed:false},
+    {local:'19:00',at:'2026-10-12T11:00:00.000Z',next:'2026-10-12T11:01:00.000Z',allowed:false},
+    {local:'22:59',at:'2026-10-12T14:59:00.000Z',next:'2026-10-12T14:59:00.000Z',allowed:true},
+    {local:'23:00',at:'2026-10-12T15:00:00.000Z',next:'2026-10-13T01:01:00.000Z',allowed:false},
+    {local:'00:30',at:'2026-10-11T16:30:00.000Z',next:'2026-10-12T01:01:00.000Z',allowed:false},
+  ];
+  for(const sample of cases){
+    t.mock.timers.setTime(Date.parse(sample.at));
+    const f=fixture({task:{status:'queued',scheduledAt:'2026-10-09T00:00:00.000Z',attempts:0}}),state=emptyState();
+    state.settings.timezone='Asia/Singapore';state.settings.autoRun=true;state.sites=[f.site];state.tasks=[f.task];
+    const controllerState=structuredClone(state);
+    assert.equal(publicationExecutionAt(state,f.task).toISOString(),sample.next,sample.local);
+    assert.equal(nextTask(state)?.id===f.task.id,sample.allowed,sample.local);
+    assert.equal(claimPublicationExecution(state,f.task,new Date(),()=>0),sample.allowed,sample.local);
+    assert.equal(f.task.scheduling?.attemptedAt,sample.allowed?sample.at:undefined,sample.local);
+    const store=new Store(':memory:'),entry=channel();let writes=0;
+    controllerState.settings.articleReviewMode='manual';controllerState.settings.channelOverrides={prose:true};
+    controllerState.sites[0].articleReviewMode='manual';controllerState.sites[0].analyzedAt=sample.at;controllerState.sites[0].topicsCheckedAt=sample.at;controllerState.sites[0].topics=[{url:TARGET,discoveredAt:NOW}];
+    controllerState.tasks[0].scheduledAt=new Date(Date.now()-60_000).toISOString();
+    controllerState.accounts=[f.account()];controllerState.accountBindings=[{id:BINDING_ID,siteId:SITE_ID,channelId:'prose',accountId:ACCOUNT_ID,createdAt:NOW,updatedAt:NOW}];
+    store.update(current=>Object.assign(current,controllerState));
+    const vault={ready:true,available:()=>true,get:async()=>f.secrets.get(`account:${ACCOUNT_ID}`),set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault;
+    const controller=new Controller(store,vault,'fixture',{channelCatalog:[entry],executeTask:async()=>{writes++;return {status:'review',message:'fixture'}}});controller.runtime.aiReady=true;
+    try{
+      await controller.tick();assert.equal(writes,sample.allowed?1:0,sample.local);
+      if(!sample.allowed){
+        assert.equal(store.read().tasks[0].submittedAt,undefined,sample.local);
+        t.mock.timers.setTime(Date.parse(sample.next));await controller.tick();
+        if(writes===0){
+          const deferred=store.read().tasks[0];assert.equal(deferred.status,'queued',sample.local);
+          assert.ok(Date.parse(deferred.scheduledAt)>Date.parse(sample.next),sample.local);
+          t.mock.timers.setTime(Date.parse(deferred.scheduledAt));await controller.tick();
+        }
+        assert.equal(writes,1,sample.local);
+      }
+      await controller.tick();assert.equal(writes,1,sample.local);
+    }finally{controller.stop();store.close()}
+  }
+});
+
 test('an identical remote source is adopted only after complete public title, body and every link match',async()=>{
-  const f=fixture(),transport=new MemoryTransport(),article=approvedProseArticle(f.task,f.site.url),web=publicFetch();transport.remote.set(article.filename,article.source);
+  const f=fixture(),transport=new MemoryTransport(),article=approvedProseArticle(f.task,f.site.url,true,f.site),web=publicFetch();transport.remote.set(article.filename,article.source);
   const result=await runProseTask(f.context,{transport,fetch:web.fetch,now:()=>new Date(NOW)});
   assert.equal(result.prose?.stage,'published');assert.equal(transport.writes,0);
   for(const html of [page(BODY,'Wrong title'),page(BODY,TITLE,'<style>h1{display:none}</style>'),page(BODY.replace(OTHER,'https://other.example/')),page('Short text',TITLE,'',String(marked.parse(BODY)))]){
-    const bad=fixture();const t=new MemoryTransport(),a=approvedProseArticle(bad.task,bad.site.url);t.remote.set(a.filename,a.source);
+    const bad=fixture();const t=new MemoryTransport(),a=approvedProseArticle(bad.task,bad.site.url,true,bad.site);t.remote.set(a.filename,a.source);
     const held=await runProseTask(bad.context,{transport:t,fetch:publicFetch(html).fetch,now:()=>new Date(NOW)});assert.equal(held.publicUrl,undefined);assert.equal(t.writes,0);
   }
-  const withHeading=fixture();withHeading.task.draft!.body+=`\n\n# Additional verification steps\n\nKeep the source date and unresolved questions visible.`;const headingTransport=new MemoryTransport(),headingArticle=approvedProseArticle(withHeading.task,withHeading.site.url);headingTransport.remote.set(headingArticle.filename,headingArticle.source);
+  const withHeading=fixture();withHeading.task.draft!.body+=`\n\n# Additional verification steps\n\nKeep the source date and unresolved questions visible.`;const headingTransport=new MemoryTransport(),headingArticle=approvedProseArticle(withHeading.task,withHeading.site.url,true,withHeading.site);headingTransport.remote.set(headingArticle.filename,headingArticle.source);
   const adopted=await runProseTask(withHeading.context,{transport:headingTransport,fetch:publicFetch(page(withHeading.task.draft!.body)).fetch,now:()=>new Date(NOW)});assert.equal(adopted.prose?.stage,'published');assert.equal(headingTransport.writes,0);
 });
 
 test('a different source under the stable filename is a collision and is never overwritten',async()=>{
-  const f=fixture(),transport=new MemoryTransport(),article=approvedProseArticle(f.task,f.site.url);transport.remote.set(article.filename,'different remote source');
+  const f=fixture(),transport=new MemoryTransport(),article=approvedProseArticle(f.task,f.site.url,true,f.site);transport.remote.set(article.filename,'different remote source');
   const result=await runProseTask(f.context,{transport,fetch:publicFetch().fetch,now:()=>new Date(NOW)});
   assert.equal(result.status,'needs_input');assert.match(result.message,/不会覆盖/);assert.equal(transport.writes,0);assert.equal(transport.remote.get(article.filename),'different remote source');
 });
@@ -189,7 +234,7 @@ test('stored credentials fit the existing backup secret limit and malformed rece
 });
 
 test('an imported receipt without submittedAt preserves its draft and topic and can never republish',async()=>{
-  const f=fixture(),article=approvedProseArticle(f.task,f.site.url),receipt:ProseReceipt={username:USER,platformUserId:IDENTITY.id,keyFingerprint:IDENTITY.keyFingerprint,filename:article.filename,sourceHash:article.sourceHash,stage:'submitting'};
+  const f=fixture(),article=approvedProseArticle(f.task,f.site.url,true,f.site),receipt:ProseReceipt={username:USER,platformUserId:IDENTITY.id,keyFingerprint:IDENTITY.keyFingerprint,filename:article.filename,sourceHash:article.sourceHash,stage:'submitting'};
   const state=emptyState();state.sites.push(f.site);state.accounts.push(f.account());state.accountBindings.push({id:BINDING_ID,siteId:SITE_ID,channelId:'prose',accountId:ACCOUNT_ID,createdAt:NOW,updatedAt:NOW});state.tasks.push({...f.task,status:'needs_input',checkpoint:'prose_publish_submitting',prose:receipt,submittedAt:undefined});
   const restored=validateBackup({state,secrets:{[`account:${ACCOUNT_ID}`]:f.secrets.get(`account:${ACCOUNT_ID}`)!}}).state,task=restored.tasks[0];
   assert.deepEqual(task.draft,f.task.draft);assert.equal(task.topicUrl,TARGET);assert.equal(task.submittedAt,undefined);assert.equal(hasExternalAttempt(task),true);assert.ok(!JSON.stringify(restored).includes(RAW_KEY));
@@ -198,7 +243,7 @@ test('an imported receipt without submittedAt preserves its draft and topic and 
 });
 
 test('receipt-only imported Prose work cannot be rewritten by draft or site edit paths',()=>{
-  const f=fixture(),article=approvedProseArticle(f.task,f.site.url),receipt:ProseReceipt={username:USER,platformUserId:IDENTITY.id,keyFingerprint:IDENTITY.keyFingerprint,filename:article.filename,sourceHash:article.sourceHash,stage:'submitting'};
+  const f=fixture(),article=approvedProseArticle(f.task,f.site.url,true,f.site),receipt:ProseReceipt={username:USER,platformUserId:IDENTITY.id,keyFingerprint:IDENTITY.keyFingerprint,filename:article.filename,sourceHash:article.sourceHash,stage:'submitting'};
   const state=emptyState();state.sites=[f.site];state.tasks=[{...f.task,status:'needs_input',checkpoint:'prose_publish_submitting',prose:receipt,submittedAt:undefined}];const before=structuredClone(state.tasks[0]);
   assert.throws(()=>saveTaskDraft(state,TASK_ID,{...before.draft!,body:before.draft!.body+' replacement'}),/远程发布记录/);
   applySiteUpdate(state,{id:SITE_ID,name:'Changed site name'},new Date(NOW));

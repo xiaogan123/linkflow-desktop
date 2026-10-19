@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {Store} from '../src/main/store';
+import {validateBackup} from '../src/main/backup-validation';
+import {applySiteOriginMigration} from '../src/main/site-origin-migration';
+import {buildArticleEvidenceSnapshot} from '../src/main/article-evidence';
+const siteId='11111111-1111-4111-8111-111111111111',recoveryId='33333333-3333-4333-8333-333333333333';
+const oldRoot='https://old.example.com',newRoot='https://new.example.com',at='2026-10-17T04:00:00.000Z';
+const site:any={id:siteId,domain:'old.example.com',url:oldRoot,email:'owner@example.com',name:'Synthetic Guides',description:'Independent synthetic guides',category:'content',language:'en',monthlyTarget:2,status:'paused',createdAt:'2026-09-01T00:00:00.000Z',topics:[{url:oldRoot+'/guides/recover',discoveredAt:'2026-10-01T00:00:00.000Z'}]};
+test('changing the domain drops the old-domain evidence of the recovery task so backups keep restoring',()=>{
+  const snapshot=buildArticleEvidenceSnapshot(site,{url:oldRoot+'/guides/recover',text:'The waiting period is 30 days. These conditions apply only to the documented process.'} as any,[{url:oldRoot,kind:'site',text:'Synthetic source material.'}] as any,new Date(at));
+  const task:any={id:recoveryId,siteId,channelId:'nostr',sourceDomain:'synthetic.example.net',status:'failed',createdAt:at,scheduledAt:at,updatedAt:at,attempts:3,message:'x',topicUrl:oldRoot+'/guides/recover',evidenceSnapshot:snapshot,checkpoint:'invalid_topic',cost:{aiCalls:2}};
+  const store=new Store(':memory:');
+  store.update(state=>{state.sites=[structuredClone(site)];state.tasks=[task]});
+  validateBackup({state:store.read(),secrets:{}});
+  store.update(state=>{applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true,recoveryTaskId:recoveryId,resumeStatus:'ready'} as any,new Date(at))});
+  const t=store.read().tasks[0];
+  assert.equal(t.topicUrl,newRoot+'/guides/recover');assert.equal(t.evidenceSnapshot,undefined);
+  assert.doesNotThrow(()=>validateBackup(structuredClone({state:store.read(),secrets:{}})));
+  store.close();
+});

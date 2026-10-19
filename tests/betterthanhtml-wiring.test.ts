@@ -1,3 +1,4 @@
+import {pinPublicationFixtures} from './helpers/publication-snapshot';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store,emptyState} from '../src/main/store';
@@ -11,7 +12,7 @@ import {CHANNELS} from '../src/integrations/catalog';
 import type {Channel,ExecutionContext,Site,Task} from '../src/shared/types';
 import type {Vault} from '../src/main/vault';
 
-const stamp='2026-10-08T00:00:00.000Z';
+const stamp='2026-10-08T12:34:00.000Z';
 const firstSiteId='11111111-1111-4111-8111-111111111111';
 const secondSiteId='22222222-2222-4222-8222-222222222222';
 const taskId='33333333-3333-4333-8333-333333333333';
@@ -43,13 +44,14 @@ test('manual result intake only accepts the exact URL already confirmed by the o
   assert.equal(isConfirmedBetterThanHtmlResultUrl({...confirmed,betterthanhtml:{contentHash,id:'../other',stage:'published'},publicUrl:'https://betterthanhtml.com/other'},'https://betterthanhtml.com/other'),false);
 });
 
-test('Controller accepts the durable three-checkpoint sequence without Vault access and verifies the same page',async()=>enabled(async()=>{
+test('Controller accepts the durable three-checkpoint sequence without Vault access and verifies the same page',async t=>enabled(async()=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse(stamp)});
   const store=new Store(':memory:'),siteValue=site(),taskValue=task(siteValue),vault=unavailableVault(),seen:Array<Pick<Task,'checkpoint'|'betterthanhtml'|'publicUrl'>>=[];
   store.update(state=>configure(state,siteValue,taskValue));let verified=0;
-  const controller=new Controller(store,vault.value,'fixture',{executeTask:async context=>{
+  const controller=new Controller(pinPublicationFixtures(store),vault.value,'fixture',{executeTask:async context=>{
     assert.equal(context.getAccount(),undefined);const submittedAt=new Date().toISOString();
     context.checkpoint({betterthanhtml:{contentHash,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt});seen.push(store.read().tasks[0]);
-    assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash,id:'../bad',stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt,publicUrl}),/回执/);
+    assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash,id:'../bad',stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt,publicUrl}),/发布记录与原作者或文章标识不一致/);
     context.checkpoint({betterthanhtml:{contentHash,id:remoteId,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt,publicUrl});seen.push(store.read().tasks[0]);
     context.checkpoint({betterthanhtml:{contentHash,id:remoteId,stage:'published'},checkpoint:'betterthanhtml_published',submittedAt,publicUrl});seen.push(store.read().tasks[0]);
     return {status:'review',message:'published fixture',checkpoint:'betterthanhtml_published',submittedAt,publicUrl,betterthanhtml:{contentHash,id:remoteId,stage:'published'}};
@@ -62,12 +64,13 @@ test('Controller accepts the durable three-checkpoint sequence without Vault acc
   ]);assert.equal(verified,1);assert.equal(saved.status,'live');assert.equal(saved.betterthanhtml?.stage,'published');assert.equal(saved.publicUrl,publicUrl);assert.equal(saved.accountId,undefined);assert.equal(vault.calls(),0)}finally{store.close()}
 }));
 
-test('a positive late receipt survives pause, while changed hashes, IDs, and URLs are rejected',async()=>enabled(async()=>{
+test('a positive late receipt survives pause, while changed hashes, IDs, and URLs are rejected',async t=>enabled(async()=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse(stamp)});
   const store=new Store(':memory:'),siteValue=site(),taskValue=task(siteValue),vault=unavailableVault();store.update(state=>configure(state,siteValue,taskValue));let controller:Controller;
-  controller=new Controller(store,vault.value,'fixture',{executeTask:async context=>{const submittedAt=new Date().toISOString();context.checkpoint({betterthanhtml:{contentHash,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt});controller.pause();
-    assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash:'b'.repeat(64),id:remoteId,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt,publicUrl}),/回执/);
+  controller=new Controller(pinPublicationFixtures(store),vault.value,'fixture',{executeTask:async context=>{const submittedAt=new Date().toISOString();context.checkpoint({betterthanhtml:{contentHash,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt});controller.pause();
+    assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash:'b'.repeat(64),id:remoteId,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt,publicUrl}),/发布记录与原作者或文章标识不一致/);
     context.checkpoint({betterthanhtml:{contentHash,id:remoteId,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt,publicUrl});
-    assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash,id:'other',stage:'published'},checkpoint:'betterthanhtml_published',submittedAt,publicUrl}),/回执/);
+    assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash,id:'other',stage:'published'},checkpoint:'betterthanhtml_published',submittedAt,publicUrl}),/发布记录与原作者或文章标识不一致/);
     context.checkpoint({betterthanhtml:{contentHash,id:remoteId,stage:'published'},checkpoint:'betterthanhtml_published',submittedAt,publicUrl});return {status:'review',message:'late receipt'};}});controller.runtime.aiReady=true;
   try{await controller.tick();const saved=store.read().tasks[0];assert.equal(saved.status,'needs_input');assert.equal(saved.betterthanhtml?.stage,'published');assert.equal(saved.publicUrl,publicUrl);assert.equal(store.read().settings.autoRun,false);assert.equal(vault.calls(),0)}finally{store.close()}
 }));
@@ -75,7 +78,7 @@ test('a positive late receipt survives pause, while changed hashes, IDs, and URL
 test('an interrupted receipt is GET-only recovery work and can never return to the publishing queue',async()=>enabled(async()=>{
   const siteValue=site(),pending=task(siteValue,{status:'running',submittedAt:stamp,checkpoint:'betterthanhtml_publish_submitting',publicUrl,betterthanhtml:{contentHash,id:remoteId,stage:'submitting'}}),state=emptyState();configure(state,siteValue,pending);recoverInterrupted(state,new Date(Date.parse(stamp)+3600000));assert.equal(state.tasks[0].status,'needs_input');assert.equal(nextTask(state,new Date(Date.parse(stamp)+3600000),[{...channel(),enabled:true}]),undefined);
   const store=new Store(':memory:');store.update(current=>Object.assign(current,state));const vault=unavailableVault();let reads=0,writes=0,verified=0;
-  const controller=new Controller(store,vault.value,'fixture',{reconcileBetterThanHtml:async()=>{reads++;return {status:'found',publicUrl,betterthanhtml:{contentHash,id:remoteId,stage:'published'}}},verifyBetterThanHtml:async()=>{verified++;return {found:true,outcome:'found',url:publicUrl,rel:'nofollow ugc',reason:'matched'}},executeTask:async()=>{writes++;return {status:'failed',message:'unexpected write'}}});controller.runtime.aiReady=true;
+  const controller=new Controller(pinPublicationFixtures(store),vault.value,'fixture',{reconcileBetterThanHtml:async()=>{reads++;return {status:'found',publicUrl,betterthanhtml:{contentHash,id:remoteId,stage:'published'}}},verifyBetterThanHtml:async()=>{verified++;return {found:true,outcome:'found',url:publicUrl,rel:'nofollow ugc',reason:'matched'}},executeTask:async()=>{writes++;return {status:'failed',message:'unexpected write'}}});controller.runtime.aiReady=true;
   try{await controller.tick();const saved=store.read().tasks[0];assert.equal(reads,1);assert.equal(writes,0);assert.equal(verified,1);assert.equal(saved.status,'live');assert.equal(saved.betterthanhtml?.stage,'published');assert.equal(vault.calls(),0)}finally{store.close()}
 }));
 
@@ -96,7 +99,7 @@ test('Controller recovers a no-ID Better Than HTML intent through the real GET-o
       throw Error(`unexpected request: ${url}`);
     };
     store.update(state=>configure(state,siteValue,pending));let identifiedBeforeFound=false,verified=0,writes=0;
-    const controller=new Controller(store,vault.value,'fixture',{
+    const controller=new Controller(pinPublicationFixtures(store),vault.value,'fixture',{
       reconcileBetterThanHtml:async context=>{const result=await reconcileBetterThanHtmlTask(context,{fetch});if(result.status==='found'){const durable=store.read().tasks[0];assert.equal(durable.betterthanhtml?.id,remoteId);assert.equal(durable.betterthanhtml?.stage,'submitting');assert.equal(durable.publicUrl,publicUrl);assert.equal(durable.checkpoint,'betterthanhtml_publish_submitting');identifiedBeforeFound=true}return result},
       verifyBetterThanHtml:async(taskValue,target)=>{verified++;return verifyBetterThanHtml(taskValue,target,{fetch})},
       executeTask:async()=>{writes++;return {status:'failed',message:'unexpected write'}},
@@ -110,16 +113,16 @@ test('Controller recovers a no-ID Better Than HTML intent through the real GET-o
 test('backup validation preserves a strict no-account receipt and rejects identity, secret, and shape changes',()=>{
   const siteValue=site(),state=emptyState(),pending=task(siteValue,{status:'needs_input',submittedAt:stamp,checkpoint:'betterthanhtml_publish_submitting',publicUrl,betterthanhtml:{contentHash,id:remoteId,stage:'submitting'}});configure(state,siteValue,pending);const input={state,secrets:{}};
   const restored=validateBackup(structuredClone(input));assert.deepEqual(restored.state.tasks[0].betterthanhtml,pending.betterthanhtml);assert.equal(restored.state.accounts.length,0);assert.deepEqual(restored.secrets,{});
-  const changedId=structuredClone(input);changedId.state.tasks[0].betterthanhtml!.id='other';assert.throws(()=>validateBackup(changedId),/Better Than HTML 回执/);
-  const missing=structuredClone(input);delete missing.state.tasks[0].betterthanhtml;assert.throws(()=>validateBackup(missing),/缺少回执/);
+  const changedId=structuredClone(input);changedId.state.tasks[0].betterthanhtml!.id='other';assert.throws(()=>validateBackup(changedId),/Better Than HTML 返回记录与任务标识不一致/);
+  const missing=structuredClone(input);delete missing.state.tasks[0].betterthanhtml;assert.throws(()=>validateBackup(missing),/缺少返回记录/);
   const extra=structuredClone(input) as typeof input&{state:{tasks:Array<Task&{betterthanhtml?:Task['betterthanhtml']&{secret?:string}}>}};extra.state.tasks[0].betterthanhtml!.secret='forbidden';assert.throws(()=>validateBackup(extra));
-  const secret=structuredClone(input) as {state:typeof state;secrets:Record<string,string>};secret.secrets['publication:'+taskId]='forbidden';assert.throws(()=>validateBackup(secret),/孤立凭据/);
+  const secret=structuredClone(input) as {state:typeof state;secrets:Record<string,string>};secret.secrets['publication:'+taskId]='forbidden';assert.throws(()=>validateBackup(secret),/备份包含没有归属的加密信息/);
   const account=structuredClone(input) as {state:typeof state;secrets:Record<string,string>};account.state.accounts.push({id:'44444444-4444-4444-8444-444444444444',channelId:'betterthanhtml',email:'owner@example.com',username:'unused',status:'registered',hasPassword:false,createdAt:stamp});assert.throws(()=>validateBackup(account),/Better Than HTML 账号/);
 });
 
-test('the anonymous workspace enforces a 24-hour cross-site gap and draft format gate',()=>{
-  const first=site(),second=site(secondSiteId,'second.example'),state=emptyState();state.sites=[first,second];state.tasks=[task(first,{status:'needs_input',submittedAt:stamp,checkpoint:'betterthanhtml_publish_submitting',betterthanhtml:{contentHash,stage:'submitting'}})];
-  assert.equal(socialPublicationAt(state,second.id,'betterthanhtml',new Date(Date.parse(stamp)+3600000)).toISOString(),new Date(Date.parse(stamp)+86400000).toISOString());
+test('the anonymous workspace enforces a calendar-day cross-site limit and daytime draft format gate',()=>{
+  const first=site(),second=site(secondSiteId,'second.example'),state=emptyState();state.settings.timezone='UTC';state.sites=[first,second];state.tasks=[task(first,{status:'needs_input',submittedAt:stamp,checkpoint:'betterthanhtml_publish_submitting',betterthanhtml:{contentHash,stage:'submitting'}})];
+  const deferred=socialPublicationAt(state,second.id,'betterthanhtml',new Date(Date.parse(stamp)+3600000));assert.equal(deferred.toISOString().slice(0,10),'2026-10-09');assert.ok(deferred.getUTCHours()>=9&&deferred.getUTCHours()<23);assert.notEqual(deferred.getUTCMinutes(),0);
   assert.equal(betterThanHtmlDraftError({title:'Valid title',body}),undefined);
   assert.match(betterThanHtmlDraftError({title:'x'.repeat(81),body})??'',/1–80/);
   assert.match(betterThanHtmlDraftError({title:'Valid title',body:'![tracking](https://example.com/pixel.png)'})??'',/无图片/);
@@ -127,6 +130,6 @@ test('the anonymous workspace enforces a 24-hour cross-site gap and draft format
 });
 
 test('deleting a site rejects every late callback and removes any legacy publication secret',async()=>enabled(async()=>{
-  const store=new Store(':memory:'),siteValue=site(),running=task(siteValue,{status:'running'});store.update(state=>configure(state,siteValue,running));store.setCipher('publication:'+taskId,'legacy-secret');const controller=new Controller(store,unavailableVault().value,'fixture');
-  try{const current=store.read().tasks[0],abort=new AbortController(),context=(controller as unknown as {context(task:Task,signal:AbortSignal):ExecutionContext}).context(current,abort.signal);controller.deleteSite(siteValue.id);assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt:new Date().toISOString()}),/回执/);assert.equal(store.read().tasks.length,0);assert.equal(store.getCipher('publication:'+taskId),undefined)}finally{store.close()}
+  const store=new Store(':memory:'),siteValue=site(),running=task(siteValue,{status:'running'});store.update(state=>configure(state,siteValue,running));store.setCipher('publication:'+taskId,'legacy-secret');const controller=new Controller(pinPublicationFixtures(store),unavailableVault().value,'fixture');
+  try{const current=store.read().tasks[0],abort=new AbortController(),context=(controller as unknown as {context(task:Task,signal:AbortSignal):ExecutionContext}).context(current,abort.signal);controller.deleteSite(siteValue.id);assert.throws(()=>context.checkpoint({betterthanhtml:{contentHash,stage:'submitting'},checkpoint:'betterthanhtml_publish_submitting',submittedAt:new Date().toISOString()}),/发布记录与原作者或文章标识不一致/);assert.equal(store.read().tasks.length,0);assert.equal(store.getCipher('publication:'+taskId),undefined)}finally{store.close()}
 }));

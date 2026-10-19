@@ -1,11 +1,11 @@
 import {createHash,timingSafeEqual} from 'node:crypto';
 import type {Account,Channel,OneReviewRetry,OneReviewRetryBinding,Settings,Site,Task} from '../shared/types';
 import {getArticleReviewMode} from '../shared/article-review-mode';
-import {articleContentHash,articleContextHash} from './article-review';
+import {articleContentHash,articleContextHash,articleReviewBindingHash} from './article-review';
 import {hasExternalAttempt} from './task-recovery';
 
-export const ONE_REVIEW_RETRY_BASE_AI_CALLS=6;
-export const ONE_REVIEW_RETRY_TOTAL_AI_CALLS=7;
+export const ONE_REVIEW_RETRY_BASE_AI_CALLS=2;
+export const ONE_REVIEW_RETRY_TOTAL_AI_CALLS=3;
 export const ONE_REVIEW_RETRY_PURPOSE='independent_article_review' as const;
 
 export interface OneReviewRetryContext {
@@ -30,6 +30,10 @@ export type OneReviewRetryIneligibility=
 export type OneReviewRetryEligibility=
   |{eligible:true;binding:OneReviewRetryBinding}
   |{eligible:false;reason:OneReviewRetryIneligibility};
+
+class ReviewRetryBindingError extends Error {
+  constructor(readonly reasonCode:'wrong_task_binding'|'wrong_account_binding',message:string){super(message)}
+}
 
 function tokenHash(operationToken:string){return createHash('sha256').update(operationToken,'utf8').digest('hex')}
 function validOperationToken(value:string){return value.length>=32&&value.length<=512&&!/\s/.test(value)}
@@ -56,13 +60,13 @@ export function assertOneReviewRetryTransition(previous:OneReviewRetryState,next
   for(const task of next.tasks){
     const retry=task.oneReviewRetry;if(!retry)continue;
     const calls=task.cost?.aiCalls??0,terminalAt=retry.status==='consumed'?retry.consumedAt:retry.status==='invalidated'?retry.invalidatedAt:undefined;
-    if(retry.version!==1||retry.purpose!==ONE_REVIEW_RETRY_PURPOSE||retry.siteId!==task.siteId||retry.channelId!==task.channelId||retry.accountId!==null&&retry.accountId!==task.accountId||retry.provider.length>200||retry.model.length>500||!/^[a-f0-9]{64}$/.test(retry.operationTokenHash)||!/^[a-f0-9]{64}$/.test(retry.contentHash)||!/^[a-f0-9]{64}$/.test(retry.contextHash)||!validIso(retry.grantedAt)||terminalAt!==undefined&&(!validIso(terminalAt)||Date.parse(terminalAt)<Date.parse(retry.grantedAt))||retry.status==='granted'&&calls!==ONE_REVIEW_RETRY_BASE_AI_CALLS||retry.status==='invalidated'&&calls<ONE_REVIEW_RETRY_BASE_AI_CALLS||retry.status==='consumed'&&calls<ONE_REVIEW_RETRY_TOTAL_AI_CALLS)throw Error('单次追加审核持久化记录无效');
+    if(retry.version!==1||retry.purpose!==ONE_REVIEW_RETRY_PURPOSE||retry.siteId!==task.siteId||retry.channelId!==task.channelId||retry.accountId!==null&&retry.accountId!==task.accountId||retry.provider.length>200||retry.model.length>500||!/^[a-f0-9]{64}$/.test(retry.operationTokenHash)||!/^[a-f0-9]{64}$/.test(retry.contentHash)||!/^[a-f0-9]{64}$/.test(retry.contextHash)||!validIso(retry.grantedAt)||terminalAt!==undefined&&(!validIso(terminalAt)||Date.parse(terminalAt)<Date.parse(retry.grantedAt))||retry.status==='granted'&&calls!==ONE_REVIEW_RETRY_BASE_AI_CALLS||retry.status==='invalidated'&&calls<ONE_REVIEW_RETRY_BASE_AI_CALLS||retry.status==='consumed'&&calls<ONE_REVIEW_RETRY_TOTAL_AI_CALLS)throw Error('单次追加审核保存记录无效');
     const priorTask=previous.tasks.find(value=>value.id===task.id),prior=priorTask?.oneReviewRetry;
-    if(!prior){if(!allowImported&&retry.status!=='granted')throw Error('单次追加审核必须先持久化授权');continue}
+    if(!prior){if(!allowImported&&retry.status!=='granted')throw Error('单次追加审核必须先保存授权');continue}
     if(persistedGrantIdentity(prior)!==persistedGrantIdentity(retry)||calls<(priorTask?.cost?.aiCalls??0))throw Error('单次追加审核授权或调用计数不能替换、清零或回退');
     if(prior.status==='granted'){
       if(retry.status==='granted'&&JSON.stringify(retry)!==JSON.stringify(prior))throw Error('待使用的单次追加审核授权不能改写');
-    }else if(JSON.stringify(retry)!==JSON.stringify(prior))throw Error('已终结的单次追加审核记录不能改写或回退');
+    }else if(JSON.stringify(retry)!==JSON.stringify(prior))throw Error('已结束的单次追加审核记录不能改写或回退');
   }
   for(const task of previous.tasks){
     if(task.oneReviewRetry&&!next.tasks.find(value=>value.id===task.id)?.oneReviewRetry)throw Error('单次追加审核记录不能删除');
@@ -70,16 +74,18 @@ export function assertOneReviewRetryTransition(previous:OneReviewRetryState,next
 }
 
 export function oneReviewRetryBinding(task:Task,context:OneReviewRetryContext):OneReviewRetryBinding{
-  if(task.siteId!==context.site.id||task.channelId!==context.channel.id)throw Error('任务与审核上下文不一致');
-  if(context.account&&context.account.channelId!==context.channel.id)throw Error('审核账号与渠道不一致');
-  if(task.accountId&&context.account?.id!==task.accountId)throw Error('审核账号与任务绑定不一致');
+  if(task.siteId!==context.site.id||task.channelId!==context.channel.id)throw new ReviewRetryBindingError('wrong_task_binding','任务与审核上下文不一致');
+  if(context.account&&context.account.channelId!==context.channel.id)throw new ReviewRetryBindingError('wrong_account_binding','审核账号与平台不一致');
+  if(task.accountId&&context.account?.id!==task.accountId)throw new ReviewRetryBindingError('wrong_account_binding','审核账号与任务绑定不一致');
   return {
     siteId:task.siteId,
     channelId:task.channelId,
     accountId:task.accountId??context.account?.id??null,
     draftRevision:task.draftRevision??0,
     contentHash:articleContentHash(task),
-    contextHash:articleContextHash(context.site,context.channel,context.settings,context.account),
+    contextHash:task.articleReview?.bindingVersion===2
+      ?articleReviewBindingHash(task,context.site,context.channel)
+      :articleContextHash(context.site,context.channel,context.settings,context.account,task.articleReview?.reviewContractVersion??4),
     provider:context.settings.provider,
     model:context.settings.model,
   };
@@ -88,7 +94,7 @@ export function oneReviewRetryBinding(task:Task,context:OneReviewRetryContext):O
 export function oneReviewRetryEligibility(task:Task,context:OneReviewRetryContext):OneReviewRetryEligibility{
   if(task.oneReviewRetry)return {eligible:false,reason:'already_recorded'};
   let binding:OneReviewRetryBinding;
-  try{binding=oneReviewRetryBinding(task,context)}catch(error){return {eligible:false,reason:String(error).includes('账号')?'wrong_account_binding':'wrong_task_binding'}}
+  try{binding=oneReviewRetryBinding(task,context)}catch(error){return {eligible:false,reason:error instanceof ReviewRetryBindingError?error.reasonCode:'wrong_task_binding'}}
   if(getArticleReviewMode(context.site,context.settings)!=='ai')return {eligible:false,reason:'review_mode_disabled'};
   if(!['failed','needs_input'].includes(task.status))return {eligible:false,reason:'not_failed_article_review'};
   if(!task.draft)return {eligible:false,reason:'draft_missing'};
@@ -122,9 +128,9 @@ export function consumeOneReviewRetry(
   request:{purpose:typeof ONE_REVIEW_RETRY_PURPOSE;operationToken:string},
   now:Date=new Date(),
 ):void{
-  if(request.purpose!==ONE_REVIEW_RETRY_PURPOSE)throw Error('单次追加额度只能用于独立文章审核');
+  if(request.purpose!==ONE_REVIEW_RETRY_PURPOSE)throw Error('单次追加机会只能用于文章 AI 复核');
   const grant=task.oneReviewRetry;
-  if(!grant||grant.status!=='granted')throw Error('单次追加审核未授权或已终结');
+  if(!grant||grant.status!=='granted')throw Error('单次追加审核未授权或已结束');
   if(!validOperationToken(request.operationToken)||!equalHash(grant.operationTokenHash,tokenHash(request.operationToken)))throw Error('单次追加审核操作令牌不匹配');
   const binding=oneReviewRetryBinding(task,context);
   if(!sameBinding(grantBinding(grant),binding))throw Error('单次追加审核绑定已变化');

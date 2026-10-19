@@ -1,56 +1,98 @@
-import {useMemo,useState} from 'react';
-import {ArrowClockwise,ArrowSquareOut,CheckCircle,Clock,FileText,Funnel,LinkSimple,MagnifyingGlass,PencilSimple,Play} from '@phosphor-icons/react';
-import {getArticleReviewMode} from '../../shared/article-review-mode';
-import {HUMAN_AUTHORED_ONLY_NOTICE,isHumanAuthoredOnlyChannel} from '../../shared/human-authored-only';
-import type {ArticleReviewMode,Channel,Site,Snapshot,Task} from '../../shared/types';
-import {Button,Empty} from '../components';
-import {articleReviewDetail,articleReviewTitle,canRestartArticleReview,canResumeDeferredTask,canRetryTaskManually,canUseOneReviewRetry,dateLabel,draftStatusLabel,isUserActionTask,oneReviewRetryLabel,taskAutomaticFollowupAt,taskCanManuallyRecoverNostr,taskHasArticleReview,taskHasAutomaticFollowup,taskMessageForDisplay,taskNeedsTelegraphReconciliation,taskPresentation,taskResultStatusLabel,taskSortRank,taskWorkKind} from '../presentation';
-
-type Props={data:Snapshot|null;disabled:boolean;status:string;onStatusChange:(status:string)=>void;onAction:<T>(command:string,payload?:unknown,success?:string)=>Promise<T|undefined>;onEditDraft:(task:Task)=>void;onSetUrl:(task:Task)=>void;onSite:(id:string,taskId?:string)=>void};
-
-export function TaskCenter({data,disabled,status,onStatusChange,onAction,onEditDraft,onSetUrl,onSite}:Props){
-  const [query,setQuery]=useState(''),[siteId,setSiteId]=useState('all'),[expanded,setExpanded]=useState('');
-  const taskView=useMemo(()=>{
-    const sites=new Map((data?.sites??[]).map(site=>[site.id,site]));
-    const channels=new Map((data?.channels??[]).map(channel=>[channel.id,channel]));
-    let progressing=0,attention=0,waiting=0,current=0;
-    const tasks=data?.tasks??[];
-    for(const task of tasks){const site=sites.get(task.siteId),reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',enabled=channels.get(task.channelId)?.enabled===true,kind=taskWorkKind(task,reviewMode,enabled);if(kind==='progress'||kind==='system_retry')progressing++;if(isUserActionTask(task,reviewMode,enabled))attention++;if(kind==='channel_wait')waiting++;if(task.status==='live'&&task.health==='healthy'&&task.linkCheck==='found')current++;}
-    const rows=tasks.filter(task=>{
-      const haystack=`${sites.get(task.siteId)?.domain??''} ${channels.get(task.channelId)?.name??''} ${task.sourceDomain} ${task.message}`.toLowerCase();
-      const site=sites.get(task.siteId),reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',enabled=channels.get(task.channelId)?.enabled===true,kind=taskWorkKind(task,reviewMode,enabled);
-      const statusMatch=status==='all'||status==='active'&&(kind==='progress'||kind==='system_retry')||status==='attention'&&kind==='user_action'||status==='waiting'&&kind==='channel_wait'||status==='deferred'&&kind==='deferred'||status==='results'&&!!task.publicUrl;
-      return haystack.includes(query.toLowerCase())&&(siteId==='all'||task.siteId===siteId)&&statusMatch;
-    }).sort((a,b)=>{const aSite=sites.get(a.siteId),bSite=sites.get(b.siteId),aMode=aSite&&data?getArticleReviewMode(aSite,data.settings):'manual',bMode=bSite&&data?getArticleReviewMode(bSite,data.settings):'manual';return taskSortRank(a,aMode,channels.get(a.channelId)?.enabled===true)-taskSortRank(b,bMode,channels.get(b.channelId)?.enabled===true)||b.updatedAt.localeCompare(a.updatedAt)});
-    return {sites,channels,rows,progressing,attention,waiting,current};
-  },[data,query,status,siteId]);
-  const {sites,channels,rows}=taskView;
-  const channelFor=(task:Task):Channel|undefined=>channels.get(task.channelId);
-  const siteFor=(task:Task):Site|undefined=>sites.get(task.siteId);
-  const channelEnabled=(task:Task)=>channelFor(task)?.enabled===true;
-  return <div className="page task-center-page">
-    <div className="page-heading compact-heading"><div><div className="eyebrow">WORK QUEUE / 任务中心</div><h1>从待办到公开成果。</h1><p>跨网站查看执行、审核、恢复和已核验结果。</p></div><div className="heading-seal"><Clock size={17}/>{data?.runtime.busy?'正在执行任务':'当前队列已同步'}</div></div>
-    <div className="task-kpis">
-      <Metric label="系统推进" value={taskView.progressing} tone="blue"/>
-      <Metric label="需要你处理" value={taskView.attention} tone="amber"/>
-      <Metric label="等待渠道" value={taskView.waiting}/>
-      <Metric label="当前有效" value={taskView.current} tone="green"/>
-    </div>
-    <section className="panel directory-panel task-directory">
-      <div className="directory-toolbar"><div className="search"><MagnifyingGlass size={17}/><input aria-label="搜索任务" placeholder="搜索网站、渠道或任务说明" value={query} onChange={e=>setQuery(e.target.value)}/></div><div className="filter-select"><Funnel size={15}/><select aria-label="筛选网站" value={siteId} onChange={e=>setSiteId(e.target.value)}><option value="all">全部网站</option>{data?.sites.map(site=><option key={site.id} value={site.id}>{site.domain}</option>)}</select></div><div className="filter-tabs task-filter-tabs" role="group" aria-label="筛选任务状态">{[['active','系统推进'],['attention','需你处理'],['waiting','等待渠道'],['deferred','已搁置'],['results','有成果'],['all','全部']].map(([key,label])=><button key={key} className={status===key?'active':''} aria-pressed={status===key} onClick={()=>onStatusChange(key)}>{label}</button>)}</div></div>
-      {rows.length?<div className="task-table-wrap"><table className="work-table"><thead><tr><th>网站 / 渠道</th><th>状态</th><th>公开结果</th><th>最新进展</th><th>操作</th></tr></thead><tbody>{rows.map(task=>{
-        task={...task,message:taskMessageForDisplay(task)};
-        const site=siteFor(task),channel=channelFor(task),enabled=channel?.enabled===true,open=expanded===task.id,isArticleReview=taskHasArticleReview(task),review=isArticleReview?task.articleReview:undefined,reviewMode=site&&data?getArticleReviewMode(site,data.settings):'manual',aiMode=reviewMode==='ai',presentation=taskPresentation(task,reviewMode,enabled);
-        const canRestartReview=canRestartArticleReview(task,reviewMode,enabled),canReviewOnce=canUseOneReviewRetry(task,reviewMode,enabled),canRetry=canRetryTaskManually(task,reviewMode,enabled),canResume=canResumeDeferredTask(task),canRecoverNostr=taskCanManuallyRecoverNostr(task,enabled,site?.status==='ready'),humanAuthoredOnly=isHumanAuthoredOnlyChannel(task.channelId);
-        return <tr key={task.id} className={open?'row-expanded':''}><td><button className="work-identity" onClick={()=>setExpanded(open?'':task.id)} aria-expanded={open}><span className={`timeline-dot ${presentation.tone}`}/><span><strong>{site?.domain??'未知网站'}</strong><small>{channel?.name??task.sourceDomain} · {channel?.automation==='api'?'API':channel?.automation==='browser'?'资料页流程':'人工渠道'}</small></span></button>{open&&<TaskDetails task={task} channel={channel} reviewMode={reviewMode}/>}</td><td><span className={`badge ${presentation.tone}`}>{presentation.label}</span>{review?.status==='failed'&&<small className="cell-note">{articleReviewDetail(task,reviewMode,enabled)}</small>}{task.linkCheck&&<small className="cell-note">网页核验：{task.linkCheck==='found'?'存在':task.linkCheck==='absent'?'未发现':task.linkCheck==='unreachable'?'暂不可达':'地址不合规'}</small>}</td><td>{task.publicUrl?<button className="result-link" disabled={disabled} onClick={()=>void onAction('task:open-result',{id:task.id})}><LinkSimple size={14}/><span>{task.sourceDomain}</span><ArrowSquareOut size={13}/></button>:<span className="unknown-value">尚无公开地址</span>}<small className="cell-note">{task.publicationMethod==='external'?'外部发布后接回':taskResultStatusLabel(task,enabled)}</small></td><td><span className="message-cell">{task.message||'暂无进展说明'}</span><small className="cell-note">{dateLabel(task.updatedAt)}</small></td><td><div className="row-actions">{task.publicUrl&&<button className="icon-button" title="查看公开结果" aria-label="查看公开结果" disabled={disabled} onClick={()=>void onAction('task:open-result',{id:task.id})}><ArrowSquareOut size={17}/></button>}{!isArticleReview&&<button className="icon-button" title="打开渠道页面" aria-label="打开渠道页面" disabled={disabled} onClick={()=>void onAction('task:open',{id:task.id})}><Play size={17}/></button>}{canReviewOnce&&<button className="icon-button" title="追加 1 次 AI 审核" aria-label="追加 1 次 AI 审核" disabled={disabled} onClick={()=>void onAction('task:review-once',{id:task.id},'唯一一次追加独立审核已完成。')}><ArrowClockwise size={17}/></button>}<button className="icon-button" title="编辑稿件" aria-label="编辑稿件" disabled={disabled} onClick={()=>onEditDraft(task)}><PencilSimple size={17}/></button><button className="icon-button" title={canRecoverNostr?'只读核验原 Nostr 事件':'核验公开链接'} aria-label={canRecoverNostr?'只读核验原 Nostr 事件':'核验公开链接'} disabled={disabled||!task.publicUrl&&!canRecoverNostr} onClick={()=>void onAction('task:verify',{id:task.id},canRecoverNostr?'已完成原 Nostr 事件只读核验。':'已完成链接核验。')}><CheckCircle size={17}/></button></div>{open&&<div className="expanded-actions">{channel?.automation==='manual'&&!humanAuthoredOnly&&!task.submittedAt&&!task.publicUrl&&!canResume&&<Button variant="text" disabled={disabled} onClick={()=>void onAction('task:generate',{id:task.id},'提交材料已准备，可编辑核对后在平台完成提交。')}>{task.draft?'重新准备材料':'AI 准备材料'}</Button>}{isArticleReview?<Button variant="text" onClick={()=>onSite(task.siteId,task.id)}>{presentation.kind==='channel_wait'||presentation.kind==='system_retry'?'查看具体问题':aiMode?'查看 AI 审核详情':'查看并人工审核'}</Button>:<Button variant="text" onClick={()=>onSite(task.siteId)}>网站详情</Button>}<Button variant="text" onClick={()=>onSetUrl(task)}>填写公开地址</Button>{canResume&&<Button variant="text" disabled={disabled} onClick={()=>void onAction('task:retry',{id:task.id},task.draft?'已恢复原稿并继续处理。':'已恢复原任务并继续处理。')}><ArrowClockwise size={14}/>{task.draft?'恢复原稿':'恢复任务'}</Button>}{canRestartReview&&<Button variant="text" onClick={()=>void onAction('task:retry',{id:task.id},'已安排新的独立 AI 审核。')}><ArrowClockwise size={14}/>重新 AI 核对</Button>}{canReviewOnce&&<Button variant="primary" disabled={disabled} onClick={()=>void onAction('task:review-once',{id:task.id},'唯一一次追加独立审核已完成。')}><ArrowClockwise size={14}/>追加 1 次 AI 审核</Button>}{canRetry&&<Button variant="text" onClick={()=>void onAction('task:retry',{id:task.id},'已安排任务继续处理。')}><ArrowClockwise size={14}/>受控重试</Button>}</div>}</td></tr>;
-      })}</tbody></table></div>:<Empty icon={FileText} title="没有匹配的任务" body="调整网站、状态或搜索词。"/>}
-    </section>
+import { useState } from 'react';
+import {HUMAN_AUTHORED_ONLY_NOTICE} from '../../shared/human-authored-only';
+import { CheckCircle } from '@phosphor-icons/react';
+import type { Snapshot, Task } from '../../shared/types';
+import { Button, Empty } from '../components';
+import { taskDisplayState, taskHumanActionGroup, taskHumanActionUrgent, taskReasonForDisplay } from '../presentation';
+import { taskWithPlatform, todoTasks, uiCopy } from '../dashboard-model';
+import { PageHeading } from './WorkspacePages';
+type Props = {
+  data: Snapshot | null;
+  disabled: boolean;
+  status: string;
+  onStatusChange: (status: string) => void;
+  onAction: <T>(command: string, payload?: unknown, success?: string) => Promise<T | undefined>;
+  onEditDraft: (task: Task) => void;
+  onSetUrl: (task: Task) => void;
+  onSite: (id: string, taskId?: string) => void;
+  onAccount?: (task: Task) => void;
+  now?: Date;
+};
+const groupLabels = {
+  verification: '要你验证',
+  account: '要你连接账号',
+  review: '要你看稿',
+  manual_write: '要你手写并发布',
+  manual_publish: '软件写好、等你发'
+} as const;
+export function TaskCenter({
+  data,
+  disabled,
+  onAction,
+  onEditDraft,
+  onSetUrl,
+  onSite,
+  onAccount,
+  now = new Date()
+}: Props) {
+  const [expanded, setExpanded] = useState('');
+  const tasks = data ? todoTasks(data, now) : [];
+  const groups = Object.entries(groupLabels).map(([id, label]) => ({
+    id,
+    label,
+    tasks: tasks.filter(t => taskHumanActionGroup(t, now) === id)
+  })).filter(g => g.tasks.length).sort((a, b) => Number(taskHumanActionUrgent(b.tasks[0], now)) - Number(taskHumanActionUrgent(a.tasks[0], now)));
+  const handle = (task: Task) => {
+    if(task.checkpoint==='html_app_public_notice'){onSite(task.siteId,task.id);return;}
+    const group = taskHumanActionGroup(task, now);
+    if (group === 'account') {
+      onAccount?.(task);
+      return;
+    }
+    if (group === 'review' || group === 'manual_publish' || group === 'manual_write') {
+      setExpanded(expanded === task.id ? '' : task.id);
+      return;
+    }
+    void onAction('task:open', {
+      id: task.id
+    });
+  };
+  return <div className="page todo-page"><PageHeading title="待办" summary={tasks.length ? `${tasks.length} 件事要你处理` : '没有要你处理的事'} />
+    {!tasks.length ? <Empty icon={CheckCircle} title="没有要你处理的事" body="没有要你处理的事。外链助手会按计划自动发布。" /> : groups.map(group => <section className="todo-group" key={group.id}><h2>{group.label}</h2>
+<div className="todo-grid">{group.tasks.map(task => {
+          const display = taskDisplayState(taskWithPlatform(task, data!), now),
+            urgent = taskHumanActionUrgent(task, now);
+          return <article className={`panel todo-card ${urgent ? 'urgent' : ''}`} key={task.id}>
+      <div className="todo-title"><strong>{data?.sites.find(s => s.id === task.siteId)?.domain} · {data?.channels.find(c => c.id === task.channelId)?.name ?? task.sourceDomain}</strong>
+{urgent && <span className="badge amber">马上过期</span>}</div>
+<p>{group.id === 'manual_write' ? HUMAN_AUTHORED_ONLY_NOTICE : display.detail}</p>
+{display.deadlineText && <p className="deadline">{display.deadlineText}</p>}
+<div className="heading-actions"><Button variant="primary" disabled={disabled} onClick={() => handle(task)}>{group.id === 'manual_publish' || group.id === 'manual_write' ? '去发布' : display.action ?? '去处理'}</Button>
+{(() => {
+                // Only when the app can check or resume the step itself; otherwise the card waits for its own result.
+                const capability = data?.humanActionCapabilities?.[task.id];
+                return capability?.canDone ? <Button disabled={disabled} onClick={() => void onAction('human-action:done', {
+                  id: task.id
+                }, '好的，外链助手继续处理。')}>{capability.mode === 'confirm_email' ? '确认' : task.humanAction?.kind === 'consent' ? '同意' : '我做完了'}</Button> : null;
+              })()}
+<Button disabled={disabled} onClick={() => void onAction('task:skip', {
+                id: task.id
+              }, uiCopy.skipDone)}>跳过</Button></div>
+      {expanded === task.id && <div className="todo-expanded">{task.draft && <><h3>{task.draft.title}</h3>
+<div className="draft-body">{task.draft.body}</div></>}
+<div className="heading-actions"><Button disabled={disabled} onClick={() => onEditDraft(task)}>编辑稿件</Button>
+{group.id === 'review' && <Button variant="primary" disabled={disabled || !task.draft} onClick={() => void onAction('task:approve', {
+                  id: task.id
+                }, uiCopy.approved)}>{uiCopy.confirmArticle}</Button>}
+{(group.id === 'manual_publish' || group.id === 'manual_write') && <><Button disabled={disabled} onClick={() => void onAction('task:open', {
+                    id: task.id
+                  })}>打开平台</Button>
+<Button disabled={disabled} onClick={() => onSetUrl(task)}>填写地址</Button></>}
+<Button onClick={() => onSite(task.siteId, task.id)}>查看网站</Button></div></div>}
+      <details className="technical-details"><summary>{uiCopy.technical}</summary>
+<p>{task.message || uiCopy.noTechnical}</p>
+<p>{taskReasonForDisplay(task, now)}</p></details>
+    </article>;
+        })}</div></section>)}
   </div>;
-}
-
-function Metric({label,value,tone='muted'}:{label:string;value:number;tone?:string}){return <div className="task-kpi"><span className={`kpi-dot ${tone}`}/><strong>{value}</strong><small>{label}</small></div>}
-function TaskDetails({task,channel,reviewMode}:{task:Task;channel?:Channel;reviewMode:ArticleReviewMode}){
-  const enabled=channel?.enabled===true,review=taskHasArticleReview(task)?task.articleReview:undefined,isArticleReview=taskHasArticleReview(task),presentation=taskPresentation(task,reviewMode,enabled),hasAutomaticFollowup=taskHasAutomaticFollowup(task,enabled),followupAt=taskAutomaticFollowupAt(task,enabled),showFollowup=hasAutomaticFollowup||presentation.kind==='system_retry'||presentation.kind==='channel_wait';
-  const followupLabel=followupAt?dateLabel(followupAt):hasAutomaticFollowup&&taskNeedsTelegraphReconciliation(task,enabled)?'即将查询':'未安排';
-  return <div className="inline-task-detail"><p>{task.reason||channel?.qualityReason||'按渠道规则推进。'}</p>{isHumanAuthoredOnlyChannel(task.channelId)&&<p>{HUMAN_AUTHORED_ONLY_NOTICE}</p>}{isArticleReview&&<section className={`article-review-status ${review?.status??'pending'}`}><strong>{articleReviewTitle(task,reviewMode,enabled)}</strong><p>{articleReviewDetail(task,reviewMode,enabled)}</p>{review?.reviewedAt&&<small>审核时间：{dateLabel(review.reviewedAt)}</small>}{review?.evidenceUrls.length?<><small>审核证据</small><ul>{review.evidenceUrls.map((url,index)=><li key={`${url}-${index}`}>{url}</li>)}</ul></>:null}</section>}<dl><dt>任务来源</dt><dd>{task.publicationMethod==='external'?'外部接回':'客户端创建'}</dd><dt>当前归类</dt><dd>{presentation.label}</dd><dt>身份归属</dt><dd>{task.accountId?'已绑定账号':'尚未绑定账号'}</dd><dt>链接健康</dt><dd>{task.health==='healthy'?'当前健康':task.health==='missing'?'本次未发现':task.health==='pending'?'等待核验':'未知'}</dd>{showFollowup&&<><dt>{hasAutomaticFollowup?'下一次检查':'自动复查'}</dt><dd>{followupLabel}</dd></>}<dt>AI 调用</dt><dd>{task.cost?`${task.cost.aiCalls} 次${task.cost.durationMs?` · ${Math.round(task.cost.durationMs/1000)} 秒`:''}${task.cost.amount!==undefined?` · ${task.cost.currency??''} ${task.cost.amount}`:' · 金额未知'}`:'尚未记录'}</dd>{oneReviewRetryLabel(task)&&<><dt>追加审核</dt><dd>{oneReviewRetryLabel(task)}</dd></>}</dl>{task.history?.length?<div className="task-history"><strong>最近事件</strong>{task.history.slice(-3).reverse().map((item,index)=><span key={`${item.at}-${index}`}>{dateLabel(item.at)} · {item.message}</span>)}</div>:null}{task.draft&&<p className="draft-preview"><FileText size={14}/>{task.draft.title||'未命名稿件'} · {draftStatusLabel(task,reviewMode,enabled)}</p>}</div>;
 }

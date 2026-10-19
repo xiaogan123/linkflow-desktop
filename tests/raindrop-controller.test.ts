@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+test.beforeEach(()=>{mock.timers.reset();mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-10T12:17:00.000Z')})});
+test.afterEach(()=>mock.timers.reset());
+import test,{mock} from 'node:test';
 import {CHANNELS} from '../src/integrations/catalog';
 import {publisherFor} from '../src/integrations/publishers';
 import {raindropTesting} from '../src/integrations/raindrop';
 import {articleContentHash,articleContextHash} from '../src/main/article-review';
 import {Controller} from '../src/main/controller';
-import {socialPublicationAt} from '../src/main/planner';
+import {dateKey,publicationExecutionAt,socialPublicationAt} from '../src/main/planner';
 import {Store,emptyState} from '../src/main/store';
 import type {Vault} from '../src/main/vault';
 import {hasExternalAttempt} from '../src/main/task-recovery';
 import type {Account,RaindropReceipt,Site,Task} from '../src/shared/types';
 
-const STAMP='2026-10-10T12:00:00.000Z',SITE_ID='11111111-1111-4111-8111-111111111111',OTHER_SITE_ID='55555555-5555-4555-8555-555555555555';
+const STAMP='2026-10-10T12:17:00.000Z',SITE_ID='11111111-1111-4111-8111-111111111111',OTHER_SITE_ID='55555555-5555-4555-8555-555555555555';
 const ACCOUNT_ID='22222222-2222-4222-8222-222222222222',TASK_ID='33333333-3333-4333-8333-333333333333';
 const OWNER='32',COLLECTION='66',PUBLIC='https://writer.raindrop.page/resources',TARGET='https://example.com/guides/source-checking';
 const TITLE='A reproducible source-checking workflow',EXCERPT='Commercial relationship disclosure: this public resource review promotes the linked site and explains a reproducible source-checking step without promising results.';
@@ -26,7 +28,7 @@ const vault={ready:true,available:()=>true,get:async()=>undefined,set:async()=>u
 
 test('Controller accepts only the bound Raindrop receipt chain and promotes it after the dedicated verifier',async()=>enabled(async()=>{
   const store=new Store(':memory:');try{
-    store.update(state=>{const t=task(),a=account(),s=site();state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='ai';state.settings.timezone='UTC';state.settings.channelOverrides=Object.fromEntries(CHANNELS.map(item=>[item.id,item.id==='raindrop']));t.articleReview={status:'passed',reason:'fixture review passed',reasonCode:'passed',reviewContractVersion:4,evidenceUrls:[],draftRevision:1,contentHash:articleContentHash(t),contextHash:articleContextHash(s,channel(),state.settings,a),reviewedAt:STAMP};state.sites=[s];state.accounts=[a];state.accountBindings=[{id:'44444444-4444-4444-8444-444444444444',siteId:SITE_ID,channelId:'raindrop',accountId:ACCOUNT_ID,createdAt:STAMP,updatedAt:STAMP}];state.tasks=[t]});
+    store.update(state=>{const t=task(),a=account(),s=site();state.settings.timezone='UTC';state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='ai';state.settings.timezone='UTC';state.settings.channelOverrides=Object.fromEntries(CHANNELS.map(item=>[item.id,item.id==='raindrop']));t.articleReview={status:'passed',reason:'fixture review passed',reasonCode:'passed',reviewContractVersion:4,evidenceUrls:[],draftRevision:1,contentHash:articleContentHash(t),contextHash:articleContextHash(s,channel(),state.settings,a,4),reviewedAt:STAMP};state.sites=[s];state.accounts=[a];state.accountBindings=[{id:'44444444-4444-4444-8444-444444444444',siteId:SITE_ID,channelId:'raindrop',accountId:ACCOUNT_ID,createdAt:STAMP,updatedAt:STAMP}];state.tasks=[t]});
     let executions=0,verifications=0;
     const controller=new Controller(store,vault,'fixture',{
       executeTask:async context=>{
@@ -48,5 +50,5 @@ test('Controller accepts only the bound Raindrop receipt chain and promotes it a
 
 test('one Raindrop collection is one shared destination for cross-site cadence',()=>{
   const state=emptyState(),first=task();first.status='live';first.submittedAt=STAMP;first.firstLiveAt=STAMP;first.publicUrl=PUBLIC;first.raindrop=receipt('published');state.sites=[site(),site(OTHER_SITE_ID)];state.accounts=[account()];state.accountBindings=[{id:'44444444-4444-4444-8444-444444444444',siteId:SITE_ID,channelId:'raindrop',accountId:ACCOUNT_ID,createdAt:STAMP,updatedAt:STAMP},{id:'66666666-6666-4666-8666-666666666666',siteId:OTHER_SITE_ID,channelId:'raindrop',accountId:ACCOUNT_ID,createdAt:STAMP,updatedAt:STAMP}];state.tasks=[first];
-  const requested=new Date(Date.parse(STAMP)+3600000);assert.equal(socialPublicationAt(state,OTHER_SITE_ID,'raindrop',requested).toISOString(),new Date(Date.parse(STAMP)+86400000).toISOString());assert.ok(publisherFor(channel())?.publish);assert.ok(publisherFor(channel())?.reconcile);
+  const requested=new Date(Date.parse(STAMP)+3600000);assert.equal(dateKey(socialPublicationAt(state,OTHER_SITE_ID,'raindrop',requested),'UTC'),dateKey(new Date(Date.parse(STAMP)+86400000),'UTC'));assert.ok(publisherFor(channel())?.publish);assert.ok(publisherFor(channel())?.reconcile);
 });

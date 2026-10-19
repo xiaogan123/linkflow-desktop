@@ -61,10 +61,10 @@ async function bounded(response:Response,signal:AbortSignal):Promise<Uint8Array>
 function opaqueFrom(response:Response,bytes:Uint8Array,intent:YourwebsIntent):YourwebsOpaqueResponse{return {...intent,version:1,kind:'yourwebs_opaque_response',status:response.status,contentType:response.headers.get('content-type')??'',responseUrl:response.url,redirected:response.redirected,responseType:response.type,bodyBase64:Buffer.from(bytes).toString('base64'),bodySha256:yourwebsHash(bytes)}}
 
 export async function createYourwebsPage(input:{operationId:string;html:string;title:string;reviewed:true},persistence:YourwebsPersistence,deps:YourwebsDependencies={}):Promise<YourwebsCreateResult>{
-  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Yourwebs 缺少已审核的单次发布身份');
+  if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Yourwebs 缺少已审核的单次发布编号');
   if(deps.signal?.aborted)return {status:'not_started',reason:'authorization_changed'};
   const request=yourwebsRequest(input.html,input.title);if(!input.html||!/^<!doctype html>/i.test(input.html)||Buffer.from(input.html,'utf8').toString('utf8')!==input.html||Buffer.byteLength(input.html,'utf8')>YOURWEBS_MAX_CONTENT_BYTES||!input.title||input.title!==input.title.trim()||input.title.length>512||/[\u0000-\u001f\u007f]/.test(input.title))return {status:'not_started',reason:'invalid_content'};
-  const intent:YourwebsIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validYourwebsIntent(intent))throw Error('Yourwebs 发布身份无效');
+  const intent:YourwebsIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validYourwebsIntent(intent))throw Error('Yourwebs 提交信息无效');
   try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}
   try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   if(deps.signal?.aborted)return {status:'unknown',intent,diagnostic:'transport',opaqueResponseSaved:false};

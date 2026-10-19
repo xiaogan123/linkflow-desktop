@@ -16,19 +16,22 @@ function fixture(){
   const close=()=>{manager.cancel();store.close()};
   return {store,vault,manager,authorize,close,grant,deps,secret:(key:string)=>store.getCipher(key),ciphers:()=>store.allCiphers(),setOwner:(value:number)=>{ownerId=value},requests:()=>requests};
 }
-test('WordPress authorizes without renderer credentials, then atomically saves a blog and site bindings',async()=>{
+test('WordPress authorizes without renderer credentials, then binds one site per blog identity',async()=>{
   const f=fixture();try{const session=await f.authorize();assert.equal(JSON.stringify(session).includes(token),false);assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.manager.status().configured,false);assert.ok(Date.parse(session.expiresAt)<=Date.now()+300_000);assert.ok(Date.parse(session.expiresAt)<Date.parse(f.grant.expiresAt));
     const account=await f.manager.connect({sessionId:session.sessionId,blogId:'123',siteIds:[one]});assert.equal(account.credentialKind,'oauth');assert.equal(account.publicationUrl,blog.URL);assert.equal(f.store.read().accountBindings[0].siteId,one);assert.equal(JSON.parse(f.secret('account:'+account.id)!).accessToken,token);assert.equal(JSON.parse(f.secret('account:'+account.id)!).expiresAt,f.grant.expiresAt);
     await assert.rejects(f.manager.connect({sessionId:session.sessionId,blogId:'123',siteIds:[two]}),/过期/);
-    const second=await f.authorize();const same=await f.manager.connect({sessionId:second.sessionId,blogId:'123',siteIds:[two]});assert.equal(same.id,account.id);assert.equal(f.store.read().accountBindings.length,2);
-    const third=await f.authorize();await f.manager.connect({sessionId:third.sessionId,blogId:'123',siteIds:[two],accountId:account.id});assert.deepEqual(f.store.read().accountBindings.map(x=>x.siteId),[two]);
+    const before=f.store.read(),cipher=f.secret('account:'+account.id),second=await f.authorize();
+    await assert.rejects(f.manager.connect({sessionId:second.sessionId,blogId:'123',siteIds:[two]}),/归属其他网站/);
+    assert.deepEqual(f.store.read(),before);assert.equal(f.secret('account:'+account.id),cipher);
+    const third=await f.authorize();const same=await f.manager.connect({sessionId:third.sessionId,blogId:'123',siteIds:[one],accountId:account.id});
+    assert.equal(same.id,account.id);assert.deepEqual(f.store.read().accountBindings.map(x=>x.siteId),[one]);
   }finally{f.close()}
 });
 test('WordPress unknown blog or removed site fails before storing credentials',async()=>{
   for(const wrong of ['blog','site']){const f=fixture();try{const session=await f.authorize(),before=f.requests();await assert.rejects(f.manager.connect({sessionId:session.sessionId,blogId:wrong==='blog'?'456':'123',siteIds:wrong==='site'?['missing']:[one]}));assert.equal(f.requests(),before);assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);}finally{f.close()}}
 });
 test('WordPress changed authenticated owner rolls back credentials and stored identities',async()=>{
-  const f=fixture();try{let session=await f.authorize();const account=await f.manager.connect({sessionId:session.sessionId,blogId:'123',siteIds:[one]}),before=f.store.read(),secret=f.secret('account:'+account.id);session=await f.authorize();f.setOwner(999);await assert.rejects(f.manager.connect({sessionId:session.sessionId,blogId:'123',siteIds:[two]}),/身份发生变化/);assert.deepEqual(f.store.read(),before);assert.equal(f.secret('account:'+account.id),secret);}finally{f.close()}
+  const f=fixture();try{let session=await f.authorize();const account=await f.manager.connect({sessionId:session.sessionId,blogId:'123',siteIds:[one]}),before=f.store.read(),secret=f.secret('account:'+account.id);session=await f.authorize();f.setOwner(999);await assert.rejects(f.manager.connect({sessionId:session.sessionId,blogId:'123',siteIds:[two]}),/博客 ID、地址或所有者发生变化/);assert.deepEqual(f.store.read(),before);assert.equal(f.secret('account:'+account.id),secret);}finally{f.close()}
 });
 test('WordPress reconnect cannot silently switch the author on a shared blog',async()=>{
   const f=fixture();try{const first=await f.authorize();await f.manager.connect({sessionId:first.sessionId,blogId:'123',siteIds:[one]});const before=f.store.read(),secrets=f.ciphers();f.setOwner(999);const other=await f.authorize();await assert.rejects(f.manager.connect({sessionId:other.sessionId,blogId:'123',siteIds:[two]}),/原发布者/);assert.deepEqual(f.store.read(),before);assert.deepEqual(f.ciphers(),secrets);}finally{f.close()}
@@ -45,7 +48,7 @@ test('WordPress reconnect cannot drop an unresolved publication binding and roll
     const first=await f.authorize(),account=await f.manager.connect({sessionId:first.sessionId,blogId:'123',siteIds:[one]});
     f.store.update(state=>state.tasks.push({id:'33333333-3333-4333-8333-333333333333',siteId:one,channelId:'wordpress-com',sourceDomain:'wordpress.com',accountId:account.id,status:'needs_input',createdAt:stamp,updatedAt:stamp,attempts:1,scheduledAt:stamp,submittedAt:stamp,message:'Pending',checkpoint:'wordpress_publish_submitting',wordpress:{blogId:'123',authorId:'789',slug:'lf-synthetic-aaaaaaaaaaaa',contentHash:'a'.repeat(64),stage:'submitting'}}));
     const before=f.store.read(),secrets=f.ciphers(),next=await f.authorize();
-    await assert.rejects(f.manager.connect({sessionId:next.sessionId,blogId:'123',siteIds:[two],accountId:account.id}),/待核验/);
+    await assert.rejects(f.manager.connect({sessionId:next.sessionId,blogId:'123',siteIds:[two],accountId:account.id}),/待(?:核验|检查)/);
     assert.deepEqual(f.store.read(),before);assert.deepEqual(f.ciphers(),secrets);
   }finally{f.close()}
 });

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { ensureWritingProfile } from '../src/shared/writing-profile';
 import {
   BLOGGER_SCOPE,
   authorizeBlogger,
@@ -206,7 +208,7 @@ test('real loopback binds an ephemeral 127.0.0.1 port and closes on cancellation
   await loopback.close();
 });
 
-test('publisher checkpoints before each POST, inserts a draft once, publishes the same post, and emits escaped nofollow HTML', async () => {
+test('publisher checkpoints before each POST, inserts a draft once, publishes the same post, and places one contextual backlink', async () => {
   const { context, checkpoints } = fixture();
   const calls: Array<{ url: URL; init: RequestInit }> = [];
   let insertedContent = '';
@@ -228,12 +230,69 @@ test('publisher checkpoints before each POST, inserts a draft once, publishes th
   assert.equal(result.publicUrl, POST_URL);
   assert.deepEqual(checkpoints.map(item => item.blogger?.stage).filter(Boolean), ['inserting', 'draft', 'publishing', 'published']);
   assert.deepEqual(checkpoints.map(item => item.checkpoint), ['blogger_insert_submitting', 'blogger_draft_created', 'blogger_publish_submitting', 'blogger_published']);
-  assert.match(insertedContent, /data-linkflow-operation="33333333-3333-4333-8333-333333333333"/);
+  assert.doesNotMatch(insertedContent, /linkflow|data-publication-/i);
   assert.match(insertedContent, /<strong>Author:<\/strong> Example Brand/);
-  assert.match(insertedContent, /<a href="https:\/\/example\.com\/" rel="nofollow">Example Brand<\/a>/);
+  assert.match(insertedContent, /<a href="https:\/\/example\.com\/">Example Brand<\/a>/);
+  assert.doesNotMatch(insertedContent, /<p><a |\brel=/);
+  assert.equal((insertedContent.match(/<a /g) ?? []).length, 1);
   assert.equal(insertedContent.includes('<script>'), false);
   assert.equal((calls.find(call => call.init.method === 'POST')?.init.headers as Record<string, string>).authorization, `Bearer ${ACCESS_TOKEN}`);
   assert.ok(calls.every(call => !call.url.toString().includes(ACCESS_TOKEN)));
+});
+
+test('Blogger renders the writing-envelope link sentence in place, with headings and lists, and never adds a second link', () => {
+  const { context, site, task, syncContext } = fixture();
+  site.language = 'zh-CN';
+  task.draft = { ...task.draft!, body: ['## 先看什么', '比较输入、失败行为与运行限制。', '- 记录版本\n- 保留来源', BODY, `完整说明整理在[Example Brand](https://example.com/)。`].join('\n\n') };
+  syncContext();
+  const html = bloggerTesting.approvedArticle(context).baseContent;
+  assert.match(html, /<h2>先看什么<\/h2>/);
+  assert.match(html, /<ul><li>记录版本<\/li><li>保留来源<\/li><\/ul>/);
+  assert.match(html, /<p>完整说明整理在<a href="https:\/\/example\.com\/">Example Brand<\/a>。<\/p>/);
+  assert.match(html, /<strong>作者：<\/strong> Example Brand/);
+  assert.doesNotMatch(html, /<p><a |\brel=|\]\(/);
+  assert.equal((html.match(/<a /g) ?? []).length, 1);
+});
+
+test('Blogger renders heading-led blocks, quotes, emphasis, code and images without raw Markdown, and links the target when only other links exist', () => {
+  const { context, site, task, syncContext } = fixture();
+  site.language = 'en';
+  task.draft = { ...task.draft!, body: ['### Checks\nCompare the inputs first.', '> Keep the source.', 'Use *care* and `--dry-run`.', '![chart](https://cdn.example.org/a.png)', 'See [the guide](http://example.org/guide) and [docs](https://docs.example.org/).', '```\nnpm test\n```', BODY].join('\n\n') };
+  syncContext();
+  const html = bloggerTesting.approvedArticle(context).baseContent;
+  assert.match(html, /<h3>Checks<\/h3>\n<p>Compare the inputs first\.<\/p>/);
+  assert.match(html, /<blockquote><p>Keep the source\.<\/p><\/blockquote>/);
+  assert.match(html, /<em>care<\/em> and <code>--dry-run<\/code>/);
+  assert.match(html, /<pre><code>npm test<\/code><\/pre>/);
+  assert.doesNotMatch(html, /###|&gt;|!\[|\]\(|\*care\*/);
+  assert.match(html, /See the guide and <a href="https:\/\/docs\.example\.org\/">docs<\/a>/);
+  // The only link points elsewhere, so the target link sentence is still added.
+  assert.match(html, /<a href="https:\/\/example\.com\/">Example Brand<\/a>/);
+});
+
+test('a previously submitted legacy Blogger draft still resumes with its original HTML', async () => {
+  const f = fixture();
+  const draft = f.task.draft!;
+  const oldBody = draft.body.split(/\n\s*\n/).map(paragraph => `<p>${paragraph}</p>`).join('\n');
+  const oldContent = [`<p>${draft.description}</p>`, oldBody,
+    '<p><strong>Author:</strong> Example Brand</p>',
+    '<p><a href="https://example.com/" rel="nofollow">Example Brand</a></p>'].join('\n');
+  const contentHash = createHash('sha256').update(`${draft.title}\u0000${oldContent}`).digest('hex');
+  f.setTask({ submittedAt: NOW.toISOString(), blogger: {
+    blogId: BLOG_ID, postId: POST_ID, operationId: '45454545-4545-4454-8454-454545454545', contentHash, stage: 'draft',
+  } });
+  let publishes = 0;
+  const result = await runBloggerTask(f.context, { now: () => NOW, request: baseApi(async (url, init) => {
+    if (url.pathname === `/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}` && init.method === 'GET') return json(post(oldContent, 'DRAFT'));
+    if (url.pathname === `/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}/publish` && init.method === 'POST') {
+      publishes++;
+      return json(post(oldContent, 'LIVE'));
+    }
+    throw Error(`unexpected ${init.method} ${url}`);
+  }) });
+  assert.equal(result.status, 'review');
+  assert.equal(publishes, 1);
+  assert.equal(f.task.blogger?.contentHash, contentHash);
 });
 
 test('lost publish response preserves the same-post publishing checkpoint under the Controller snapshot contract', async () => {
@@ -277,7 +336,7 @@ test('a remote Blogger checkpoint without idempotency state never authorizes a n
   let requests = 0;
   const result = await runBloggerTask(context, { request: async () => { requests++; throw new Error('must not request'); }, now: () => NOW });
   assert.equal(result.status, 'needs_input');
-  assert.match(result.message, /缺少幂等记录/);
+  assert.match(result.message, /缺少防重复记录/);
   assert.equal(requests, 0);
 });
 
@@ -313,7 +372,7 @@ test('lost insert response preserves the pre-POST checkpoint and is never follow
   assert.equal(insertCalls, 1);
 });
 
-test('lost insert response recovers only one exact full-body marker match and publishes that postId', async () => {
+test('lost insert response recovers one exact title and body hash and publishes that postId', async () => {
   const { context, task, syncContext } = fixture();
   let expectedContent = '';
   const first = baseApi(async (url, init) => {
@@ -424,6 +483,40 @@ test('read-only reconciliation returns the original operation as a claimed draft
   assert.ok(methods.every(method => method === 'GET'));
 });
 
+test('legacy Blogger marker remains readable by saved post ID without creating another post', async () => {
+  const { context, setTask } = fixture();
+  const article = bloggerTesting.approvedArticle(context);
+  const operationId = '89898989-8989-4898-8989-898989898989';
+  const legacy = `<div data-linkflow-operation="${operationId}" data-linkflow-content-sha256="${article.contentHash}">\n${article.baseContent}\n</div>`;
+  setTask({ submittedAt: NOW.toISOString(), blogger: { blogId: BLOG_ID, postId: POST_ID, operationId, contentHash: article.contentHash, stage: 'draft' } });
+  const methods: string[] = [];
+  const result = await reconcileBloggerTask(context, { now: () => NOW, request: baseApi(async (url, init) => {
+    methods.push(String(init.method));
+    assert.equal(url.pathname, `/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}`);
+    return json(post(legacy, 'DRAFT'));
+  }) });
+  assert.equal(result.status, 'draft');
+  assert.ok(methods.every(method => method === 'GET'));
+});
+
+test('legacy Blogger marker can be found after an unknown insert without another POST', async () => {
+  const { context, setTask } = fixture();
+  const article = bloggerTesting.approvedArticle(context);
+  const operationId = '73737373-7373-4373-8373-737373737373';
+  const legacy = `<div data-linkflow-operation="${operationId}" data-linkflow-content-sha256="${article.contentHash}">\n${article.baseContent}\n</div>`;
+  setTask({ submittedAt: NOW.toISOString(), blogger: { blogId: BLOG_ID, operationId, contentHash: article.contentHash, stage: 'inserting' } });
+  const methods: string[] = [];
+  const result = await reconcileBloggerTask(context, { now: () => NOW, request: baseApi(async (url, init) => {
+    methods.push(String(init.method));
+    if (url.pathname === `/blogger/v3/blogs/${BLOG_ID}/posts`) {
+      return json({ kind: 'blogger#postList', items: url.searchParams.get('status') === 'LIVE' ? [post(legacy, 'LIVE')] : [] });
+    }
+    throw Error('unexpected request');
+  }) });
+  assert.equal(result.status, 'found');
+  assert.ok(methods.every(method => method === 'GET'));
+});
+
 test('draft reconciliation fails closed when full content no longer matches', async () => {
   const { context, setTask } = fixture();
   const article = bloggerTesting.approvedArticle(context);
@@ -480,18 +573,28 @@ test('403 and 429 are classified without exposing remote bodies or credentials',
 });
 
 
-test('Blogger public verification binds the persisted operation and exact emitted body without an OAuth write',async()=>{
+test('Blogger public verification binds the saved URL and exact emitted body without an OAuth write',async()=>{
   const f=fixture(),article=bloggerTesting.approvedArticle(f.context),operationId='11111111-1111-4111-8111-111111111111';
   f.setTask({publicUrl:POST_URL,submittedAt:NOW.toISOString(),articleApprovedAt:undefined,blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'published'}});
   const content=article.content(operationId),page=`<article><h3 class="post-title">${article.title}</h3><div class="post-body">${content}</div></article>`;
   const original=structuredClone(f.task);
-  for(const variant of ['valid','changed-text','wrong-marker','footer-only','noindex','wrong-title','wrong-link']){
+  for(const variant of ['valid','changed-text','duplicate-body','footer-only','noindex','wrong-title','wrong-link']){
     const result=await verifyBloggerPublication(f.context,{request:async()=>{throw Error('verification must not use credentials or token refresh');},publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html','x-robots-tag':variant==='noindex'?'noindex':''},body:Buffer.from(
-      variant==='changed-text'?page.replace('Practical checks','Mutated checks'):variant==='wrong-marker'?page.replace(operationId,'22222222-2222-4222-8222-222222222222'):variant==='footer-only'?`<h3 class="post-title">${article.title}</h3><footer><a href="https://example.com/">brand</a></footer>`:variant==='wrong-title'?page.replace(`<h3 class="post-title">${article.title}</h3>`,'<h3 class="post-title">Different title</h3>'):variant==='wrong-link'?page.replace('href="https://example.com/"','href="https://example.com/other"'):page
+      variant==='changed-text'?page.replace('Practical checks','Mutated checks'):variant==='duplicate-body'?page.replace(content,content+content):variant==='footer-only'?`<h3 class="post-title">${article.title}</h3><footer><a href="https://example.com/">brand</a></footer>`:variant==='wrong-title'?page.replace(`<h3 class="post-title">${article.title}</h3>`,'<h3 class="post-title">Different title</h3>'):variant==='wrong-link'?page.replace('href="https://example.com/"','href="https://example.com/other"'):page
     )})}});
     assert.equal(result.found,variant==='valid',variant);if(variant!=='valid')assert.equal(result.outcome,'invalid');
   }
   assert.deepEqual(f.task,original);assert.equal(f.checkpoints.length,0);
+});
+
+test('Blogger public verification reads the historical marker but does not emit it in new posts',async()=>{
+  const f=fixture(),article=bloggerTesting.approvedArticle(f.context),operationId='12121212-1212-4212-8212-121212121212';
+  f.setTask({publicUrl:POST_URL,submittedAt:NOW.toISOString(),articleApprovedAt:undefined,blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'published'}});
+  const legacy=`<div data-linkflow-operation="${operationId}" data-linkflow-content-sha256="${article.contentHash}">\n${article.baseContent}\n</div>`;
+  const page=`<article><h3 class="post-title">${article.title}</h3><div class="post-body">${legacy}</div></article>`;
+  const result=await verifyBloggerPublication(f.context,{publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from(page)})}});
+  assert.equal(result.found,true);
+  assert.doesNotMatch(article.content(operationId),/linkflow|data-publication-/i);
 });
 
 test('Blogger title must belong uniquely to the publication containing the original operation',async()=>{
@@ -515,4 +618,110 @@ test('Blogger title must belong uniquely to the publication containing the origi
     assert.equal(result.found,found,name);if(!found)assert.equal(result.outcome,'invalid');
   }
   assert.deepEqual(f.task,before);assert.equal(f.checkpoints.length,0);
+});
+
+import {publicationDraftHash} from '../src/main/publication-snapshot';
+test('Blogger readback and public verification rebuild the submitted snapshot after site and draft edits',async()=>{
+  const f=fixture(),article=bloggerTesting.approvedArticle(f.context),operationId='11111111-1111-4111-8111-111111111111',draft=structuredClone(f.task.draft!);
+  f.setTask({submittedAt:NOW.toISOString(),articleApprovedAt:undefined,publicationSnapshot:{version:1,capturedAt:NOW.toISOString(),source:'submitted_draft',siteUrl:f.site.url,targetUrl:f.site.url,siteName:f.site.name,language:'en',draft,contentHash:publicationDraftHash(draft)},blogger:{blogId:BLOG_ID,postId:POST_ID,operationId,contentHash:article.contentHash,stage:'draft'},draft:{...draft,title:'Edited title',body:'Edited draft body'}});
+  Object.assign(f.site,{name:'Changed Brand',url:'https://example-site.com/',language:'zh'});
+  const found=await reconcileBloggerTask(f.context,{now:()=>NOW,request:baseApi(async(url,init)=>{assert.equal(init.method,'GET');assert.equal(url.pathname,`/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}`);return json(post(article.content(operationId),'LIVE'))})});
+  assert.equal(found.status,'found');
+  if(found.status!=='found')return;
+  f.setTask({publicUrl:POST_URL,blogger:found.blogger});
+  const page=`<article><h3 class="post-title">${article.title}</h3><div class="post-body">${article.content(operationId)}</div></article>`;
+  const result=await verifyBloggerPublication(f.context,{publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from(page)})}});
+  assert.equal(result.found,true,result.reason);assert.equal(f.task.draft?.title,'Edited title');assert.equal(f.checkpoints.length,0);
+});
+
+test('Blogger keeps the submitted draft and requires manual publishing after local draft edits', async () => {
+  const f = fixture();
+  const article = bloggerTesting.approvedArticle(f.context);
+  const original = structuredClone(f.task.draft!);
+  const operationId = '56565656-5656-4656-8656-565656565656';
+  f.setTask({
+    submittedAt: NOW.toISOString(),
+    publicationSnapshot: { version: 1, capturedAt: NOW.toISOString(), source: 'submitted_draft',
+      siteUrl: f.site.url, targetUrl: f.site.url, siteName: f.site.name, language: f.site.language,
+      draft: original, contentHash: publicationDraftHash(original) },
+    blogger: { blogId: BLOG_ID, postId: POST_ID, operationId, contentHash: article.contentHash, stage: 'draft' },
+    draft: { ...original, title: 'A later local edit', body: `${BODY}\n\nAdditional local text.` },
+  });
+  let requests = 0;
+  const result = await runBloggerTask(f.context, { now: () => NOW, request: async () => {
+    requests++;
+    throw Error('unexpected request');
+  } });
+  assert.equal(result.status, 'needs_input');
+  assert.match(result.message, /不会自动续发/);
+  assert.equal(requests, 0);
+  assert.equal(f.task.draft?.title, 'A later local edit');
+  assert.equal(f.task.blogger?.contentHash, article.contentHash);
+  assert.equal(f.task.blogger?.stage, 'draft');
+});
+
+test('Blogger resumes the same post when current draft matches the submitted snapshot hash', async () => {
+  const f = fixture();
+  const original = structuredClone(f.task.draft!);
+  const article = bloggerTesting.approvedArticle(f.context);
+  const operationId = '78787878-7878-4878-8878-787878787878';
+  f.setTask({
+    submittedAt: NOW.toISOString(),
+    publicationSnapshot: { version: 1, capturedAt: NOW.toISOString(), source: 'submitted_draft',
+      siteUrl: f.site.url, targetUrl: f.site.url, siteName: f.site.name, language: f.site.language,
+      draft: original, contentHash: publicationDraftHash(original) },
+    blogger: { blogId: BLOG_ID, postId: POST_ID, operationId, contentHash: article.contentHash, stage: 'draft' },
+  });
+  let publishes = 0;
+  const result = await runBloggerTask(f.context, { now: () => NOW, request: baseApi(async (url, init) => {
+    if (url.pathname === `/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}` && init.method === 'GET') {
+      return json(post(article.baseContent, 'DRAFT'));
+    }
+    if (url.pathname === `/blogger/v3/blogs/${BLOG_ID}/posts/${POST_ID}/publish` && init.method === 'POST') {
+      publishes++;
+      return json(post(article.baseContent, 'LIVE'));
+    }
+    throw Error(`unexpected ${init.method} ${url}`);
+  }) });
+  assert.equal(result.status, 'review');
+  assert.equal(publishes, 1);
+  assert.equal(f.task.blogger?.contentHash, article.contentHash);
+});
+
+test('Blogger retains the draft receipt and makes no request when the submitted snapshot hash is invalid', async () => {
+  const f = fixture();
+  const original = structuredClone(f.task.draft!);
+  const article = bloggerTesting.approvedArticle(f.context);
+  const receipt: NonNullable<Task['blogger']> = { blogId: BLOG_ID, postId: POST_ID,
+    operationId: '67676767-6767-4676-8676-676767676767', contentHash: article.contentHash, stage: 'draft' };
+  f.setTask({
+    submittedAt: NOW.toISOString(),
+    publicationSnapshot: { version: 1, capturedAt: NOW.toISOString(), source: 'submitted_draft',
+      siteUrl: f.site.url, targetUrl: f.site.url, siteName: f.site.name, language: f.site.language,
+      draft: original, contentHash: 'a'.repeat(64) },
+    blogger: receipt,
+  });
+  let requests = 0;
+  const result = await runBloggerTask(f.context, { now: () => NOW, request: async () => {
+    requests++;
+    throw Error('unexpected request');
+  } });
+  assert.equal(result.status, 'needs_input');
+  assert.match(result.message, /快照校验失败/);
+  assert.equal(requests, 0);
+  assert.deepEqual(f.task.blogger, receipt);
+});
+
+test('public author labels follow the site language including regional variants',()=>{
+ for(const [language,label] of [['vi-VN','Tác giả:'],['tr','Yazar:'],['ja','著者：'],['zh-TW','作者：']]){
+  const f=fixture();f.context.site.language=language;
+  assert.ok(bloggerTesting.approvedArticle(f.context).baseContent.includes(`<strong>${label}</strong>`));
+ }
+});
+
+test('an unsubmitted Blogger draft ignores a stale publication snapshot',()=>{
+ const f=fixture();
+ f.task.publicationSnapshot={version:1,capturedAt:NOW.toISOString(),source:'submitted_draft',siteUrl:'https://old.example.com/',targetUrl:'https://old.example.com/',siteName:'Old site',language:'en',draft:{title:'Old title',description:'Old description',body:'Old body'},contentHash:'0'.repeat(64)};
+ const html=bloggerTesting.approvedArticle(f.context).baseContent;
+ assert.ok(html.includes(f.context.site.name));assert.ok(!html.includes('Old site'));
 });

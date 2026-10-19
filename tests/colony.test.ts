@@ -74,3 +74,21 @@ test('Colony binds full article and agent, preserving moderation and cognition h
   assert.equal(matchColonyPost({...post,status:'removed'},postInput,pending)?.state,'held');
   for(const patch of [{body:'Different'},{author:{...post.author,user_type:'human'}},{author:{...post.author,id:post.id}},{colony_name:'another-community'},{title:'Another title'},{tags:[]}])assert.equal(matchColonyPost({...post,...patch},postInput,pending),undefined);
 });
+
+test('new Colony registration creates distinct site-derived neutral public names',async()=>{
+  const names:Array<{username:string;display_name:string}>=[];
+  for(const name of ['Example Alpha','Example Beta']){
+    let account:any;const secrets=new Map<string,string>();let posted:{username:string;display_name:string}|undefined;
+    const context:any={site:{name,url:'https://example.com/'},channel:{id:'colony',domain:'thecolony.ai',automation:'api',kind:'community',accountRequired:true,articleRequired:true},task:{id:pending.id,channelId:'colony',sourceDomain:'thecolony.ai'},signal:new AbortController().signal,
+      getAccount:()=>account,saveAccount:async(value:any,secret:string)=>{account=value;secrets.set(`account:${value.id}`,secret)},secrets:{get:async(key:string)=>secrets.get(key),set:async(key:string,value:string)=>{secrets.set(key,value)}},authorizeColonyMutation:()=>true};
+    await prepareColonyIdentity(context,{now,fetch:async(url,init)=>{
+      if(url===COLONY_BEGIN_URL){posted=JSON.parse(String(init.body));names.push(posted!);return new Response(JSON.stringify({...pending,username:posted!.username}),{status:201,headers:{'content-type':'application/json'}})}
+      if(url===COLONY_CONFIRM_URL)return new Response(JSON.stringify({...active,username:posted!.username}),{status:200,headers:{'content-type':'application/json'}});
+      if(url===COLONY_TOKEN_URL)return new Response(JSON.stringify({access_token:'t'.repeat(32),token_type:'bearer'}),{status:200,headers:{'content-type':'application/json'}});
+      if(url===COLONY_ME_URL)return new Response(JSON.stringify({id:pending.id,username:posted!.username,display_name:posted!.display_name,user_type:'agent',created_at:now().toISOString()}),{status:200,headers:{'content-type':'application/json'}});
+      throw Error('unexpected endpoint');
+    }});
+    assert.equal(account.colony.stage,'ready');assert.doesNotMatch(account.username+' '+account.displayName,/linkflow/i);
+  }
+  assert.notEqual(names[0].username,names[1].username);assert.notEqual(names[0].display_name,names[1].display_name);
+});

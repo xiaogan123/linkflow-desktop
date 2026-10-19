@@ -7,6 +7,7 @@ import {validateBackup} from '../src/main/backup-validation';
 import {CHANNELS,matchChannels} from '../src/integrations/catalog';
 import {requiresArticleReview} from '../src/integrations/eligibility';
 import {safeMessage} from '../src/main/validation';
+import {bindAccount} from '../src/main/account-bindings';
 
 const id='11111111-1111-4111-8111-111111111111';
 const url='https://gist.github.com/octocat/aabbccddeeff11223344556677889900';
@@ -41,8 +42,16 @@ test('connection validates before saving encrypted secret, reuses one identity a
  await assert.rejects(connectGist(store,vault,'wrong-owner',a.id,async()=> 'third-user'),/不会覆盖/);assert.equal(store.read().accounts.length,2);
  }finally{store.close()}
 });
-test('Gist requires a project qualification and always requires draft review; token error text is masked',()=>{
- const store=fixture();try{const site=store.read().sites[0],c=CHANNELS.find(c=>c.id==='github-gist')!;assert.equal(matchChannels(site,[c]).length,0);site.qualifications={developer:'https://example.com/templates'};assert.equal(matchChannels(site,[c]).length,1);site.category='ai';assert.equal(requiresArticleReview(site,c),true);assert.equal(safeMessage('failed ghp_123456789abcdefgh github_pat_12345abc').includes('12345'),false)}finally{store.close()}
+test('Gist needs a software audience and project qualification; token error text is masked',()=>{
+ const store=fixture();try{const site=store.read().sites[0],c=CHANNELS.find(c=>c.id==='github-gist')!;
+  assert.equal(matchChannels(site,[c]).length,0);
+  site.qualifications={developer:'https://example.com/templates'};
+  assert.equal(matchChannels(site,[c]).length,0);
+  site.category='software';
+  assert.equal(matchChannels(site,[c]).length,1);
+  assert.equal(requiresArticleReview(site,c),true);
+  assert.equal(safeMessage('failed ghp_123456789abcdefgh github_pat_12345abc').includes('12345'),false)
+ }finally{store.close()}
 });
 
 test('failed Gist state save restores old credentials and removes new orphan credentials',async()=>{
@@ -66,5 +75,20 @@ test('Gist token refresh preserves existing mailbox and website bindings',async(
   const bindings=store.read().accountBindings;
   const updated=await connectGist(store,vault,'replacement-token',account.id,async()=> 'octocat');
   assert.equal(updated.mailboxId,mailboxId);assert.equal(store.read().accounts[0].mailboxId,mailboxId);assert.deepEqual(store.read().accountBindings,bindings);
+ }finally{store.close()}
+});
+
+test('Gist identity binds to one site and same-site rebinding remains valid',async()=>{
+ const store=fixture(),secrets=new Map<string,string>(),vault={get:async(key:string)=>secrets.get(key),set:async(key:string,value:string)=>{secrets.set(key,value)},delete:async(key:string)=>{secrets.delete(key)}},otherId='22222222-2222-4222-8222-222222222222',channel=CHANNELS.find(value=>value.id==='github-gist')!;
+ try{
+  store.update(state=>state.sites.push({...state.sites[0],id:otherId,domain:'other.example.com',url:'https://other.example.com/'}));
+  const account=await connectGist(store,vault,'synthetic-token',async()=> 'octocat');
+  store.update(state=>{bindAccount(state,account.id,id,channel)});
+  const first=store.read().accountBindings[0];
+  store.update(state=>{bindAccount(state,account.id,id,channel)});
+  assert.equal(store.read().accountBindings.length,1);
+  assert.equal(store.read().accountBindings[0].id,first.id);
+  assert.throws(()=>store.update(state=>{bindAccount(state,account.id,otherId,channel)}),/归属其他网站/);
+  assert.deepEqual(store.read().accountBindings.map(value=>value.siteId),[id]);
  }finally{store.close()}
 });

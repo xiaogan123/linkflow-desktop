@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test,{beforeEach,type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
 import {Controller} from '../src/main/controller';
@@ -7,6 +7,7 @@ import type {AiPort,Site,Task} from '../src/shared/types';
 import type {Vault} from '../src/main/vault';
 import {validateBackup} from '../src/main/backup-validation';
 const stamp='2026-10-01T00:00:00.000Z',sid='11111111-1111-4111-8111-111111111111',tid='22222222-2222-4222-8222-222222222222';
+beforeEach(t=>(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-19T10:17:00.000Z')}));
 const site:Site={id:sid,url:'https://example.com',domain:'example.com',email:'owner@example.com',name:'Example',description:'Original guides',category:'content',language:'en',status:'ready',monthlyTarget:2,articleReviewMode:'ai',createdAt:stamp};
 const task:Task={id:tid,siteId:sid,channelId:'telegraph',sourceDomain:'telegra.ph',status:'needs_input',createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:1,message:'uncertain',submittedAt:stamp,checkpoint:'telegraph_publish_uncertain',draft:{title:'Article',description:'Useful article',body:'Full original article'}};
 const vault={ready:true,available:()=>true,get:async()=>undefined,set:async()=>{},delete:async()=>{}} as unknown as Vault;
@@ -35,10 +36,10 @@ test('positive reconciliation reattaches original receipt and verifies without i
  const c=new Controller(store,vault,'isolated',{reconcileTelegraph:async()=>({status:'found',publicUrl:'https://telegra.ph/original-10-01'}),executeTask:async()=>{throw Error('must not publish')}});c.verify=async id=>{verified++;c.patch(id,{status:'live',firstLiveAt:stamp,lastCheckedAt:new Date().toISOString(),nextCheckAt:new Date(Date.now()+7*86400000).toISOString(),health:'healthy',linkCheck:'found'})};
  try{await c.tick();assert.equal(verified,1);assert.equal(store.read().tasks[0].publicUrl,'https://telegra.ph/original-10-01');assert.equal(store.read().tasks[0].submittedAt,stamp);assert.equal(store.read().tasks[0].reconcileAfter,undefined)}finally{store.close()}
 });
-test('six paid calls is cumulative per task; seventh fails before provider invocation',async()=>{
- const store=fixture();store.update(s=>s.tasks=[{...task,status:'queued',submittedAt:undefined,cost:{aiCalls:5}}]);let providerCalls=0;
+test('three paid calls are cumulative per task; the fourth fails before provider invocation',async()=>{
+ const store=fixture();store.update(s=>s.tasks=[{...task,status:'queued',submittedAt:undefined,cost:{aiCalls:2}}]);let providerCalls=0;
  const c=new Controller(store,vault,'isolated',{aiFactory:(_s,_v,onCall)=>({json:async<T>()=>{onCall!();providerCalls++;return {} as T}})});
- try{const ai=(c as unknown as {ai(id:string):AiPort}).ai(tid);await ai.json('',{});await assert.rejects(()=>ai.json('',{}),/预算/);assert.equal(providerCalls,1);assert.equal(store.read().tasks[0].cost?.aiCalls,6);assert.equal(Object.values(store.read().usage).reduce((a,b)=>a+b,0),1)}finally{store.close()}
+ try{const ai=(c as unknown as {ai(id:string):AiPort}).ai(tid);await ai.json('',{});await assert.rejects(()=>ai.json('',{}),/预算/);assert.equal(providerCalls,1);assert.equal(store.read().tasks[0].cost?.aiCalls,3);assert.equal(Object.values(store.read().usage).reduce((a,b)=>a+b,0),1)}finally{store.close()}
 });
 test('new topic and recovery fields survive backup validation without grants or secrets',()=>{
  const store=fixture();try{store.update(s=>{s.sites[0].topics=[{url:'https://example.com/guide',lastModified:'2026-10-01',discoveredAt:stamp}];s.tasks=[{...task,topicUrl:'https://example.com/guide',topicContentHash:'a'.repeat(64),topicSwitchAttempts:1,articleAttempts:[{topicUrl:'https://example.com/old-guide',recordedAt:stamp,reason:'rejected',draft:{title:'Old',description:'Old',body:'Old article'}}],recoveryAttempts:1,reconcileAttempts:2,reconcileAfter:stamp,waitingSince:stamp,deferredAt:stamp}]});const restored=validateBackup({state:store.read(),secrets:{}});assert.deepEqual(restored.state.sites[0].topics,store.read().sites[0].topics);assert.equal(restored.state.tasks[0].topicContentHash,'a'.repeat(64));assert.equal(restored.state.tasks[0].topicSwitchAttempts,1);assert.equal(restored.state.tasks[0].articleAttempts?.[0].draft?.body,'Old article');assert.equal(restored.state.tasks[0].recoveryAttempts,1);assert.equal(restored.state.tasks[0].reconcileAttempts,2)}finally{store.close()}

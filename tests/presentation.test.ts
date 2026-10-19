@@ -8,19 +8,19 @@ const task=(overrides:Partial<Task>={}):Task=>({id:'task-1',siteId:'site-1',chan
 const failedReview=(reasonCode:ArticleReviewReasonCode)=>({status:'failed' as const,reason:'fixture',reasonCode,reviewedAt:stamp,evidenceUrls:[],draftRevision:1,contentHash:'a'.repeat(64),contextHash:'b'.repeat(64)});
 
 test('only one bounded final system recovery is presented as automatic',()=>{
-  const eligible=task({checkpoint:'system_wait',nextCheckAt:'2026-10-05T00:00:00.000Z',recoveryAttempts:0,cost:{aiCalls:5},articleReview:failedReview('ai_unavailable')});
+  const eligible=task({checkpoint:'system_wait',nextCheckAt:'2026-10-05T00:00:00.000Z',recoveryAttempts:0,cost:{aiCalls:2},articleReview:failedReview('ai_unavailable')});
   assert.equal(taskCanAutoRecover(eligible),true);
   assert.equal(taskHasAutomaticFollowup(eligible),true);
   assert.equal(taskAutomaticFollowupAt(eligible),eligible.nextCheckAt);
   assert.equal(taskPresentation(eligible,'ai').label,'等待最后一次自动恢复');
   for(const exhausted of [
     {...eligible,recoveryAttempts:1},
-    {...eligible,cost:{aiCalls:6}},
+    {...eligible,cost:{aiCalls:3}},
     {...eligible,nextCheckAt:undefined},
   ]){
     assert.equal(taskCanAutoRecover(exhausted),false);
     assert.equal(taskHasAutomaticFollowup(exhausted),false);
-    assert.equal(taskPresentation(exhausted,'ai').label,'系统处理已暂停');
+    assert.equal(taskPresentation(exhausted,'ai').label,'自动处理已停止');
   }
   const rejected={...eligible,articleReview:failedReview('content_rejected')};
   assert.equal(taskCanAutoRecover(rejected),false);
@@ -31,7 +31,7 @@ test('only one bounded final system recovery is presented as automatic',()=>{
 test('an interrupted AI marker can authorize the same bounded recovery without review metadata',()=>{
   const interrupted=task({checkpoint:'system_wait',nextCheckAt:'2026-10-05T00:00:00.000Z',recoveryEligible:true,recoveryAttempts:0,cost:{aiCalls:1}});
   assert.equal(taskCanAutoRecover(interrupted),true);
-  const invalidEvidence=task({checkpoint:'system_wait',nextCheckAt:'2026-10-05T00:00:00.000Z',recoveryEligible:true,recoveryAttempts:0,cost:{aiCalls:3},articleReview:failedReview('evidence_invalid')});
+  const invalidEvidence=task({checkpoint:'system_wait',nextCheckAt:'2026-10-05T00:00:00.000Z',recoveryEligible:true,recoveryAttempts:0,cost:{aiCalls:2},articleReview:failedReview('evidence_invalid')});
   assert.equal(taskWorkKind(invalidEvidence,'ai'),'system_retry');
   assert.equal(taskCanAutoRecover(invalidEvidence),true);
 });
@@ -67,7 +67,7 @@ test('a disabled channel blocks execution recovery but keeps read-only published
   assert.equal(taskCanAutoRecover(recovery,false),false);
   assert.equal(taskAutomaticFollowupAt(recovery,false),undefined);
   assert.equal(taskHasAutomaticFollowup(recovery,false),false);
-  assert.equal(taskPresentation(recovery,'ai',false).label,'系统处理已暂停');
+  assert.equal(taskPresentation(recovery,'ai',false).label,'自动处理已停止');
 
   const queued=task({channelId:'github-gist',status:'queued',scheduledAt:'2026-10-05T00:00:00.000Z'});
   assert.equal(taskAutomaticFollowupAt(queued,false),undefined);
@@ -81,14 +81,14 @@ test('a disabled channel blocks execution recovery but keeps read-only published
 test('deferred human work keeps a distinct label and only the unsubmitted original can resume',()=>{
   const deferred=task({status:'skipped',checkpoint:'manual_submission',deferredAt:'2026-10-06T00:00:00.000Z',draft:{title:'saved',description:'saved',body:'saved'}});
   assert.equal(taskWorkKind(deferred,'manual'),'deferred');
-  assert.equal(taskPresentation(deferred,'manual').label,'已搁置');
+  assert.equal(taskPresentation(deferred,'manual').label,'没做成');
   assert.equal(canResumeDeferredTask(deferred),true);
   assert.equal(canRetryTaskManually(deferred,'manual'),false);
 
   const unsafe={...deferred,checkpoint:'telegraph_publish_uncertain',submittedAt:stamp,reconcileAttempts:3};
   assert.equal(canResumeDeferredTask(unsafe),false);
   assert.equal(taskWorkKind(unsafe,'ai'),'deferred');
-  assert.equal(taskPresentation(unsafe,'ai').label,'已搁置 · 结果未知');
+  assert.equal(taskPresentation(unsafe,'ai').label,'没做成 · 结果待确认');
   assert.equal(canRetryTaskManually(unsafe,'ai'),false);
 });
 
@@ -98,7 +98,7 @@ test('claimed Blogger draft displays the scheduled bounded recovery instead of a
  assert.equal(taskCanAutoRecover(draft),true);
  assert.equal(taskWorkKind(draft,'ai'),'system_retry');
  assert.equal(taskPresentation(draft,'ai').label,'等待最后一次自动恢复');
- for(const blocked of [{...draft,recoveryAttempts:1},{...draft,blogger:{...draft.blogger!,stage:'inserting' as const}},{...draft,cost:{aiCalls:6}}])assert.equal(taskWorkKind(blocked,'ai'),'user_action');
+ for(const blocked of [{...draft,recoveryAttempts:1},{...draft,blogger:{...draft.blogger!,stage:'inserting' as const}},{...draft,cost:{aiCalls:4}}])assert.equal(taskWorkKind(blocked,'ai'),'user_action');
  assert.equal(taskWorkKind(draft,'ai',false),'user_action');
 });
 

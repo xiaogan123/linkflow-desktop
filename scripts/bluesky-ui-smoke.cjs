@@ -220,7 +220,7 @@ if(!process.versions.electron){
       check('Bluesky API identity has no generic password reveal',!blueskyReveal.exists);
       check('ordinary password identity keeps its password reveal',ordinaryReveal.exists);
 
-      await clickText('添加 / 连接账号');
+      await clickText('连接账号');
       await waitFor('document.querySelector(".account-guide-drawer")!==null');
       const pickedBluesky=await evaluate('(()=>{const option=[...document.querySelectorAll("[role=option]")].find(item=>item.querySelector("strong")?.textContent==="Bluesky");if(!option)return false;option.click();return true})()');
       assert(pickedBluesky,'Bluesky platform option');
@@ -228,12 +228,12 @@ if(!process.versions.electron){
       check('guided entry identifies the existing Bluesky connection before opening its dedicated form',await evaluate('document.querySelector(".platform-selection")?.innerText.includes("已连接")&&[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="管理或新增连接")'));
       const openedBluesky=await evaluate('(()=>{const button=[...document.querySelectorAll(".account-guide-drawer .platform-selection button")].find(item=>item.innerText.trim()==="管理或新增连接"&&!item.disabled);if(!button)return false;button.click();return true})()');
       assert(openedBluesky,'guided Bluesky connection action');
-      await waitFor('document.querySelector(".side-drawer.narrow")?.innerText.includes("BLUESKY")');
+      await waitFor('document.querySelector(".side-drawer.narrow[aria-label=\\"连接 Bluesky\\"] h2")?.textContent==="连接 Bluesky"');
       await waitFor('document.querySelector(".account-guide-drawer")===null');
       check('platform guide closes after handing off to the dedicated Bluesky form',await evaluate('document.querySelector(".account-guide-drawer")===null'));
       const blankSubmit=await evaluate('(()=>{const button=[...document.querySelectorAll("button")].find(item=>item.innerText.trim()==="验证并连接");return !!button&&button.disabled})()');
       check('new connection submit is disabled while required fields are empty',blankSubmit);
-      const passwordField=await inputInfo('Bluesky 应用专用密码');
+      const passwordField=await inputInfo('Bluesky 授权码');
       check(
         'Bluesky uses a dedicated non-prefilled password field',
         passwordField.exists&&passwordField.type==='password'&&passwordField.autocomplete==='new-password'&&passwordField.value==='',
@@ -252,7 +252,7 @@ if(!process.versions.electron){
 
       const failurePassword='fixture-password-local-failure';
       await setInput('Bluesky 账号名称','failure.bsky.social');
-      await setInput('Bluesky 应用专用密码',failurePassword);
+      await setInput('Bluesky 授权码',failurePassword);
       check(
         'typed app password is never displayed as page text',
         await evaluate('!document.body.innerText.includes("fixture-password-local-failure")'),
@@ -269,7 +269,7 @@ if(!process.versions.electron){
         'local connection failure does not bind sites',
         await actionCount('account:set-bindings')===0,
       );
-      const clearedAfterFailure=await inputInfo('Bluesky 应用专用密码');
+      const clearedAfterFailure=await inputInfo('Bluesky 授权码');
       check(
         'app password is cleared after local connection failure',
         clearedAfterFailure.value===''&&!await evaluate('document.documentElement.innerHTML.includes("fixture-password-local-failure")'),
@@ -281,7 +281,7 @@ if(!process.versions.electron){
 
       const successPassword='fixture-password-new-success';
       await setInput('Bluesky 账号名称','fresh.bsky.social');
-      await setInput('Bluesky 应用专用密码',successPassword);
+      await setInput('Bluesky 授权码',successPassword);
       await setSite('two.example',true);
       await setSite('three.example',true);
       sites=await siteStates();
@@ -312,9 +312,9 @@ if(!process.versions.electron){
       );
 
       await clickLabel('更新 @author.bsky.social');
-      await waitFor('document.querySelector(".side-drawer.narrow")?.innerText.includes("BLUESKY")');
+      await waitFor('document.querySelector(".side-drawer.narrow[aria-label=\\"连接 Bluesky\\"] h2")?.textContent==="更新 Bluesky 连接"');
       const existingHandle=await inputInfo('Bluesky 账号名称');
-      const existingPassword=await inputInfo('Bluesky 应用专用密码');
+      const existingPassword=await inputInfo('Bluesky 授权码');
       check(
         'existing identity opens with its handle and no stored password',
         existingHandle.value==='author.bsky.social'&&existingPassword.value==='',
@@ -328,7 +328,7 @@ if(!process.versions.electron){
       );
       const reconnectPassword='fixture-password-same-identity';
       await setSite('two.example',true);
-      await setInput('Bluesky 应用专用密码',reconnectPassword);
+      await setInput('Bluesky 授权码',reconnectPassword);
       await clickText('验证并连接');
       await waitFor('document.querySelector(".side-drawer.narrow")===null');
       check(

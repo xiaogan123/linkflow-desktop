@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {CHANNELS,matchChannels} from '../src/integrations/catalog';
 import {eligibilityFor} from '../src/integrations/eligibility';
 import {composeChannels,saveCustomChannel,deleteCustomChannel,importChannelMetrics} from '../src/integrations/channel-library';
-import {channelAuthoritySnapshot} from '../src/integrations/channel-authority-snapshots';
+import {channelAuthoritySnapshot,channelMetricSnapshot} from '../src/integrations/channel-authority-snapshots';
 import type {Site} from '../src/shared/types';
 const site:Site={id:'site',domain:'example.com',url:'https://example.com',email:'owner@example.com',name:'Recipes',description:'Cooking and recipes',category:'content',language:'en',monthlyTarget:2,status:'ready',createdAt:'2026-01-01'};
 const channel=(id:string)=>CHANNELS.find(c=>c.id===id)!;
@@ -83,15 +83,15 @@ test('authority target validation distinguishes a public domain from a credentia
  assert.equal(apply({scope:'page',target:'https://example.com/article'}).telegraph.authority?.target,'https://example.com/article');
 });
 
-test('official monthly DR snapshots retain month precision and never propagate to hosted subdomains',()=>{
+test('built-in monthly DR snapshots retain month precision and never propagate to hosted subdomains',()=>{
  for(const domain of ['github.com','medium.com','wordpress.com']){
   const score=channelAuthoritySnapshot(domain)!;
   assert.equal(score.target,domain);assert.equal(score.scope,'domain');assert.equal(score.asOf,undefined);
-  assert.equal(score.dataMonth,'2026-10');assert.equal(score.checkedAt,'2026-10-12');assert.equal(score.provenance,'official_snapshot');
+  assert.equal(score.dataMonth,'2026-10');assert.equal(score.checkedAt,'2026-10-12');assert.equal(score.name,'内置 DR');assert.equal(score.provenance,undefined);
  }
  for(const domain of ['gist.github.com','github.io','author.wordpress.com','author.medium.com','__proto__'])assert.equal(channelAuthoritySnapshot(domain),undefined);
  const base=CHANNELS.find(c=>c.domain==='github.com')!;
- assert.equal(base.authority?.provenance,'official_snapshot');
+ assert.equal(base.authority,undefined);assert.deepEqual(base.metrics,channelMetricSnapshot('github.com',base.id));
  const userScore={name:'Ahrefs DR',value:0,source:'https://metrics.example.com/user-report',asOf:'2026-09-01',scope:'domain' as const,target:'github.com'};
  const imported=importChannelMetrics({},[{channelId:base.id,authority:userScore}],CHANNELS);
  assert.deepEqual(composeChannels(CHANNELS,[],imported).find(c=>c.id===base.id)?.authority,userScore);

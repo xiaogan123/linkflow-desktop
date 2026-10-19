@@ -1,0 +1,72 @@
+{
+  "id": "mock-local-signup",
+  "version": 1,
+  "platformId": "mock-local",
+  "mockOnly": true,
+  "allowedHosts": [
+    "example.com"
+  ],
+  "captchaDomains": [],
+  "policy": {
+    "allowAutoRegistration": true,
+    "allowMultipleAccounts": false,
+    "allowFinancialContent": false,
+    "sourceUrl": "https://example.com/rules",
+    "checkedAt": "2026-10-18T00:00:00.000Z",
+    "verified": true
+  },
+  "success": {
+    "css": "#success"
+  },
+  "steps": [
+    {
+      "id": "open",
+      "action": "open",
+      "url": "https://example.com/signup"
+    },
+    {
+      "id": "ready",
+      "action": "wait",
+      "condition": {
+        "css": "#email"
+      }
+    },
+    {
+      "id": "email",
+      "action": "fill",
+      "selector": "#email",
+      "ref": "identity.email"
+    },
+    {
+      "id": "submit",
+      "action": "irreversible",
+      "selector": "#register"
+    },
+    {
+      "id": "mail",
+      "action": "await_email_code"
+    },
+    {
+      "id": "code",
+      "action": "fill",
+      "selector": "#code",
+      "ref": "email.code"
+    },
+    {
+      "id": "verify",
+      "action": "irreversible",
+      "selector": "#verify"
+    },
+    {
+      "id": "key",
+      "action": "extract",
+      "selector": "#key",
+      "attribute": "textContent",
+      "target": "api_key"
+    },
+    {
+      "id": "done",
+      "action": "done"
+    }
+  ]
+}

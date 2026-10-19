@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["controller stores one encrypted product intent, one POST, exact receipt and native/public verification"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});});
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -13,7 +15,7 @@ import {emptyState,Store} from '../src/main/store';
 import type {Vault} from '../src/main/vault';
 import type {ExecutionContext,Site,Task} from '../src/shared/types';
 
-const at='2026-10-15T04:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222';
+const at='2026-10-15T10:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222';
 const payload:ListedStartupsPayload={listing:{listing_type:'product',name:'Example Desktop',slug:'example-desktop',tagline:'A local sample project organizer.',description:'A synthetic desktop product fixture for deterministic integration testing.',url:'https://example.com/product',is_stealth:false,categories:['Developer Tools'],type_data:{product_kind:'app',platforms:['Windows','macOS']},links:[]},attribution:{agent_name:'Example automation',represented_organization:'Example project'}};
 const publicUrl=listedStartupsPublicUrl(payload.listing.slug),draft={title:payload.listing.name,description:payload.listing.tagline,body:JSON.stringify(payload)};
 function site():Site{return {id:siteId,domain:'example.com',url:'https://example.com/product',email:'owner@example.com',name:'Example Desktop',description:'Developer software',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.com/product'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.com/product',discoveredAt:at}]}}

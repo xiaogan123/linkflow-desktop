@@ -93,6 +93,7 @@ export type DocsMdPublishResult =
 export type DocsMdSourceResult =
   | { status: 'source_matched' }
   | { status: 'source_mismatch' }
+  | { status: 'source_absent' }
   | { status: 'source_unavailable' };
 
 class DocsMdRequestError extends Error {
@@ -482,6 +483,7 @@ export async function compareDocsMdRawSource(
       dependencies,
     );
     const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+    if (response.status === 404 || response.status === 410) return { status: 'source_absent' };
     if (response.status !== 200 || mediaType !== 'text/markdown') return { status: 'source_unavailable' };
     return text === markdown ? { status: 'source_matched' } : { status: 'source_mismatch' };
   } catch {

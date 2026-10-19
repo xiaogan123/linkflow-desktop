@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["Controller performs zero transport calls when native Vault encryption is unavailable", "real Controller registry performs one POST then bounded anonymous readback with no account", "paused Controller durably saves a late one-time receipt and restart recovers with GET only"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(now)+60000});});
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -49,6 +51,25 @@ function measuredHtml(canonical:string){return `<!doctype html><html><head><meta
 function reads(options:{api?:unknown;raw?:string;publicHtml?:string;robots?:string;robotsStatus?:number;pageHeader?:string}={}){const share=draftmarkPublicUrl(slug),canonical=`${DRAFTMARK_ORIGIN}/public/safe-delayed-publication-recovery`;return async(url:string,init:RequestInit)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');assert.equal(init.credentials,'omit');assert.equal((init.headers as Record<string,string>).authorization,undefined);if(url===`${DRAFTMARK_ORIGIN}/api/v1/docs/${slug}`)return new Response(JSON.stringify(options.api??apiValue()),{status:200,headers:{'content-type':'application/json'}});if(url===`${DRAFTMARK_ORIGIN}/api/v1/docs/${slug}?format=raw`)return new Response(options.raw??draft.body,{status:200,headers:{'content-type':'text/markdown; charset=utf-8'}});if(url===share)return new Response(html(canonical),{status:200,headers:{'content-type':'text/html'}});if(url===canonical)return new Response(options.publicHtml??html(canonical),{status:200,headers:{'content-type':'text/html',...(options.pageHeader?{'x-robots-tag':options.pageHeader}:{})}});if(url===`${DRAFTMARK_ORIGIN}/robots.txt`)return new Response(options.robots??'',{status:options.robotsStatus??404,headers:{'content-type':options.robotsStatus===200?'text/plain':'text/html'}});throw Error(`unexpected ${url}`)}}
 
 test('GET-only verification checks JSON, raw bytes, discovered same-origin canonical, visible body, link and robots',async()=>{const result=await verifyDraftmarkPublication(saved(),site(),'https://example.com/releases',{get:async()=>finalSecret(),set:async()=>{},delete:async()=>{}},{fetch:reads()});assert.equal(result.found,true);assert.match(result.rel,/ugc/);const recovered=await reconcileDraftmarkTask(context(saved(),memory().value,finalSecret()),{fetch:reads()});assert.equal(recovered.status,'found')});
+test('Draftmark maps authoritative 404/410 to absent and local secret gaps to unreachable',async()=>{
+  const secrets={get:async()=>finalSecret(),set:async()=>{},delete:async()=>{}};
+  for(const status of [404,410]){
+    let reads=0;
+    const result=await verifyDraftmarkPublication(saved(),site(),'https://example.com/releases',secrets,{
+      fetch:async()=>{reads++;return new Response('',{status})},
+    });
+    assert.equal(result.outcome,'absent');
+    assert.equal(reads,1);
+  }
+  const noRead={fetch:async()=>{throw Error('must not read')}};
+  const missing=await verifyDraftmarkPublication(task(),site(),'https://example.com/releases',secrets,noRead);
+  assert.equal(missing.outcome,'unreachable');
+  const secretError=await verifyDraftmarkPublication(
+    saved(),site(),'https://example.com/releases',
+    {...secrets,get:async()=>{throw Error('vault unavailable')}},noRead,
+  );
+  assert.equal(secretError.outcome,'unreachable');
+});
 
 test('Draftmark removes only its exact expanded heading controls before strict article inspection',()=>{
   const canonical=`${DRAFTMARK_ORIGIN}/public/recover-a-delayed-static-publication`,page=measuredHtml(canonical),normalized=draftmarkPublisherTesting.normalizeDraftmarkHeadingControls(page);

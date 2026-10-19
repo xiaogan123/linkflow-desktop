@@ -80,6 +80,7 @@ function server(f:ReturnType<typeof fixture>,options:{
       assert.ok(f.task.submittedAt);
       const form=new URLSearchParams(String(init.body));
       assert.equal(form.get('url'),expected.slug);
+      assert.doesNotMatch(String(init.body),/linkflow|(?:^|&)url=lf-/i);
       assert.equal(form.get('text'),expected.text);
       assert.equal(form.get('edit_code'),createHmac('sha256',KEY)
         .update(`rentry-edit-v1:\0${f.task.id}\0${expected.contentHash}`).digest('base64url'));

@@ -79,13 +79,15 @@ export type BlueskyErrorCode =
   | 'cancelled'
   | 'rejected'
   | 'not_found'
-  | 'invalid_response';
+  | 'invalid_response'
+  | 'invalid_handle'
+  | 'invalid_app_password';
 
 export class BlueskyError extends Error {
   readonly code: BlueskyErrorCode;
 
   constructor(code: BlueskyErrorCode) {
-    super(`Bluesky request failed (${code})`);
+    super(code==='invalid_handle'?'Bluesky handle 格式无效':code==='invalid_app_password'?'请使用 Bluesky 设置中创建的应用专用密码；不接受主密码':`Bluesky request failed (${code})`);
     this.name = 'BlueskyError';
     this.code = code;
   }
@@ -118,7 +120,7 @@ function validHandle(value: unknown): value is string {
 
 export function normalizeBlueskyHandle(value: string): string {
   const handle = value.trim().replace(/^@/, '').toLowerCase();
-  if (!validHandle(handle)) throw new Error('Bluesky handle 格式无效');
+  if (!validHandle(handle)) throw new BlueskyError('invalid_handle');
   return handle;
 }
 
@@ -155,7 +157,7 @@ function canonicalHttps(value: string): string {
     }
     return url.toString();
   } catch {
-    throw new Error('发布目标必须是不含凭据和片段的 HTTPS 网址');
+    throw new Error('发布目标必须是不含账号密码和片段的 HTTPS 网址');
   }
 }
 
@@ -194,7 +196,7 @@ function rawHttpsLinks(text: string): Array<{ value: string; index: number }> {
 function linkFacet(text: string, target: string): JsonObject {
   const links = rawHttpsLinks(text);
   if (links.length !== 1 || links[0].value !== target) {
-    throw new Error(`Bluesky 短文必须且只能包含一个原始 HTTPS 链接，且必须是已核对的站内选题链接`);
+    throw new Error(`Bluesky 短文必须且只能包含一个原始 HTTPS 链接，且必须是已检查的站内选题链接`);
   }
   if (text.indexOf(target, links[0].index + target.length) !== -1) {
     throw new Error('Bluesky 短文不能重复目标链接');
@@ -223,7 +225,7 @@ function approvedPost(
   const manuallyApproved = typeof task.articleApprovedAt === 'string'
     && Number.isFinite(Date.parse(task.articleApprovedAt));
   if (requireReview && !aiPassed && !manuallyApproved) {
-    throw new Error('Bluesky 短文尚未通过独立 AI 核对或明确人工审批');
+    throw new Error('Bluesky 短文尚未通过 AI 复核或明确人工审批');
   }
   if (requireReview && aiPassed && typeof task.draftRevision === 'number'
     && task.articleReview?.draftRevision !== task.draftRevision) {
@@ -240,10 +242,10 @@ function approvedPost(
     throw new Error('Bluesky 短文必须明确写出“商业关系披露：”');
   }
   const base = new URL(canonicalHttps(siteUrl));
-  if (!task.topicUrl) throw new Error('Bluesky 短文缺少已核对的站内选题链接');
+  if (!task.topicUrl) throw new Error('Bluesky 短文缺少已检查的站内选题链接');
   const target = canonicalHttps(task.topicUrl);
   const targetUrl = new URL(target);
-  if (targetUrl.hostname !== base.hostname) throw new Error('Bluesky 短文只能链接当前网站的已核对选题');
+  if (targetUrl.hostname !== base.hostname) throw new Error('Bluesky 短文只能链接当前网站的已检查选题');
   const parsedCreatedAt = new Date(createdAt);
   if (!Number.isFinite(parsedCreatedAt.getTime()) || parsedCreatedAt.toISOString() !== createdAt) {
     throw new Error('Bluesky 记录时间无效');
@@ -362,7 +364,7 @@ async function xrpcRequest(
   const timeoutMs = Math.min(Math.max(dependencies?.timeoutMs ?? REQUEST_TIMEOUT_MS, 10), 30_000);
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   timer.unref?.();
-  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Linkflow-Desktop' };
+  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Mozilla/5.0' };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   if (options.body) headers['content-type'] = 'application/json';
   try {
@@ -477,7 +479,7 @@ export async function createBlueskyCredential(
 ): Promise<{ did: string; handle: string; secret: string }> {
   const handle = normalizeBlueskyHandle(handleInput);
   if (!validBlueskyAppPassword(appPassword)) {
-    throw new Error('请使用 Bluesky 设置中创建的应用专用密码；不接受主密码');
+    throw new BlueskyError('invalid_app_password');
   }
   return await withSessionLock(lockKey ? `account:${lockKey}` : `connect:${handle}`, async () => {
     const session = await createSession(handle, appPassword, dependencies);
@@ -539,12 +541,12 @@ function failureMessage(error: unknown, submitted: boolean): string {
   if (!(error instanceof BlueskyError)) return submitted ? 'Bluesky 提交结果无法确认，不会重复发布' : '暂时无法连接 Bluesky';
   if (error.code === 'auth') return 'Bluesky 应用专用密码或会话已失效，请重新连接原 DID';
   if (error.code === 'restricted') return 'Bluesky 账号或发布权限已受限';
-  if (error.code === 'rate_limited') return submitted ? 'Bluesky 提交后遇到速率限制，只会对账而不会重发' : 'Bluesky 已触发速率限制，尚未发布';
-  if (error.code === 'cancelled') return submitted ? '任务在 Bluesky 提交期间暂停，已保留对账记录' : '任务已暂停，尚未提交 Bluesky';
+  if (error.code === 'rate_limited') return submitted ? 'Bluesky 提交后遇到速率限制，只会核对而不会重发' : 'Bluesky 已触发速率限制，尚未发布';
+  if (error.code === 'cancelled') return submitted ? '任务在 Bluesky 提交期间暂停，已保留核对记录' : '任务已暂停，尚未提交 Bluesky';
   if (error.code === 'rejected') return submitted ? 'Bluesky 明确拒绝了请求；保留原 rkey 且不会重发' : 'Bluesky 明确拒绝了请求';
   if (error.code === 'not_found') return 'Bluesky 暂未读到已记录的 rkey；这不代表可以重新发布';
-  if (error.code === 'invalid_response') return submitted ? 'Bluesky 返回的发布回执无法安全确认，不会重发' : 'Bluesky 返回了无法安全确认的数据';
-  return submitted ? 'Bluesky 提交结果不明，只会对账而不会重发' : '暂时无法连接 Bluesky，尚未发布';
+  if (error.code === 'invalid_response') return submitted ? 'Bluesky 返回的发布记录无法安全确认，不会重发' : 'Bluesky 返回了无法安全确认的数据';
+  return submitted ? 'Bluesky 提交结果不明，只会核对而不会重发' : '暂时无法连接 Bluesky，尚未发布';
 }
 
 function receiptFrom(value: JsonObject, did: string, rkey: string): RecordReceipt {
@@ -600,14 +602,14 @@ export async function runBlueskyTask(
   dependencies: BlueskyDependencies = {},
 ): Promise<ExecutionResult> {
   if (context.channel.id !== 'bluesky' || context.channel.automation !== 'api' || context.task.channelId !== 'bluesky') {
-    return { status: 'needs_input', message: '该渠道没有启用 Bluesky API 自动化' };
+    return { status: 'needs_input', message: '该平台没有启用 Bluesky API 自动化' };
   }
   const account = context.getAccount();
   if (!account || account.channelId !== 'bluesky' || context.task.accountId !== account.id) {
     return { status: 'needs_input', message: '请先连接已有 Bluesky 账号，并使用现有账号绑定网站' };
   }
   if (account.credentialKind !== 'api_token' || account.status !== 'registered' || !account.hasPassword || !validDid(account.username)) {
-    return { status: 'needs_input', message: 'Bluesky 原 DID 身份或应用专用密码不可用，请重新连接' };
+    return { status: 'needs_input', message: 'Bluesky 原 DID 发布账号或应用专用密码不可用，请重新连接' };
   }
 
   const prior = taskState(context.task);
@@ -616,7 +618,7 @@ export async function runBlueskyTask(
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
     return {
       status: 'needs_input',
-      message: '已有 Bluesky 提交或公开网址但缺少幂等记录，不会创建新帖子',
+      message: '已有 Bluesky 提交或公开网址但缺少防重复记录，不会创建新帖子',
       checkpoint: context.task.checkpoint,
       submittedAt: context.task.submittedAt,
       publicUrl: context.task.publicUrl,
@@ -624,7 +626,7 @@ export async function runBlueskyTask(
   }
   if (prior && (!validState(prior) || prior.did !== account.username)) {
     return {
-      status: 'needs_input', message: '保存的 Bluesky DID、rkey 或记录回执无效；不会重新发布',
+      status: 'needs_input', message: '保存的 Bluesky DID、rkey 或记录无效；不会重新发布',
       checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl,
     };
   }
@@ -639,7 +641,7 @@ export async function runBlueskyTask(
     let approved: ApprovedPost;
     try { approved = approvedPost(context.task, context.site.url, prior.recordCreatedAt, false); }
     catch (error) {
-      return { status: 'needs_input', message: error instanceof Error ? error.message : 'Bluesky 短文无法与原记录对账', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
+      return { status: 'needs_input', message: error instanceof Error ? error.message : 'Bluesky 短文无法与原记录核对', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
     }
     if (approved.recordHash !== prior.recordHash) {
       return { status: 'needs_input', message: 'Bluesky 短文或链接已与原提交记录不同；保留原 rkey 且不会重发', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
@@ -650,7 +652,7 @@ export async function runBlueskyTask(
     }
     const published: BlueskyTaskState = { ...prior, stage: 'published', uri: reconciled.uri, cid: reconciled.cid };
     taskCheckpoint(context, { bluesky: published, checkpoint: 'bluesky_published', publicUrl: reconciled.publicUrl, submittedAt: context.task.submittedAt });
-    return { status: 'review', message: '已回读并确认 Bluesky 完整记录，等待 AppView 公开可见性核验', publicUrl: reconciled.publicUrl, checkpoint: 'bluesky_published', submittedAt: context.task.submittedAt };
+    return { status: 'review', message: '已回读并确认 Bluesky 完整记录，等待 AppView 公开可见性检查', publicUrl: reconciled.publicUrl, checkpoint: 'bluesky_published', submittedAt: context.task.submittedAt };
   }
 
   let approved: ApprovedPost;
@@ -719,16 +721,16 @@ export async function runBlueskyTask(
       submittedAt,
     });
   } catch {
-    return { status: 'review', message: 'Bluesky 已返回 DID/rkey/CID 回执；保留原提交且不会重发', checkpoint: 'bluesky_create_submitting', submittedAt, publicUrl: receipt.publicUrl };
+    return { status: 'review', message: 'Bluesky 已返回 DID/rkey/CID 记录；保留原提交且不会重发', checkpoint: 'bluesky_create_submitting', submittedAt, publicUrl: receipt.publicUrl };
   }
   if (context.signal.aborted) {
-    return { status: 'review', message: 'Bluesky 已返回发布回执；暂停后只会对账原 DID/rkey', checkpoint: 'bluesky_create_accepted', submittedAt, publicUrl: receipt.publicUrl };
+    return { status: 'review', message: 'Bluesky 已返回发布记录；暂停后只会核对原 DID/rkey', checkpoint: 'bluesky_create_accepted', submittedAt, publicUrl: receipt.publicUrl };
   }
   let reconciled: RecordReceipt | undefined;
   try { reconciled = await getExactRecord(state, approved.record, dependencies, context.signal); }
   catch { /* The accepted receipt remains durable; a later read may reconcile it. */ }
   if (!reconciled) {
-    return { status: 'review', message: 'Bluesky 已返回发布回执，完整记录回读待确认；不会重发', checkpoint: 'bluesky_create_accepted', submittedAt, publicUrl: receipt.publicUrl };
+    return { status: 'review', message: 'Bluesky 已返回发布记录，完整记录回读待确认；不会重发', checkpoint: 'bluesky_create_accepted', submittedAt, publicUrl: receipt.publicUrl };
   }
   state = { ...state, stage: 'published', uri: reconciled.uri, cid: reconciled.cid };
   taskCheckpoint(context, {
@@ -737,7 +739,7 @@ export async function runBlueskyTask(
     submittedAt,
     publicUrl: reconciled.publicUrl,
   });
-  return { status: 'review', message: '已回读并确认 Bluesky 完整记录，等待 AppView 公开可见性核验', publicUrl: reconciled.publicUrl, checkpoint: 'bluesky_published', submittedAt };
+  return { status: 'review', message: '已回读并确认 Bluesky 完整记录，等待 AppView 公开可见性检查', publicUrl: reconciled.publicUrl, checkpoint: 'bluesky_published', submittedAt };
 }
 
 function unavailableResult(url: string, reason: string, outcome: LinkResult['outcome'] = 'unreachable'): LinkResult {
@@ -757,14 +759,14 @@ export async function verifyBlueskyPublication(
 ): Promise<LinkResult> {
   const state = taskState(task);
   const fallbackUrl = task.publicUrl ?? (state && validDid(state.did) && validTid(state.rkey) ? publicPostUrl(state.did, state.rkey) : 'https://bsky.app/');
-  if (!state || !validState(state)) return unavailableResult(fallbackUrl, 'Bluesky 任务缺少有效 DID/rkey 回执', 'invalid');
+  if (!state || !validState(state)) return unavailableResult(fallbackUrl, 'Bluesky 任务缺少有效 DID/rkey 记录', 'invalid');
   if (task.publicUrl && task.publicUrl !== publicPostUrl(state.did, state.rkey)) {
     return unavailableResult(task.publicUrl, 'Bluesky 公开网址与原 DID/rkey 不一致', 'invalid');
   }
   let approved: ApprovedPost;
   try { approved = approvedPost(task, targetSiteUrl, state.recordCreatedAt, false); }
   catch { return unavailableResult(fallbackUrl, 'Bluesky 任务内容无法与原记录匹配', 'invalid'); }
-  if (approved.recordHash !== state.recordHash) return unavailableResult(fallbackUrl, 'Bluesky 任务内容哈希与原提交不同', 'invalid');
+  if (approved.recordHash !== state.recordHash) return unavailableResult(fallbackUrl, 'Bluesky 任务内容校验值与原提交不同', 'invalid');
   let pds: RecordReceipt;
   try { pds = await getExactRecord(state, approved.record, dependencies, signal); }
   catch (error) {
@@ -789,7 +791,7 @@ export async function verifyBlueskyPublication(
       outcome: 'found',
       url: pds.publicUrl,
       rel: 'unknown',
-      reason: 'Bluesky PDS 完整记录与 AppView 公开可见记录一致，UTF-8 链接 facet 指向已核对选题页。',
+      reason: 'Bluesky PDS 完整记录与 AppView 公开可见记录一致，UTF-8 链接 facet 指向已检查选题页。',
     };
   } catch {
     return unavailableResult(pds.publicUrl, 'Bluesky AppView 暂时无法确认公开可见性');

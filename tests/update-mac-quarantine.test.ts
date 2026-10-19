@@ -81,7 +81,7 @@ test('archive hash mismatch fails before any quarantine inspection',{skip:proces
 test('tree mutation during verification fails without changing attributes',{skip:process.platform==='darwin'?false:'macOS xattr behavior'},async()=>{
   const directory=await mkdtemp(join(tmpdir(),'linkflow-quarantine-tree-'));try{
     const value=await fixture(directory),commands:Array<{file:string;args:string[]}>=[],base=ports(commands);await writeAttribute(value.nested,otherAttribute,'keep');let hashes=0;const run:MacQuarantinePorts={...base,hashTree:async root=>{hashes+=1;if(hashes===2)await writeFile(value.nested,'changed');return hashUpdateTree(root)}};
-    await assert.rejects(verifyVerifiedMacStageQuarantineFree(value.request,run),/应用树|验证期间/);assert.equal(commands.some(command=>command.file==='/usr/bin/xattr'),false);assert.equal(await readAttribute(value.nested,otherAttribute),'keep');
+    await assert.rejects(verifyVerifiedMacStageQuarantineFree(value.request,run),/外链助手更新文件与已验证安装包不匹配|外链助手更新路径在验证期间发生变化/);assert.equal(commands.some(command=>command.file==='/usr/bin/xattr'),false);assert.equal(await readAttribute(value.nested,otherAttribute),'keep');
   }finally{await rm(directory,{recursive:true,force:true})}
 });
 

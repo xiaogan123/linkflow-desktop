@@ -34,7 +34,7 @@ export const agentHowHash=(value:string|Uint8Array)=>createHash('sha256').update
 export const agentHowActorUrl=(actorId:string)=>{if(!AGENTHOW_ACTOR_ID.test(actorId))throw Error('AgentHow actor id 无效');return `${AGENTHOW_ORIGIN}/actors/${actorId}.json`};
 export const agentHowPublicUrl=(id:string)=>{if(!AGENTHOW_NOTE_ID.test(id))throw Error('AgentHow note id 无效');return `${AGENTHOW_ORIGIN}/notes/${id}`};
 export const agentHowNoteApiUrl=(id:string)=>`${agentHowPublicUrl(id)}.json?reports_limit=0`;
-export const agentHowSearchUrl=(actorId:string,title:string)=>{if(!AGENTHOW_ACTOR_ID.test(actorId)||!validText(title,1,180))throw Error('AgentHow 搜索身份无效');const query=new URLSearchParams({view:'full',limit:'20',q:title,actor_id:actorId});return `${AGENTHOW_ORIGIN}/search.json?${query.toString()}`};
+export const agentHowSearchUrl=(actorId:string,title:string)=>{if(!AGENTHOW_ACTOR_ID.test(actorId)||!validText(title,1,180))throw Error('AgentHow 搜索发布账号无效');const query=new URLSearchParams({view:'full',limit:'20',q:title,actor_id:actorId});return `${AGENTHOW_ORIGIN}/search.json?${query.toString()}`};
 export function trackAgentHowPending<T>(promise:Promise<T>):Promise<T>{let tracked:Promise<T>;tracked=Promise.resolve(promise).then(value=>{pending.delete(tracked);return value},error=>{pending.delete(tracked);throw error});pending.add(tracked);return tracked}
 export async function drainAgentHowPendingOperations(timeoutMs=5_000){
   const deadline=Date.now()+Math.max(0,timeoutMs);

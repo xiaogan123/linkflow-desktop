@@ -5,6 +5,7 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {copyDraftValue,DraftCopyActions} from '../src/ui/pages/DraftCopyActions';
 import {createDraftClipboardHandler} from '../src/main/draft-clipboard';
+import {REFERRAL_MESSAGES} from '../src/shared/referral-policy';
 import type {Task} from '../src/shared/types';
 
 const TASK_ID='11111111-1111-4111-8111-111111111111';
@@ -48,6 +49,33 @@ test('clipboard rejection reports a safe message without exposing the raw error'
   await copyDraftValue('title','Edited title',async()=>{throw new Error('account-secret-from-runtime')},value=>feedback.push(value));
   assert.deepEqual(feedback,[{kind:'error',message:'标题复制失败，请手动选中内容。'}]);
   assert.doesNotMatch(JSON.stringify(feedback),/account-secret-from-runtime/);
+});
+
+test('referral information in the current manual edit is rejected before either clipboard boundary',async()=>{
+  for(const value of ['Invite code: TEST1234','https://example.com/guide?ref=TEST1234']){
+    const feedback:unknown[]=[],writes:string[]=[];
+    await copyDraftValue('body',value,async text=>{writes.push(text)},item=>feedback.push(item));
+    assert.deepEqual(writes,[]);
+    assert.deepEqual(feedback,[{kind:'error',message:REFERRAL_MESSAGES.copyBlocked}]);
+    const fixture=clipboardFixture();
+    assert.deepEqual(await fixture.handler(fixture.event,{id:TASK_ID,field:'body',value}),{ok:false,error:REFERRAL_MESSAGES.copyBlocked,reasonCode:'referral_blocked'});
+    assert.deepEqual(fixture.writes,[]);
+  }
+});
+
+test('main-process copying also rejects unlabelled known codes and site affiliate redirects',async()=>{
+  const fixture=clipboardFixture(),writes:string[]=[];
+  const handler=createDraftClipboardHandler({getWindow:()=>({isDestroyed:()=>false,webContents:fixture.webContents}),getRenderURL:()=>fixture.mainFrame.url,getTasks:()=>[task()],getSite:()=>({url:'https://example.com/',description:'Referral code: TEST1234'}),writeText:text=>{writes.push(text)}});
+  for(const value of ['Use TEST1234 today.','Read https://example.com/go/offer']){
+    assert.deepEqual(await handler(fixture.event,{id:TASK_ID,field:'body',value}),{ok:false,error:REFERRAL_MESSAGES.copyBlocked,reasonCode:'referral_blocked'});
+  }
+  assert.deepEqual(writes,[]);
+});
+
+test('a trusted referral refusal from the main process keeps its actionable copy feedback',async()=>{
+  const feedback:unknown[]=[];
+  await copyDraftValue('body','An unlabelled current edit',async()=>{throw Object.assign(Error(REFERRAL_MESSAGES.copyBlocked),{reasonCode:'referral_blocked'})},item=>feedback.push(item));
+  assert.deepEqual(feedback,[{kind:'error',message:REFERRAL_MESSAGES.copyBlocked}]);
 });
 
 test('a stale completion cannot replace feedback from the latest copy request',async()=>{
@@ -124,8 +152,8 @@ function fixtureFrame(url:string){return {url}}
 
 test('the draft modal passes live editor state to copy actions and preserves save wiring',async()=>{
   const source=await readFile(new URL('../src/ui/App.tsx',import.meta.url),'utf8');
-  assert.match(source,/<DraftCopyActions taskId=\{chosenTask\.id\} title=\{draftTitle\} description=\{draftDescription\} body=\{draftBody\}\/\>/);
-  assert.match(source,/task:update-draft.*title:draftTitle,description:draftDescription,body:draftBody/);
+  assert.match(source,/<DraftCopyActions taskId=\{chosenTask\.id\} title=\{draftTitle\} description=\{draftDescription\} body=\{draftBody\}\s*\/\>/);
+  assert.match(source,/task:update-draft[\s\S]*?title:\s*draftTitle,\s*description:\s*draftDescription,\s*body:\s*draftBody/);
   assert.match(source,/<Button variant="primary" type="submit" disabled=\{pending\}>保存草稿<\/Button>/);
 });
 

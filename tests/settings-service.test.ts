@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
-import {saveSettingsAtomic} from '../src/main/settings-service';
+import {enableStoppedChannelTrial,saveSettingsAtomic} from '../src/main/settings-service';
+import {CHANNELS} from '../src/integrations/catalog';
+import {IPC_COMMANDS} from '../src/shared/types';
+import {SettingsPatch} from '../src/main/validation';
 
 const encrypt=(secrets:Record<string,string>)=>Object.fromEntries(Object.entries(secrets).map(([key,value])=>[key,'cipher:'+value]));
 
@@ -52,5 +55,71 @@ test('changing a destination without a replacement removes its secret in the sam
     assert.equal(store.read().settings.apiBase,'https://new.example/v1');
     assert.equal(store.read().settings.hasApiKey,false);
     assert.equal(store.getCipher('apiKey'),undefined);
+  }finally{store.close()}
+});
+
+test('Ahrefs replacement is encrypted atomically and never stored in public settings',()=>{
+  const store=new Store(':memory:');
+  try{
+    saveSettingsAtomic(store,{encryptSecrets:encrypt},{ahrefsApiKey:'synthetic-ahrefs-key'});
+    assert.equal(store.getCipher('ahrefsApiKey'),'cipher:synthetic-ahrefs-key');
+    assert.equal(store.read().settings.hasAhrefsKey,true);
+    assert.equal(JSON.stringify(store.read()).includes('synthetic-ahrefs-key'),false);
+    store.update(state=>{state.settings.ahrefsStatus='connected';state.settings.ahrefsLastUpdatedAt='2026-10-18T00:00:00.000Z';state.settings.ahrefsLastRefreshMonth='2026-10'});
+    saveSettingsAtomic(store,{encryptSecrets:encrypt},{ahrefsApiKey:'synthetic-replacement'});
+    assert.equal(store.read().settings.ahrefsStatus,undefined);
+    assert.equal(store.read().settings.ahrefsLastUpdatedAt,undefined);
+    assert.equal(store.read().settings.ahrefsLastRefreshMonth,undefined);
+  }finally{store.close()}
+});
+
+test('Ahrefs encryption failure retains the previous key, status and refresh marker',()=>{
+  const store=new Store(':memory:');
+  try{
+    store.setCipher('ahrefsApiKey','cipher:previous');
+    store.update(state=>{state.settings.hasAhrefsKey=true;state.settings.ahrefsStatus='connected';state.settings.ahrefsLastRefreshMonth='2026-10'});
+    const before=store.read();
+    assert.throws(()=>saveSettingsAtomic(store,{encryptSecrets:()=>{throw Error('synthetic vault failure')}},{ahrefsApiKey:'synthetic-replacement'}),/vault failure/);
+    assert.deepEqual(store.read(),before);
+    assert.equal(store.getCipher('ahrefsApiKey'),'cipher:previous');
+  }finally{store.close()}
+});
+
+test('generic settings writes cannot forge Ahrefs connection status or erase an existing key',()=>{
+  const store=new Store(':memory:');
+  try{
+    saveSettingsAtomic(store,{encryptSecrets:encrypt},{hasAhrefsKey:true,ahrefsStatus:'connected',ahrefsLastUpdatedAt:'2026-10-18T00:00:00.000Z',ahrefsLastRefreshMonth:'2026-10'});
+    assert.ok(!store.read().settings.hasAhrefsKey);
+    assert.equal(store.read().settings.ahrefsStatus,undefined);
+    assert.equal(store.read().settings.ahrefsLastRefreshMonth,undefined);
+    saveSettingsAtomic(store,{encryptSecrets:encrypt},{ahrefsApiKey:'synthetic-ahrefs-key'});
+    saveSettingsAtomic(store,{encryptSecrets:encrypt},{ahrefsApiKey:'',hasAhrefsKey:false});
+    assert.equal(store.read().settings.hasAhrefsKey,true);
+    assert.equal(store.getCipher('ahrefsApiKey'),'cipher:synthetic-ahrefs-key');
+  }finally{store.close()}
+});
+
+test('stale settings snapshot cannot undo an automatic platform stop; explicit enable clears the stop',()=>{
+  const store=new Store(':memory:');
+  try{
+    store.update(state=>{state.settings.channelOverrides={rant:true,yeetmd:false}});
+    const oldSnapshot=structuredClone(store.read().settings);
+    store.update(state=>{
+      state.settings.channelOverrides.rant=false;
+      state.settings.channelTrials={rant:{trial:true,failures:2,evaluatedTaskIds:[],disabledAt:'2026-10-18T00:00:00.000Z',reason:'two definite failures',autoDisabledOverride:true}};
+    });
+    saveSettingsAtomic(store,{encryptSecrets:encrypt},SettingsPatch.parse({...oldSnapshot,channelOverrides:{...oldSnapshot.channelOverrides,yeetmd:true}}));
+    assert.deepEqual(store.read().settings.channelOverrides,{rant:false,yeetmd:false});
+    assert.equal(store.read().settings.channelTrials?.rant?.disabledAt,'2026-10-18T00:00:00.000Z');
+    assert.ok(IPC_COMMANDS.includes('channel:enable-trial'));
+    enableStoppedChannelTrial(store,'rant',CHANNELS);
+    const restored=store.read();
+    assert.equal(restored.settings.channelOverrides.rant,true);
+    assert.equal(restored.settings.channelTrials?.rant?.disabledAt,undefined);
+    assert.equal(restored.settings.channelTrials?.rant?.failures,0);
+    assert.equal(restored.settings.channelTrials?.rant?.reason,undefined);
+    assert.equal(restored.settings.channelOverrides.yeetmd,false);
+    assert.throws(()=>enableStoppedChannelTrial(store,'rant',CHANNELS),/没有待恢复/);
+    assert.throws(()=>enableStoppedChannelTrial(store,'missing-platform',CHANNELS),/不存在/);
   }finally{store.close()}
 });

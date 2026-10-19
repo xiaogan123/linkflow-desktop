@@ -5,13 +5,15 @@ import {fileURLToPath} from 'node:url';
 import {IPC_COMMANDS} from '../src/shared/types';
 
 const mainSource=readFileSync(fileURLToPath(new URL('../src/main/main.ts',import.meta.url)),'utf8');
+const messageSource=readFileSync(fileURLToPath(new URL('../src/shared/batch9b-messages.ts',import.meta.url)),'utf8');
 
 test('the one-shot review is an allowlisted IPC command with an explicit paid-call confirmation and cancellation path',()=>{
   assert.equal(IPC_COMMANDS.includes('task:review-once'),true);
   assert.match(mainSource,/case 'task:review-once'/);
-  assert.match(mainSource,/title:'追加一次独立 AI 审核'/);
-  assert.match(mainSource,/原有 6 次 AI 调用记录会完整保留/);
-  assert.match(mainSource,/最多新增 1 次可能产生费用的 AI 调用/);
+  assert.match(mainSource,/title:'追加一次 AI 复核'/);
+  assert.match(mainSource,/BATCH9B_MESSAGES\.reviewRetryDetail\(summary\.draftRevision\)/);
+  assert.match(messageSource,/原有 2 次调用记录会保留/);
+  assert.match(messageSource,/请求开始即计为第 3 次/);
   assert.match(mainSource,/buttons:\['取消','确认追加 1 次审核'\]/);
   assert.match(mainSource,/if\(confirm\.response!==1\)return \{cancelled:true\}/);
 });

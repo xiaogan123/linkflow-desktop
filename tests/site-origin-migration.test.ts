@@ -22,6 +22,9 @@ const future:Task={...base(futureId,'supanote','queued',oldRoot+'/guides/future'
 const automaticChannel=(id:string):Channel=>({id,name:id,domain:`${id}.example.net`,url:`https://${id}.example.net`,submitUrl:`https://${id}.example.net/new`,categories:['general'],languages:['en'],kind:'article',contentFormat:'social',emailRequired:false,accountRequired:false,articleRequired:true,free:'yes',freeNote:'synthetic',automation:'api',quality:'A',qualityReason:'synthetic',rulesUrl:`https://${id}.example.net/rules`,checkedAt:'2026-10-17',notes:'synthetic',allowedHosts:[`${id}.example.net`],enabled:true,provenance:'built-in'});
 
 function fixture(){const store=new Store(':memory:');store.update(state=>{state.sites=[structuredClone(site)];state.tasks=[structuredClone(telegraph),structuredClone(recovery),structuredClone(failed),structuredClone(future)];state.accounts=[{id:accountId,channelId:'synthetic-binding',email:'owner@example.com',username:'synthetic-account',createdAt:at,status:'unknown',hasPassword:false,source:'imported'}];state.accountBindings=[{id:bindingId,siteId,channelId:'synthetic-binding',accountId,createdAt:at,updatedAt:at}]});return store}
+function originState(){const state=emptyState();state.sites=[structuredClone(site)];return state}
+function batch5RegistrationTask(stage:NonNullable<Task['batch5Registration']>['stage'],channelId:'rant'|'slopit'='rant'):Task{return {...base('88888888-8888-4888-8888-888888888888',channelId,'queued',oldRoot+'/guides/registered'),sourceDomain:channelId==='rant'?'rant.li':'slop.it',batch5Registration:{version:1,channelId,operationId:`${channelId}:register:${siteId}`,createdAt:'2026-10-16T00:00:00.000Z',stage}}}
+function bindLegacyBatch5Account(state:ReturnType<typeof emptyState>,channelId:'rant'|'slopit',task?:Task){state.accounts=[{id:accountId,channelId,email:'owner@example.com',username:'synthetic-account',createdAt:at,status:'unknown',hasPassword:true,source:'generated',credentialKind:'api_token',registrationAttempts:1}];state.accountBindings=[{id:bindingId,siteId,channelId,accountId,createdAt:at,updatedAt:at}];if(task){task.accountId=accountId;state.tasks=[task]}}
 
 test('finite site-origin migration preserves identity, history, budgets and bindings while refreshing only safe current views',()=>{
   const store=fixture();try{
@@ -38,8 +41,15 @@ test('finite site-origin migration preserves identity, history, budgets and bind
     assert.deepEqual(untouched,failed);assert.equal(pristine.topicUrl,newRoot+'/guides/future');assert.equal(pristine.status,'queued');assert.equal(pristine.attempts,0);
     assert.equal(migrationAwareTopicKey(state,siteId,oldRoot+'/guides/published'),migrationAwareTopicKey(state,siteId,newRoot+'/guides/published'));
     saved.topics=[{url:newRoot+'/guides/published',discoveredAt:at},{url:newRoot+'/guides/fresh',discoveredAt:at}];
-    const opportunity=publicationOpportunity(saved,{...automaticChannel('telegraph'),domain:'telegra.ph',allowedHosts:['telegra.ph']},state.tasks,new Date(at),'UTC',{officialApiConnected:true,topicKey:value=>migrationAwareTopicKey(state,siteId,value)});
-    assert.equal(opportunity.topicUrl,newRoot+'/guides/fresh');
+    const channel={...automaticChannel('telegraph'),domain:'telegra.ph',allowedHosts:['telegra.ph']};
+    const context={officialApiConnected:true,topicKey:(value:string|undefined)=>migrationAwareTopicKey(state,siteId,value)};
+    const waiting=publicationOpportunity(saved,channel,state.tasks,new Date(at),'UTC',context);
+    assert.equal(waiting.allowed,false);assert.equal(waiting.blockingReason,'cadence_wait');
+    assert.equal(waiting.nextAvailableAt,new Date(Date.parse(telegraph.firstLiveAt!)+30*86400000).toISOString());
+    const opportunity=publicationOpportunity(saved,channel,state.tasks,new Date('2026-11-04T12:11:00.000Z'),'UTC',context);
+    assert.equal(opportunity.allowed,true);assert.equal(opportunity.topicUrl,newRoot+'/guides/fresh');
+    assert.equal(state.tasks.find(task=>task.id===telegraphId)?.publicUrl,telegraph.publicUrl);
+    assert.equal(state.tasks.filter(task=>task.channelId==='telegraph').length,1);
   }finally{store.close()}
 });
 
@@ -49,6 +59,28 @@ test('migration rejects foreign external receipts and stale or unsafe origins',(
     (state:ReturnType<Store['read']>)=>{state.sites[0].url='https://changed.example.com'},
   ]){const store=fixture();try{assert.throws(()=>store.update(state=>{mutate(state);applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true},new Date(at))}))}finally{store.close()}}
   const store=fixture();try{assert.throws(()=>store.update(state=>{applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:'https://127.0.0.1',operatorAuthorized:true},new Date(at))}),/公开|真实|Private|reserved/)}finally{store.close()}
+});
+
+test('migration preview preserves durable Rant and SlopIt registration identities before a first article',()=>{
+  for(const channelId of ['rant','slopit'] as const)for(const stage of ['registered','reserved','request_unknown'] as const){
+      const state=originState();state.tasks=[batch5RegistrationTask(stage,channelId)];
+      assert.throws(()=>applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true},new Date(at)),/Rant.*SlopIt.*注册/);
+      assert.equal(state.sites[0].url,oldRoot);
+      assert.equal(state.siteOriginMigrations?.length??0,0);
+    }
+});
+
+test('migration preview preserves a legacy generated Batch 5 account unless durable evidence proves no request was sent or accepted',()=>{
+  for(const channelId of ['rant','slopit'] as const){
+    const state=originState();bindLegacyBatch5Account(state,channelId);
+    assert.throws(()=>applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true},new Date(at)),/避免旧来源重复注册/);
+  }
+  for(const [stage,channelId] of [['rejected','rant'],['not_sent','slopit']] as const){
+    const state=originState(),task=batch5RegistrationTask(stage,channelId);bindLegacyBatch5Account(state,channelId,task);
+    const record=applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true},new Date(at));
+    assert.equal(record.after.url,newRoot,stage);
+    assert.equal(state.sites[0].url,newRoot,stage);
+  }
 });
 
 test('store makes the migration archive immutable and recovery grant single-use with exact context',()=>{
@@ -135,5 +167,39 @@ test('portable backup preserves and validates the origin archive and consumed re
     const preMigration=fixture();try{assert.throws(()=>store.restore(preMigration.read(),{}),/迁移快照不能删除|恢复许可/)}finally{preMigration.close()}
     const tampered=structuredClone({state:exported,secrets:{}});tampered.state.siteOriginMigrations![0].before.domain='tampered.example.com';
     assert.throws(()=>validateBackup(tampered),/快照|迁移|Telegraph/);
+  }finally{store.close()}
+});
+
+test('origin migration maps editable content and link constraints without changing publication history',async()=>{
+  const {siteAllowsLinkTarget}=await import('../src/shared/site-content');
+  const {mergeDiscoveredSiteTopics}=await import('../src/main/site-service');
+  const store=fixture();try{
+    store.update(state=>{state.sites[0].linkTargets=[oldRoot+'/',oldRoot+'/guides/manual'];state.sites[0].topicOverrides={added:[{url:oldRoot+'/guides/manual',title:'Manual title',discoveredAt:at}],excluded:[oldRoot+'/guides/excluded']}});
+    const oldPublished=structuredClone(store.read().tasks.find(t=>t.id===telegraphId));
+    store.update(state=>{applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true},new Date(at))});
+    const state=store.read(),current=state.sites[0];
+    assert.deepEqual(current.linkTargets,[newRoot+'/',newRoot+'/guides/manual']);
+    assert.equal(siteAllowsLinkTarget(current,newRoot+'/'),true);
+    assert.equal(current.topicOverrides?.added[0].url,newRoot+'/guides/manual');
+    assert.deepEqual(current.topicOverrides?.excluded,[newRoot+'/guides/excluded']);
+    assert.deepEqual(state.siteOriginMigrations?.[0].before.linkTargets,[oldRoot+'/',oldRoot+'/guides/manual']);
+    assert.deepEqual(state.tasks.find(t=>t.id===telegraphId),oldPublished);
+    const topics=mergeDiscoveredSiteTopics(current,[{url:newRoot+'/guides/new',discoveredAt:at},{url:newRoot+'/guides/excluded',discoveredAt:at}],new Set());
+    assert.ok(topics.every(t=>new URL(t.url).origin===newRoot));
+    assert.equal(topics.some(t=>t.url.endsWith('/excluded')),false);
+    const restored=validateBackup({state,secrets:{}}).state;
+    assert.deepEqual(restored.sites[0].linkTargets,current.linkTargets);
+    assert.deepEqual(restored.siteOriginMigrations?.[0].before.topicOverrides,state.siteOriginMigrations?.[0].before.topicOverrides);
+  }finally{store.close()}
+});
+
+
+test('origin migration accepts the same www alias as the content editor',async()=>{
+  const {updateSiteContent}=await import('../src/main/site-service');
+  const store=fixture();try{
+    store.update(state=>updateSiteContent(state,{id:siteId,topics:[{url:'https://www.old.example.com/guides/manual'}],linkTargets:['https://www.old.example.com/'],forbiddenTerms:[]},new Date(at)));
+    store.update(state=>{applySiteOriginMigration(state,{siteId,expectedDomain:'old.example.com',expectedUrl:oldRoot,newUrl:newRoot,operatorAuthorized:true},new Date(at))});
+    assert.deepEqual(store.read().sites[0].linkTargets,[newRoot+'/']);
+    assert.equal(store.read().sites[0].topicOverrides?.added[0].url,newRoot+'/guides/manual');
   }finally{store.close()}
 });

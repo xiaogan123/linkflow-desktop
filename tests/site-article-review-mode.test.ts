@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {getArticleReviewMode} from '../src/shared/article-review-mode';
 import {emptyState,migrateState,Store} from '../src/main/store';
-import {applySiteUpdate} from '../src/main/site-service';
+import {applySiteUpdate,updateSiteContent} from '../src/main/site-service';
 import {saveSettingsAtomic} from '../src/main/settings-service';
 import {AddSite,EditSite} from '../src/main/validation';
 import {validateBackup} from '../src/main/backup-validation';
@@ -34,12 +34,14 @@ test('site input accepts omitted or explicit modes and rejects illegal values',(
   assert.throws(()=>EditSite.parse({id:firstSiteId,articleReviewMode:'unreviewed'}));
 });
 
-test('unchanged edit payload preserves draft and approval while a real content change invalidates them',()=>{
+test('metadata edits preserve an accepted draft and review while changed content constraints revoke approval',()=>{
   const state=emptyState(),value=site(firstSiteId,'manual'),pending=task('33333333-3333-4333-8333-333333333333',firstSiteId);state.sites=[value];state.tasks=[pending];
   applySiteUpdate(state,{id:value.id,name:value.name,description:value.description,category:value.category,language:value.language,email:value.email,publicEmail:value.publicEmail,monthlyTarget:value.monthlyTarget,articleReviewMode:'manual'},new Date(stamp));
   assert.deepEqual(state.tasks[0].draft,pending.draft);assert.deepEqual(state.tasks[0].articleReview,pending.articleReview);assert.equal(state.tasks[0].articleApprovedAt,stamp);
   applySiteUpdate(state,{id:value.id,name:'Updated name'},new Date('2026-10-01T01:00:00.000Z'));
-  assert.equal(state.tasks[0].draft,undefined);assert.equal(state.tasks[0].articleReview,undefined);assert.equal(state.tasks[0].articleApprovedAt,undefined);
+  assert.deepEqual(state.tasks[0].draft,pending.draft);assert.deepEqual(state.tasks[0].articleReview,pending.articleReview);assert.equal(state.tasks[0].articleApprovedAt,stamp);
+  updateSiteContent(state,{id:value.id,topics:[],linkTargets:[],forbiddenTerms:['A newly excluded topic']},new Date('2026-10-01T02:00:00.000Z'));
+  assert.deepEqual(state.tasks[0].draft,pending.draft);assert.equal(state.tasks[0].articleReview,undefined);assert.equal(state.tasks[0].articleApprovedAt,undefined);
 });
 
 test('manual to AI keeps the pending draft, preserves pauses, and leaves submitted and other-site records unchanged',()=>{

@@ -170,7 +170,7 @@ function currentBinding(
   const siteIdentityHash = shareYourHtmlSiteIdentityHash(site);
   if (expectedSite && (expectedSite.siteId !== site.id
     || expectedSite.siteIdentityHash !== siteIdentityHash)) {
-    throw Error('ShareYourHTML 来源站点身份已改变');
+    throw Error('ShareYourHTML 来源网站标识已改变');
   }
   if (identity.sourceHash !== intent.sourceHash || identity.requestHash !== intent.requestHash) {
     throw Error('ShareYourHTML 已审核 HTML 或请求快照已改变');
@@ -197,18 +197,18 @@ function assertStoredIntent(
     || saved.requestedExpiry !== 'never' || saved.publicVerification !== 'pending'
     || !['submitting', 'api_receipt'].includes(saved.stage)
     || task.submittedAt !== saved.createdAt || task.status !== 'review' || task.health !== 'pending') {
-    throw Error('ShareYourHTML 提交意图与原任务不一致');
+    throw Error('ShareYourHTML 提交信息与原任务不一致');
   }
   if (saved.stage === 'submitting') {
     if (task.publicUrl || task.checkpoint !== 'shareyourhtml_create_submitting') {
-      throw Error('ShareYourHTML 提交意图阶段无效');
+      throw Error('ShareYourHTML 提交信息阶段无效');
     }
   } else if (task.publicUrl !== expectedPublicUrl(saved.slug)
     || task.checkpoint !== 'shareyourhtml_api_receipt') {
-    throw Error('ShareYourHTML API 回执阶段无效');
+    throw Error('ShareYourHTML 平台返回记录阶段无效');
   }
   if (hasForbiddenPendingLifecycleState(task)) {
-    throw Error('ShareYourHTML API 回执不能标记为公开验收通过');
+    throw Error('ShareYourHTML 平台返回记录不能标记为公开验收通过');
   }
   return saved;
 }
@@ -268,15 +268,15 @@ export function createShareYourHtmlPublicationPersistence(
   let claimedIntent = options.expectedIntent ? { ...options.expectedIntent } : undefined;
   let claimedSiteBinding: ShareYourHtmlSiteBinding | undefined;
   if (claimedIntent && !validIntent(claimedIntent)) {
-    throw Error('ShareYourHTML 恢复意图无效');
+    throw Error('ShareYourHTML 恢复提交信息无效');
   }
   const updatedAt = () => (now?.() ?? new Date()).toISOString();
 
   return {
     async persistIntent(intent) {
-      if (claimedIntent) throw Error('ShareYourHTML 恢复上下文禁止创建新提交意图');
+      if (claimedIntent) throw Error('ShareYourHTML 恢复上下文禁止创建新提交信息');
       const proposed = { ...intent };
-      if (!validIntent(proposed)) throw Error('ShareYourHTML 提交意图无效');
+      if (!validIntent(proposed)) throw Error('ShareYourHTML 提交信息无效');
       store.update(state => {
         assertUniqueClaim(state, taskId, proposed);
         const binding = currentBinding(state, taskId, siteId, proposed, reviewedHtml,
@@ -326,7 +326,7 @@ export function createShareYourHtmlPublicationPersistence(
         binding.task.status = 'review';
         binding.task.health = 'pending';
         binding.task.updatedAt = updatedAt();
-        binding.task.message = 'ShareYourHTML 提交意图已保存；结果未核清前不会重发。';
+        binding.task.message = 'ShareYourHTML 提交信息已保存；结果未核清前不会重发。';
       });
       claimedIntent = proposed;
       claimedSiteBinding = { siteId, siteIdentityHash: shareYourHtmlSiteIdentityHash(
@@ -339,7 +339,7 @@ export function createShareYourHtmlPublicationPersistence(
       if (!expected || !validIntent(intent) || intent.operationId !== expected.operationId
         || intent.slug !== expected.slug || intent.sourceHash !== expected.sourceHash
         || intent.requestHash !== expected.requestHash || intent.createdAt !== expected.createdAt) {
-        throw Error('ShareYourHTML 最终提交闸缺少原提交意图');
+        throw Error('ShareYourHTML 最终提交闸缺少原提交信息');
       }
       const state = store.read();
       const savedTask = state.tasks.find(task => task.id === taskId);
@@ -348,7 +348,7 @@ export function createShareYourHtmlPublicationPersistence(
         siteId: saved.siteId,
         siteIdentityHash: saved.siteIdentityHash,
       } : undefined);
-      if (!expectedSite) throw Error('ShareYourHTML 最终提交闸缺少来源站点身份');
+      if (!expectedSite) throw Error('ShareYourHTML 最终提交闸缺少来源网站标识');
       const binding = currentBinding(state, taskId, siteId, expected, reviewedHtml,
         reviewedDraft, reviewedDraftRevision, expectedSite);
       const stored = assertStoredIntent(binding.task, expected, reviewedDraftHash,
@@ -379,16 +379,16 @@ export function createShareYourHtmlPublicationPersistence(
       if (!validIntent(receipt) || receipt.publicUrl !== expectedPublicUrl(receipt.slug)
         || receipt.requestedExpiry !== 'never' || receipt.publicVerification !== 'pending'
         || !EDIT_KEY.test(returned.editKey)) {
-        throw Error('ShareYourHTML API 回执或编辑凭据无效');
+        throw Error('ShareYourHTML 发布记录或编辑密钥无效');
       }
       const expected = claimedIntent && { ...claimedIntent };
       if (!expected || receipt.operationId !== expected.operationId
         || receipt.slug !== expected.slug || receipt.sourceHash !== expected.sourceHash
         || receipt.requestHash !== expected.requestHash || receipt.createdAt !== expected.createdAt) {
-        throw Error('ShareYourHTML API 回执缺少原提交意图');
+        throw Error('ShareYourHTML 平台返回记录缺少原提交信息');
       }
       const key = `publication:${taskId}`;
-      if (store.getCipher(key)) throw Error('ShareYourHTML 编辑凭据已经保存，禁止替换');
+      if (store.getCipher(key)) throw Error('ShareYourHTML 编辑密钥已经保存，禁止替换');
 
       const savedTask = store.read().tasks.find(task => task.id === taskId);
       const savedClaim = savedTask?.shareYourHtml;
@@ -396,7 +396,7 @@ export function createShareYourHtmlPublicationPersistence(
         siteId: savedClaim.siteId,
         siteIdentityHash: savedClaim.siteIdentityHash,
       } : undefined);
-      if (!expectedSite) throw Error('ShareYourHTML API 回执缺少来源站点身份');
+      if (!expectedSite) throw Error('ShareYourHTML 平台返回记录缺少来源网站标识');
 
       const assertCurrentSubmitting = (state: State): Task => {
         const binding = currentBinding(state, taskId, siteId, expected, reviewedHtml,
@@ -404,7 +404,7 @@ export function createShareYourHtmlPublicationPersistence(
         const saved = assertStoredIntent(binding.task, expected, reviewedDraftHash,
           reviewedDraftRevision, expectedSite);
         if (saved.stage !== 'submitting') {
-          throw Error('ShareYourHTML API 回执不能替换已有结果');
+          throw Error('ShareYourHTML 平台返回记录不能替换已有结果');
         }
         for (const task of state.tasks) {
           if (task.id === taskId || !task.shareYourHtml) continue;
@@ -431,23 +431,23 @@ export function createShareYourHtmlPublicationPersistence(
         siteIdentityHash: expectedSite.siteIdentityHash,
         editKey: returned.editKey,
       } satisfies SerializedShareYourHtmlSecret);
-      if (serialized.length > 16_384) throw Error('ShareYourHTML 编辑凭据超出可备份范围');
+      if (serialized.length > 16_384) throw Error('ShareYourHTML 编辑密钥超出可备份范围');
       let ciphers: Record<string, string>;
       try {
         ciphers = vault.encryptSecrets({ [key]: serialized });
       } catch {
-        throw Error('ShareYourHTML 编辑凭据未能加密');
+        throw Error('ShareYourHTML 编辑密钥未能加密');
       }
       if (typeof ciphers[key] !== 'string' || !ciphers[key] || ciphers[key] === serialized) {
-        throw Error('ShareYourHTML 编辑凭据未能加密');
+        throw Error('ShareYourHTML 编辑密钥未能加密');
       }
 
-      if (store.getCipher(key)) throw Error('ShareYourHTML 编辑凭据已经保存，禁止替换');
+      if (store.getCipher(key)) throw Error('ShareYourHTML 编辑密钥已经保存，禁止替换');
       assertCurrentSubmitting(store.read());
       store.updateWithCiphers(state => {
         // updateWithCiphers serializes this callback and the state+cipher commit
         // in the app's single Store. It does not claim cross-process isolation.
-        if (store.getCipher(key)) throw Error('ShareYourHTML 编辑凭据已经保存，禁止替换');
+        if (store.getCipher(key)) throw Error('ShareYourHTML 编辑密钥已经保存，禁止替换');
         const task = assertCurrentSubmitting(state);
         task.shareYourHtml = { ...task.shareYourHtml!, stage: 'api_receipt' };
         task.publicUrl = receipt.publicUrl;
@@ -455,7 +455,7 @@ export function createShareYourHtmlPublicationPersistence(
         task.status = 'review';
         task.health = 'pending';
         task.updatedAt = updatedAt();
-        task.message = 'ShareYourHTML API 回执与加密编辑凭据已保存；公开页面尚未验收。';
+        task.message = 'ShareYourHTML 平台返回记录与加密编辑密钥已保存；公开页面尚未验收。';
       }, { [key]: ciphers[key] });
     },
   };

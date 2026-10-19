@@ -1,3 +1,4 @@
+import {fixtureTerms,profileWriterResult,selectDueFixtureTask} from './writing-fixture';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -15,6 +16,7 @@ import {decryptBackup,encryptBackup} from '../src/main/backup';
 import {validateBackup} from '../src/main/backup-validation';
 import {Controller,type ControllerServices} from '../src/main/controller';
 import {Store,emptyState} from '../src/main/store';
+import {inspectRecheckedLinkHtml} from '../src/integrations/web';
 import type {Vault} from '../src/main/vault';
 import type {ArticleReview,Channel,Settings,Site,Task} from '../src/shared/types';
 
@@ -63,19 +65,20 @@ function passedReview(task:Task,currentSite:Site,currentChannel:Channel,settings
 function independentSetup(){
   const store=new Store(':memory:'),channel=agentboardChannel(),requests:RequestLog[]=[],network=transport(requests),first=site('11111111-1111-4111-8111-111111111111','boundary.example.org','Independent Boundary');
   const initial=emptyState();initial.settings.autoRun=true;initial.settings.notify=false;initial.settings.articleReviewMode='ai';initial.settings.timezone='UTC';initial.settings.channelOverrides={agentboard:true};initial.sites=[first];store.update(state=>Object.assign(state,initial));
-  const services:ControllerServices={channelCatalog:[channel],agentboardDependencies:network,collectArticleEvidence:async currentSite=>[{url:currentSite.url,kind:'site',text:currentSite.description,excerpt:currentSite.description}],aiFactory:(_settings,_secrets,onCall)=>({json:async<T>(_instruction:string,data:unknown)=>{onCall?.();const value=data as {topicEvidence?:{url?:string};site:{url:string}},target=value.topicEvidence?.url??value.site.url;return {title:'Independent publication boundary',description:'Independent synthetic audit fixture.',body:`This developer tool preserves immutable evidence before later observation. Commercial relationship disclosure: this post promotes the linked project. Read the [project guide](${target}).`} as T}}),reviewArticle:async(taskValue,currentSite,currentChannel,settings,_ai,_signal,deps)=>passedReview(taskValue,currentSite,currentChannel,settings,deps?.account)};
+  let periodicReads=0;
+  const services:ControllerServices={channelCatalog:[channel],prepareChannelTerms:async current=>fixtureTerms(current),agentboardDependencies:network,readTopicEvidence:async(_site,url)=>({url,title:'Public engineering guide',text:'Public source documentation for a safe bounded engineering workflow.',contentHash:'e'.repeat(64)}),recheckLink:async(url,target,legacy)=>{periodicReads++;try{const page=await network.renderPage!(url,new AbortController().signal);return inspectRecheckedLinkHtml(page.candidates[0].html,url,target,legacy)}catch{return {found:false,outcome:'unreachable',url,rel:'',reason:'synthetic public-page read failed',reasonCode:'page_unreachable'}}},collectArticleEvidence:async currentSite=>[{url:currentSite.url,kind:'site',text:currentSite.description,excerpt:currentSite.description}],aiFactory:(_settings,_secrets,onCall)=>({json:async<T>(_instruction:string,data:unknown)=>{onCall?.();const value=data as {topicEvidence?:{url?:string};site:{url:string}},target=value.topicEvidence?.url??value.site.url;return profileWriterResult({title:'Independent publication boundary',description:'Independent synthetic audit fixture.',body:`This developer tool preserves immutable evidence before later observation. Commercial relationship disclosure: this post promotes the linked project. Read the [project guide](${target}).`},data) as T}}),reviewArticle:async(taskValue,currentSite,currentChannel,settings,_ai,_signal,deps)=>passedReview(taskValue,currentSite,currentChannel,settings,deps?.account)};
   const controller=new Controller(store,vault(store),'audit-fixture',services);controller.runtime.aiReady=true;
   const backup=()=>{const state=store.read();const secrets=Object.fromEntries([`account:${state.accounts[0]?.id}`,...state.tasks.map(value=>`publication:${value.id}`)].map(key=>[key,decode(store.getCipher(key))!]).filter(([,value])=>value!==undefined));return validateBackup({state,secrets})};
-  return {store,controller,network,requests,backup,close:()=>{controller.stop();store.close()}};
+  return {store,controller,network,requests,backup,periodicReads:()=>periodicReads,close:()=>{controller.stop();store.close()}};
 }
 
 
 for(const timing of ['after-live','second-native'] as const)test('independent dofollow transient '+timing,async t=>{
  t.mock.timers.enable({apis:['Date'],now:Date.parse(stamp)});const f=independentSetup();let reads=0;const render=f.network.renderPage!;
  if(timing==='second-native')f.network.renderPage=async(u,s)=>{if(++reads===2)throw Error('synthetic transient');return render(u,s)};
- try{f.controller.plan();const id=f.store.read().tasks[0].id;await f.controller.generateDraft(id);await f.controller.tick();
+ try{const id=selectDueFixtureTask(f.store,f.controller,t.mock.timers,agentboardChannel());await f.controller.generateDraft(id);await f.controller.tick();
  if(timing==='after-live'){assert.equal(f.store.read().tasks[0].health,'healthy');assert.doesNotThrow(f.backup);f.network.renderPage=async()=>{throw Error('synthetic transient')};await f.controller.verify(id)}
- const task=f.store.read().tasks[0];assert.equal(task.status,'live');assert.equal(task.health,'unknown');assert.equal(task.linkCheck,'unreachable');assert.equal(task.linkRel,'');
+ const task=f.store.read().tasks[0];assert.equal(task.status,'live');assert.equal(task.health,'unknown');assert.equal(task.linkCheck,'unreachable');assert.equal(task.linkRel,timing==='after-live'?'follow':'');assert.equal(f.periodicReads(),timing==='after-live'?1:0,'only first acceptance uses the native verifier');assert.equal(!!task.firstLiveAt,timing==='after-live');
  console.log(JSON.stringify({case:timing,status:task.status,health:task.health,linkCheck:task.linkCheck,linkRel:task.linkRel,firstLiveAt:task.firstLiveAt??null,postCount:f.requests.filter(x=>x.method==='POST').length,physicalRequests:0}));assert.doesNotThrow(f.backup);
  }finally{f.close();t.mock.timers.reset()}
 });

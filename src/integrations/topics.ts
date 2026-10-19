@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import type { Site, SiteTopic } from '../shared/types.js';
-import { isArticleTopicUrl } from '../shared/topic-policy.js';
-import { fetchPublicText, normalizePublicUrl } from './web.js';
+import { isArticleTopicUrl, isReferralTopicTitle } from '../shared/topic-policy.js';
+import { fetchPublicText, normalizePublicUrl, PublicFetchError } from './web.js';
 
 const MAX_CHILD_SITEMAPS = 2;
 const MAX_TOPIC_URLS = 200;
@@ -155,12 +155,12 @@ function canonicalUrlKey(input: string): string | undefined {
 
 function asTopicError(error: unknown): TopicDiscoveryError {
   if (error instanceof TopicDiscoveryError) return error;
-  const message = error instanceof Error ? error.message : '';
-  if (/abort/i.test(message)) return new TopicDiscoveryError('aborted');
-  if (/size limit|safety limit|too large/i.test(message)) return new TopicDiscoveryError('limit_exceeded', false);
-  if (/private|reserved|public host|credentials|redirect target|cross-site/i.test(message)) {
-    return new TopicDiscoveryError('unsafe_response', false);
+  if(error instanceof PublicFetchError){
+    if(error.code==='aborted')return new TopicDiscoveryError('aborted');
+    if(error.code==='size_limit')return new TopicDiscoveryError('limit_exceeded',false);
+    if(['invalid_request','unsafe_address','redirect_invalid'].includes(error.code))return new TopicDiscoveryError('unsafe_response',false);
   }
+  if(error&&typeof error==='object'&&'name' in error&&(error as {name?:unknown}).name==='AbortError')return new TopicDiscoveryError('aborted');
   return new TopicDiscoveryError('temporary');
 }
 
@@ -168,8 +168,7 @@ function httpStatus(error: unknown): number | undefined {
   if (error && typeof error === 'object' && 'status' in error && Number.isInteger((error as { status?: unknown }).status)) {
     return (error as { status: number }).status;
   }
-  const match = error instanceof Error ? error.message.match(/\bHTTP\s+(\d{3})\b/i) : undefined;
-  return match ? Number(match[1]) : undefined;
+  return undefined;
 }
 
 function runWithOverallDeadline<T>(
@@ -241,8 +240,7 @@ async function fetchBounded(
     result = await transport.fetch(input, signal, kind);
   } catch (error) {
     const status = httpStatus(error);
-    const message = error instanceof Error ? error.message : '';
-    if (status === 404 || status === 410 || /\b(?:404|410|not found)\b/i.test(message)) {
+    if (status === 404 || status === 410) {
       throw new TopicDiscoveryError('not_found', false);
     }
     throw asTopicError(error);
@@ -313,7 +311,7 @@ function isEligibleTopicUrl(input: string, site: SiteIdentity): boolean {
 }
 
 function toTopic(entry: SitemapEntry, site: SiteIdentity, discoveredAt: string): SiteTopic | undefined {
-  if (!isEligibleTopicUrl(entry.url, site)) return undefined;
+  if (!isEligibleTopicUrl(entry.url, site) || (entry.title && isReferralTopicTitle(entry.title))) return undefined;
   try {
     return {
       url: canonicalPageUrl(entry.url),
@@ -455,7 +453,19 @@ function normalizedText(input: string): string {
 
 function extractEvidence(html: string, url: string): TopicEvidence {
   const $ = load(html);
+  // A neutral og:title cannot make an invitation page an eligible article when its
+  // document title or heading says otherwise. Check each fetched title before choosing one.
+  // Judge the page by its own titles only: the document title without the site-name suffix, og:title and the
+  // H1 inside the article. Icons (svg <title>), the header logo and navigation repeat on every page and must
+  // not make every topic of a site look like a sign-up page.
+  const documentTitle = normalizedText($('head > title').first().text()).split(/\s+[|｜\-–—_]\s+|\s*[|｜]\s*/)[0] ?? '';
   $('script,style,noscript,template,svg,canvas,iframe,nav,header,footer,aside,form,[hidden],[aria-hidden="true"]').remove();
+  const titles = [
+    ...$('meta[property="og:title"]').toArray().map(element => $(element).attr('content') ?? ''),
+    documentTitle,
+    ...$('article h1, main h1').toArray().map(element => $(element).text()),
+  ].map(normalizedText).filter(Boolean);
+  if (titles.some(isReferralTopicTitle)) throw new TopicDiscoveryError('invalid_topic', false);
   const title = normalizedText(
     $('meta[property="og:title"]').first().attr('content') ||
     $('title').first().text() ||

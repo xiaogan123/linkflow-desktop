@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["normal Controller performs exactly one POST and four GETs, then publishes without an account", "Controller makes zero network calls when native Vault encryption is unavailable"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});});
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -19,7 +21,7 @@ import type {ExecutionContext,Site,Snapshot,Task} from '../src/shared/types';
 import {channelAutomationKind} from '../src/ui/channel-automation';
 import {connectionOverview} from '../src/ui/channel-connections';
 
-const at='2026-10-13T08:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='Ab3d_E9z',editToken='T'.repeat(32),publicUrl=memoryWikiPublicUrl(id);
+const at='2026-10-13T10:00:00.000Z',taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='Ab3d_E9z',editToken='T'.repeat(32),publicUrl=memoryWikiPublicUrl(id);
 const title='Recover a delayed task safely',target='https://example.test/guide',draft={title,description:'A practical task recovery guide',body:`# ${title}\n\nPersist the intent before retrying. The [project guide](${target}) explains the complete recovery path.`};
 function site():Site{return {id:siteId,domain:'example.test',url:'https://example.test/',email:'owner@example.test',name:'Example software',description:'Developer software',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.test/product',developer:target},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:target,discoveredAt:at}]}}
 function task(extra:Partial<Task>={}):Task{return {id:taskId,siteId,channelId:'memorywiki',sourceDomain:'memory.wiki',status:'running',createdAt:at,scheduledAt:at,updatedAt:at,attempts:1,message:'fixture',topicUrl:target,draft,draftRevision:1,articleApprovedAt:at,health:'pending',...extra}}
@@ -32,7 +34,7 @@ function hash(value:Uint8Array|string){return createHash('sha256').update(value)
 function memory(){let claimed:MemoryWikiIntent|undefined,opaque:MemoryWikiOpaqueResponse|undefined,promoted:unknown;const order:string[]=[];const persistence:MemoryWikiPersistence={async persistIntent(value){if(claimed)throw Error('repeat');claimed=value;order.push('intent')},assertReadyToSubmit(){return true},async persistOpaqueResponse(value){opaque=value;order.push('opaque')},async loadOpaqueResponse(){return opaque},async promoteReceipt(value){promoted=value;order.push('receipt')}};return {persistence,order,opaque:()=>opaque,promoted:()=>promoted}}
 function context(value:Task,persistence?:MemoryWikiPersistence,secret?:string):ExecutionContext{return {site:site(),channel:channel(),task:value,settings:emptyState().settings,secrets:{get:async()=>secret,set:async()=>{},delete:async()=>{}},ai:{json:async()=>{throw Error('unused')}},signal:new AbortController().signal,...(persistence?{memoryWikiPersistence:persistence}:{}),getAccount:()=>undefined,saveAccount:async()=>{},checkpoint:()=>{},log:()=>{}}}
 function opaque(body=responseBody()):MemoryWikiOpaqueResponse{const bytes=Buffer.from(JSON.stringify(body));return {...intent(),version:1,kind:'memorywiki_opaque_response',status:200,contentType:'application/json',responseUrl:MEMORYWIKI_CREATE_URL,redirected:false,responseType:'default',bodyBase64:bytes.toString('base64'),bodySha256:hash(bytes)}}
-function saved(stage:'api_receipt'|'published'='api_receipt',deduplicated=false):Task{const receipt={...intent(),stage,id,remoteCreatedAt:at,...(deduplicated?{}:{remoteUpdatedAt:at}),deduplicated};const value=task({status:stage==='published'?'live':'review',submittedAt:at,publicUrl,checkpoint:stage==='published'?'memorywiki_published':'memorywiki_api_receipt',memoryWiki:receipt});if(stage==='published')Object.assign(value,{health:'healthy',verifiedAt:at,firstLiveAt:at,lastCheckedAt:at,nextCheckAt:'2026-10-20T08:00:00.000Z',linkCheck:'found',linkRel:'ugc nofollow',consecutiveMissing:0});return value}
+function saved(stage:'api_receipt'|'published'='api_receipt',deduplicated=false):Task{const receipt={...intent(),stage,id,remoteCreatedAt:at,...(deduplicated?{}:{remoteUpdatedAt:at}),deduplicated};const value=task({status:stage==='published'?'live':'review',submittedAt:at,publicUrl,checkpoint:stage==='published'?'memorywiki_published':'memorywiki_api_receipt',memoryWiki:receipt});if(stage==='published')Object.assign(value,{health:'healthy',verifiedAt:at,firstLiveAt:at,lastCheckedAt:at,nextCheckAt:'2026-10-20T10:00:00.000Z',linkCheck:'found',linkRel:'ugc nofollow',consecutiveMissing:0});return value}
 function apiValue(){const value=identity();return {id,markdown:value.markdown,title:value.title,created_at:at,updated_at:at,view_count:0,expires_at:null,edit_mode:'token',is_draft:false,source:'api',compile_kind:null,compile_from:null,compiled_at:null,intent:null,hasPassword:false,editMode:'token',isOwner:false,isCompileStale:false,latestSourceUpdatedAt:null,isEditor:false,isAllowedViewer:false,hasVisited:false,inBundles:[]}}
 function page(options:{canonical?:string;hidden?:boolean;noindex?:boolean;body?:string}={}){const body=options.body??String(marked.parse(identity().markdown,{gfm:true,async:false}));return `<!doctype html><html><head><link rel="canonical" href="${options.canonical??publicUrl}">${options.noindex?'<meta name="robots" content="noindex">':''}<script type="application/ld+json">${JSON.stringify({'@context':'https://schema.org','@type':'Article',headline:title,url:publicUrl,mainEntityOfPage:publicUrl,datePublished:at,dateModified:at})}</script></head><body><main id="memory-wiki-ssr-body"><article itemprop="articleBody"${options.hidden?' hidden':''}>${body}</article></main></body></html>`}
 function reads(options:{api?:unknown;raw?:string;page?:string;robots?:string;apiType?:string}={}){const raw=memoryWikiPublisherTesting.rawDocument(identity(),saved().memoryWiki!);return async(url:string,init:RequestInit)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');assert.equal(init.credentials,'omit');assert.equal(new Headers(init.headers).get('authorization'),null);assert.equal(new Headers(init.headers).get('cookie'),null);if(url===`${MEMORYWIKI_CREATE_URL}/${id}`)return new Response(JSON.stringify(options.api??apiValue()),{status:200,headers:{'content-type':options.apiType??'application/json'}});if(url===`https://memory.wiki/raw/${id}`)return new Response(options.raw??raw,{status:200,headers:{'content-type':'text/markdown; charset=utf-8',link:`<${publicUrl}>; rel="canonical"`,'x-document-id':id}});if(url===publicUrl)return new Response(options.page??page(),{status:200,headers:{'content-type':'text/html; charset=utf-8'}});if(url==='https://memory.wiki/robots.txt')return new Response(options.robots??'User-agent: *\nAllow: /',{status:200,headers:{'content-type':'text/plain'}});throw Error(`unexpected ${url}`)}}
@@ -52,10 +54,29 @@ test('redirect, media, status and body bounds fail without accepting a receipt',
 test('declared and streamed limits abort transport and cancel the physical body',async()=>{for(const kind of ['declared','streamed'] as const){let signal:AbortSignal|undefined,cancelled=false;const body=new ReadableStream<Uint8Array>({start(controller){if(kind==='streamed')controller.enqueue(new Uint8Array(MEMORYWIKI_MAX_RESPONSE_BYTES+1))},cancel(){cancelled=true}}),response=new Response(body,{status:200,headers:{'content-type':'application/json',...(kind==='declared'?{'content-length':String(MEMORYWIKI_MAX_RESPONSE_BYTES+1)}:{})}}),m=memory(),result=await createMemoryWikiDocument({operationId:intent().operationId,title,markdown:identity().markdown,reviewed:true},m.persistence,{now:()=>new Date(at),fetch:async(_url,init)=>{signal=init.signal??undefined;return response}});assert.equal(result.status,'unknown');if(result.status==='unknown')assert.equal(result.diagnostic,'body_limit');await Promise.resolve();assert.equal(signal?.aborted,true,kind);assert.equal(cancelled,true,kind)}});
 
 test('four GET acceptance binds API, raw frontmatter, SSR article, native link and crawler policy',async()=>{const calls:string[]=[],deps=acceptance(),fetch=deps.fetch,result=await verifyMemoryWikiPublication(saved(),site(),target,{get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}},{...deps,fetch:async(url,init)=>{calls.push(url);return fetch(url,init)}});assert.equal(result.found,true,JSON.stringify(result));assert.match(result.rel,/ugc|nofollow|^$/);assert.deepEqual(calls,[`${MEMORYWIKI_CREATE_URL}/${id}`,`https://memory.wiki/raw/${id}`,publicUrl,'https://memory.wiki/robots.txt']);const recovered=await reconcileMemoryWikiTask(context(saved(),memory().persistence,JSON.stringify(opaque())),acceptance());assert.equal(recovered.status,'found')});
+test('Memory.wiki maps authoritative 404/410 to absent and local secret gaps to unreachable',async()=>{
+  const secrets={get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}};
+  for(const status of [404,410]){
+    let reads=0;
+    const result=await verifyMemoryWikiPublication(saved(),site(),target,secrets,{
+      fetch:async()=>{reads++;return new Response('',{status})},
+      renderArticle:acceptance().renderArticle,
+    });
+    assert.equal(result.outcome,'absent');
+    assert.equal(reads,1);
+  }
+  const noRead={fetch:async()=>{throw Error('must not read')}};
+  const missing=await verifyMemoryWikiPublication(task(),site(),target,secrets,noRead);
+  assert.equal(missing.outcome,'unreachable');
+  const secretError=await verifyMemoryWikiPublication(
+    saved(),site(),target,{...secrets,get:async()=>{throw Error('vault unavailable')}},noRead,
+  );
+  assert.equal(secretError.outcome,'unreachable');
+});
 
 test('readback fails closed on every material public surface drift',async t=>{const cases=[['api',{api:{...apiValue(),is_draft:true}}],['raw',{raw:'changed'}],['canonical',{page:page({canonical:'https://memory.wiki/Wrong_ID'})}],['hidden',{page:page({hidden:true})}],['native-link',{page:page({body:String(marked.parse(identity().markdown.replace(target,'https://evil.invalid/'),{gfm:true,async:false}))})}],['robots',{robots:'User-agent: Bingbot\nDisallow: /'}],['media',{apiType:'text/plain'}]] as const;for(const [name,options] of cases)await t.test(name,async()=>{const result=await verifyMemoryWikiPublication(saved(),site(),target,{get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}},acceptance(options));assert.equal(result.found,false);assert.equal(result.outcome,'invalid')})});
 
-test('readback requires native visibility and rejects invisible native text',async()=>{const secrets={get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}};const absent=await verifyMemoryWikiPublication(saved(),site(),target,secrets,{fetch:reads()});assert.equal(absent.found,false);assert.equal(absent.outcome,'invalid');const invisible=await verifyMemoryWikiPublication(saved(),site(),target,secrets,acceptance({},false));assert.equal(invisible.found,false);assert.equal(invisible.outcome,'invalid')});
+test('readback requires native visibility and rejects invisible native text',async()=>{const secrets={get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}};const absent=await verifyMemoryWikiPublication(saved(),site(),target,secrets,{fetch:reads()});assert.equal(absent.found,false);assert.equal(absent.outcome,'unreachable');const invisible=await verifyMemoryWikiPublication(saved(),site(),target,secrets,acceptance({},false));assert.equal(invisible.found,false);assert.equal(invisible.outcome,'invalid')});
 
 test('existing intent never replays POST, including an opaque local recovery',async()=>{let posts=0;const prior=task({status:'review',submittedAt:at,checkpoint:'memorywiki_create_submitting',memoryWiki:{...intent(),stage:'submitting'}}),blocked=await runMemoryWikiTask(context(prior,memory().persistence),{fetch:async(_url,init)=>{if(init.method==='POST')posts++;throw Error('offline')}});assert.equal(blocked.status,'review');assert.equal(posts,0);const priorOpaque=task({status:'review',submittedAt:at,checkpoint:'memorywiki_opaque_response',memoryWiki:{...intent(),stage:'opaque_response'}}),m=memory();await m.persistence.persistIntent(intent());await m.persistence.persistOpaqueResponse(opaque());const resumed=await runMemoryWikiTask(context(priorOpaque,m.persistence,JSON.stringify(opaque())),acceptance());assert.equal(resumed.status,'review');assert.equal(posts,0)});
 
@@ -71,7 +92,7 @@ test('restarted Controller promotes encrypted opaque response using GET only',as
 
 
 test('persisted API times bind raw and SSR without replacing the original create receipt',async()=>{
-  const persisted='2026-10-13T07:59:59.850Z',api={...apiValue(),created_at:'2026-10-13T07:59:59.850000+00:00',updated_at:'2026-10-13T07:59:59.850000+00:00'},before=saved(),original=JSON.stringify(before),secrets={get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}};
+  const persisted='2026-10-13T09:59:59.850Z',api={...apiValue(),created_at:'2026-10-13T09:59:59.850000+00:00',updated_at:'2026-10-13T09:59:59.850000+00:00'},before=saved(),original=JSON.stringify(before),secrets={get:async()=>JSON.stringify(opaque()),set:async()=>{},delete:async()=>{}};
   const raw=memoryWikiPublisherTesting.rawDocument(identity(),{...before.memoryWiki!,remoteCreatedAt:persisted,remoteUpdatedAt:persisted}),html=page().replaceAll(at,persisted);
   const success=await verifyMemoryWikiPublication(before,site(),target,secrets,acceptance({api,raw,page:html}));assert.equal(success.found,true);assert.equal(JSON.stringify(before),original);
   for(const options of [{api,raw},{api,page:html}]){const result=await verifyMemoryWikiPublication(before,site(),target,secrets,acceptance(options));assert.equal(result.found,false);assert.equal(result.outcome,'invalid')}
@@ -79,12 +100,12 @@ test('persisted API times bind raw and SSR without replacing the original create
 
 test('creation timestamp correlation rejects edits, future times, distant records and dedup skew',()=>{
   const receipt=saved().memoryWiki!,check=(created:string,updated=created,r=receipt)=>memoryWikiPublisherTesting.exactApi(JSON.stringify({...apiValue(),created_at:created,updated_at:updated}),identity(),r);
-  assert.equal(check('2026-10-13T07:59:59.850Z'),true);
-  assert.equal(check('2026-10-13T08:00:00.001Z'),false);
-  assert.equal(check('2026-10-13T07:57:59.999Z'),false);
-  assert.equal(check('2026-10-13T07:59:59.850Z',at),false);
+  assert.equal(check('2026-10-13T09:59:59.850Z'),true);
+  assert.equal(check('2026-10-13T10:00:00.001Z'),false);
+  assert.equal(check('2026-10-13T09:57:59.999Z'),false);
+  assert.equal(check('2026-10-13T09:59:59.850Z',at),false);
   assert.equal(check('not-a-date'),false);
-  assert.equal(check('2026-10-13T07:59:59.850Z','2026-10-13T07:59:59.850Z',{...receipt,deduplicated:true,remoteUpdatedAt:undefined}),false);
+  assert.equal(check('2026-10-13T09:59:59.850Z','2026-10-13T09:59:59.850Z',{...receipt,deduplicated:true,remoteUpdatedAt:undefined}),false);
   assert.equal(check(at,at,{...receipt,deduplicated:true,remoteUpdatedAt:undefined}),true);
 });
 

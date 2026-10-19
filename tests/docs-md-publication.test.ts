@@ -440,7 +440,7 @@ test('receipt and token callbacks require the exact operation, URLs, hashes, and
     await assert.rejects(persistence.persistReceipt({
       ...receipt(expected),
       rawUrl: 'https://docs-md.com/raw/different-doc',
-    }), /回执无效/);
+    }), /返回记录无效/);
     assert.equal(f.store.read().tasks[0].docsMd?.stage, 'submitting');
     await persistence.persistReceipt(receipt(expected));
     for (const secret of [
@@ -493,7 +493,7 @@ test('deletion, draft replacement, intent replacement, and receipt replacement f
       await persistence.persistReceipt(receipt());
       await assert.rejects(
         persistence.persistReceipt(receipt(intent(), 'different-doc')),
-        /不能更换文章身份/,
+        /不能更换文章标识/,
       );
       assert.equal(f.store.read().tasks[0].publicUrl, PUBLIC_URL);
     } finally { f.cleanup(); }

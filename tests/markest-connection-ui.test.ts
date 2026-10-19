@@ -6,6 +6,9 @@ import type {Account,Channel,Snapshot} from '../src/shared/types';
 import {connectionOverview} from '../src/ui/channel-connections';
 import {channelOnboardingView} from '../src/ui/channel-onboarding';
 import {AccountsPage,MarkestConnection,markestConnectionPayload} from '../src/ui/pages/AccountsPage';
+import {PlatformDetail} from '../src/ui/pages/PlatformsPage';
+import {platformRows} from '../src/ui/platforms-model';
+
 
 const checkedAt='2026-10-09T12:00:00.000Z';
 const fingerprint='a'.repeat(64);
@@ -30,6 +33,13 @@ function validMarkestAccount():Account{
 }
 
 const noopAction=<T,>(_command:string,_payload?:unknown,_success?:string)=>Promise.resolve(undefined as T|undefined);
+
+// The first-connection notes now live in the platform's detail drawer.
+function platformDetail(data:Snapshot,channelId:string){
+  const row=platformRows(data,undefined,[]).find(item=>item.channel.id===channelId)!;
+  return renderToStaticMarkup(createElement(PlatformDetail,{row,data,links:[],disabled:false,onAction:async()=>undefined,onTask:()=>{},onConnect:()=>{},onClose:()=>{}}));
+}
+
 const pageProps={disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noopAction,onSetup:()=>{}};
 
 test('Markest onboarding is an existing-account flow with dated official evidence',()=>{
@@ -37,7 +47,7 @@ test('Markest onboarding is an existing-account flow with dated official evidenc
   assert.equal(view.kind,'existing_account');
   assert.match(view.setup,/邮箱注册.*邮件验证/);
   assert.match(view.setup,/create_paste、list_own、read_own/);
-  assert.match(view.setup,/不证明远端身份或发布权限/);
+  assert.match(view.setup,/不证明远端发布账号或发布权限/);
   assert.deepEqual(view.verification,{checkedAt:'2026-10-09',sourceUrl:'https://marke.st/api'});
 });
 
@@ -47,12 +57,12 @@ test('disabled Markest directory still exposes the read-only connection entry',(
   assert.ok(row);
   assert.equal(row.state,'first_connection');
   assert.equal(row.connectedCount,0);
-  assert.match(row.detail,/仅验证读取，发布未启用/);
-  const markup=renderToStaticMarkup(createElement(AccountsPage,{...pageProps,data}));
+  assert.match(row.detail,/目前只能连接，发布功能还没开放/);
+  const markup=platformDetail(data,'markest');
   assert.match(markup,/Markest/);
   assert.match(markup,/只读验证个人 key/);
   assert.match(markup,/发布未启用/);
-  assert.match(markup,/只读验证不代表远端身份、个人或工作区归属、免费计划或公开写入权限/);
+  assert.match(markup,/只读验证不代表远端发布账号、个人或工作区归属、免费计划或公开写入权限/);
 });
 
 test('only the dedicated Markest read proof produces a read-only state and its fingerprint never reaches SSR',()=>{
@@ -63,16 +73,16 @@ test('only the dedicated Markest read proof produces a read-only state and its f
   assert.equal(row.state,'read_only');
   assert.equal(row.connectedCount,1);
   assert.equal(row.boundSiteCount,1);
-  assert.match(row.detail,/仅验证读取，发布未启用.*邮箱和身份由你声明/);
+  assert.match(row.detail,/个人 key 已验证.*发布功能还没开放/);
   const page=renderToStaticMarkup(createElement(AccountsPage,{...pageProps,data}));
   assert.match(page,/只读已验证/);
-  assert.match(page,/用户声明身份，发布未启用/);
-  assert.doesNotMatch(page,/已连接的 API 身份/);
+  assert.match(page,/用户声明发布账号，发布未启用/);
+  assert.doesNotMatch(page,/已连接的 API 发布账号/);
   assert.doesNotMatch(page,new RegExp(fingerprint));
   assert.doesNotMatch(page,/local-key:/);
   const drawer=renderToStaticMarkup(createElement(MarkestConnection,{data,disabled:false,account,onClose:()=>{},onAction:noopAction}));
   assert.match(drawer,/create_paste、list_own、read_own/);
-  assert.match(drawer,/aria-label="Markest 个人 API key"[^>]*type="password"[^>]*autoComplete="new-password"/);
+  assert.match(drawer,/aria-label="Markest 个人 密钥"[^>]*type="password"[^>]*autoComplete="new-password"/);
   assert.match(drawer,/换 key 会建立新连接/);
   assert.doesNotMatch(drawer,new RegExp(fingerprint));
   assert.doesNotMatch(drawer,/local-key:/);
@@ -93,10 +103,10 @@ test('registered status and forged remote-identity fields cannot make Markest lo
     assert.equal(row.state,'attention',account.id);
     assert.equal(row.connectedCount,0,account.id);
     assert.doesNotMatch(row.detail,/自动可用|已连接|自动发布/,account.id);
-    assert.match(row.detail,/发布仍未启用/,account.id);
+    assert.match(row.detail,/发布功能还没开放/,account.id);
     if(account.id==='registered'){
       const markup=renderToStaticMarkup(createElement(AccountsPage,{...pageProps,data}));
-      assert.match(markup,/<strong>0<\/strong> 已验证身份/);
+      assert.match(markup,/0 个正常/);
       assert.match(markup,/只读连接待检查/);
     }
   }

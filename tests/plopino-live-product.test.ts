@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["normal Controller registry reuses one encrypted account, uploads once and leaves a restorable live receipt", "normal Controller never records a submission when the final pre-upload identity read fails", "normal Controller resumes the same bound registration candidate and never registers twice", "normal Controller preserves a user skip made while Plopino reconciliation is in flight"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-11T10:17:00.000Z')});});
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';

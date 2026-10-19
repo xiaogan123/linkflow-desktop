@@ -29,14 +29,14 @@ function publicHtml(options:HtmlOptions={}):string{
   let rendered=String(marked.parse(options.articleSource??identity.source,{async:false,gfm:true})).replaceAll('<a href=',`<a rel="${options.rel??'nofollow ugc noopener noreferrer'}" href=`);
   const canonical=Array.from({length:options.canonicalCount??1},()=>`<link rel="canonical" href="${options.canonical??publicUrl}">`).join('');
   const robots=options.metaRobots===undefined?'':`<meta name="robots" content="${options.metaRobots}">`;
-  const outer=`<div id="markdown-content"><div class="markdown-content"${options.articleAttrs??''}>${rendered}</div></div>`;
+  const outer=options.outerCount===0?'':`<div id="markdown-content"><div class="markdown-content"${options.articleAttrs??''}>${rendered}</div></div>`;
   return `<!doctype html><html><head>${canonical}${robots}</head><body><main${options.shellHidden?' hidden':''}><section class="share-header"><div>${options.permanent??'Permanent link'}</div></section><section class="article-row"><article class="card"><div class="file-bar"><h1>${options.filename??'publication.md'}</h1><a href="${options.rawHref??rawUrl}">${options.rawLabel??'Raw'}</a></div>${outer}${(options.outerCount??1)>1?outer:''}</article></section><section class="share-footer"><p>${options.expiry??'This link does not expire.'}</p></section></main></body></html>`;
 }
 
-interface TransportOptions{html?:string;robots?:string;raw?:string;pageStatus?:number;pageType?:string;pageHeaders?:Record<string,string>;pageUrl?:string}
-function readTransport(requests:string[],options:TransportOptions={}):DocsMdTransport{return async(url,init)=>{requests.push(`${init.method}:${url}`);if(url===rawUrl)return new Response(options.raw??docsMdTaskIdentity(task())!.source,{status:200,headers:{'content-type':'text/markdown'}});if(url==='https://docs-md.com/robots.txt')return new Response(options.robots??'User-agent: *\nAllow: /',{status:200,headers:{'content-type':'text/plain'}});assert.equal(url,publicUrl);const response=new Response(options.html??publicHtml(),{status:options.pageStatus??200,headers:{'content-type':options.pageType??'text/html',...options.pageHeaders}});if(options.pageUrl)Object.defineProperty(response,'url',{value:options.pageUrl});return response}}
+interface TransportOptions{html?:string;robots?:string;raw?:string;rawStatus?:number;rawType?:string;robotsStatus?:number;robotsType?:string;pageStatus?:number;pageType?:string;pageHeaders?:Record<string,string>;pageUrl?:string}
+function readTransport(requests:string[],options:TransportOptions={}):DocsMdTransport{return async(url,init)=>{requests.push(`${init.method}:${url}`);if(url===rawUrl)return new Response(options.raw??docsMdTaskIdentity(task())!.source,{status:options.rawStatus??200,headers:{'content-type':options.rawType??'text/markdown'}});if(url==='https://docs-md.com/robots.txt')return new Response(options.robots??'User-agent: *\nAllow: /',{status:options.robotsStatus??200,headers:{'content-type':options.robotsType??'text/plain'}});assert.equal(url,publicUrl);const response=new Response(options.html??publicHtml(),{status:options.pageStatus??200,headers:{'content-type':options.pageType??'text/html',...options.pageHeaders}});if(options.pageUrl)Object.defineProperty(response,'url',{value:options.pageUrl});return response}}
 
-test('Docs MD remains disabled while its bounded publisher is registered',()=>{const value=channel();assert.equal(value.enabled,false);assert.equal(value.accountRequired,false);assert.equal(value.automation,'api');assert.equal(value.evidenceStatus,'source_checked');assert.ok(publisherFor(value));assert.match(value.notes,/真实托管.*待/)});
+test('Docs MD enters trial with its bounded publisher registered',()=>{const value=channel();assert.equal(value.enabled,true);assert.equal(value.trial,true);assert.equal(value.accountRequired,false);assert.equal(value.automation,'api');assert.equal(value.evidenceStatus,'source_checked');assert.ok(publisherFor(value));assert.match(value.notes,/试运行/)});
 
 test('draft preflight fixes a narrow Markdown contract before any POST',()=>{
   assert.equal(docsMdDraftError(draft),undefined);
@@ -88,30 +88,69 @@ test('raw equality plus the exact visible permanent public page promotes only th
 
 test('raw equality alone never counts as a public article',async()=>{const requests:string[]=[],value=saved();const result=await verifyDocsMdPublication(value,site().url,{fetch:readTransport(requests,{html:publicHtml({articleSource:'# A reviewed Docs MD guide\n\nTruncated.'})})});assert.equal(result.found,false);assert.equal(result.outcome,'invalid');assert.equal(requests.length,3)});
 
+test('local receipt, hash, and draft inconsistencies stay unreachable without a read',async()=>{
+  const cases=[saved(),saved(),saved(),saved()];
+  delete cases[0].docsMd;
+  cases[1].docsMd!.sourceHash='f'.repeat(64);
+  cases[2].draft={...cases[2].draft!,body:`${cases[2].draft!.body}\nchanged`};
+  cases[3].docsMd!.id='Invalid ID';
+  for(const value of cases){let calls=0;const result=await verifyDocsMdPublication(value,site().url,{fetch:async()=>{calls++;throw Error('must not read')}});assert.equal(result.outcome,'unreachable');assert.equal(calls,0)}
+});
+
+test('known raw or public 404 and 410 are absent while service and robots failures remain unreachable',async t=>{
+  for(const status of [404,410])await t.test(`raw ${status}`,async()=>{const result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport([],{rawStatus:status})});assert.equal(result.outcome,'absent')});
+  for(const status of [404,410])await t.test(`page ${status}`,async()=>{const result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport([],{pageStatus:status})});assert.equal(result.outcome,'absent')});
+  for(const status of [403,429,503])for(const point of ['raw','robots','page'] as const)await t.test(`${point} ${status}`,async()=>{
+    const options:TransportOptions=point==='raw'?{rawStatus:status}:point==='robots'?{robotsStatus:status}:{pageStatus:status};
+    const result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport([],options)});assert.equal(result.outcome,'unreachable');
+  });
+  for(const status of [404,410])await t.test(`robots ${status}`,async()=>{const result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport([],{robotsStatus:status})});assert.equal(result.outcome,'unreachable')});
+});
+
+test('Docs MD public HTML stream interruption is unreachable',async()=>{
+  const result=await verifyDocsMdPublication(saved(),site().url,{fetch:async(url,init)=>{
+    if(url!==publicUrl)return readTransport([])(url,init);
+    let reads=0;
+    const body=new ReadableStream<Uint8Array>({pull(controller){
+      if(reads++===0)controller.enqueue(new TextEncoder().encode('<!doctype html><html><head>'));
+      else controller.error(Error('connection closed'));
+    }});
+    return new Response(body,{headers:{'content-type':'text/html'}});
+  }});
+  assert.equal(result.found,false);
+  assert.equal(result.outcome,'unreachable');
+});
+
 test('robots must allow the exact public path',async()=>{const requests:string[]=[],result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport(requests,{robots:'User-agent: *\nDisallow: /docs-'})});assert.equal(result.found,false);assert.equal(result.outcome,'invalid');assert.deepEqual(requests.map(item=>item.split(':').slice(1).join(':')),[rawUrl,'https://docs-md.com/robots.txt'])});
 
-test('public verification fails closed across the pinned shell and page boundaries',async t=>{
-  const cases:Array<[string,TransportOptions]>=[
-    ['raw mismatch',{raw:docsMdTaskIdentity(task())!.source+' changed'}],
-    ['wrong canonical',{html:publicHtml({canonical:'https://docs-md.com/other'})}],
-    ['multiple canonical',{html:publicHtml({canonicalCount:2})}],
-    ['noindex meta',{html:publicHtml({metaRobots:'noindex,follow'})}],
-    ['noindex header',{pageHeaders:{'x-robots-tag':'noindex'}}],
-    ['hidden shell',{html:publicHtml({shellHidden:true})}],
-    ['hidden permanent child',{html:publicHtml({permanent:'<span hidden>Permanent link</span>'})}],
-    ['hidden expiry child',{html:publicHtml({expiry:'<span style="display:none">This link does not expire.</span>'})}],
-    ['hidden filename child',{html:publicHtml({filename:'<span hidden>publication.md</span>'})}],
-    ['hidden raw label child',{html:publicHtml({rawLabel:'<span hidden>Raw</span>'})}],
-    ['wrong permanent marker',{html:publicHtml({permanent:'Temporary link'})}],
-    ['wrong expiry marker',{html:publicHtml({expiry:'Expires tomorrow.'})}],
-    ['wrong raw link',{html:publicHtml({rawHref:'https://docs-md.com/raw/other'})}],
-    ['wrong filename',{html:publicHtml({filename:'other.md'})}],
-    ['duplicate article root',{html:publicHtml({outerCount:2})}],
-    ['missing target link',{html:publicHtml({articleSource:'# A reviewed Docs MD guide\n\nA complete reviewed guide without its source.'})}],
-    ['missing ugc rel',{html:publicHtml({rel:'nofollow noopener noreferrer'})}],
-    ['redirect',{pageStatus:302,pageHeaders:{location:'https://docs-md.com/other'}}],
-    ['offsite final URL',{pageUrl:'https://mirror.example/public'}],
-    ['wrong content type',{pageType:'application/json'}],
+test('public verification separates definite failures from unreadable shell and response changes',async t=>{
+  const cases:Array<[string,TransportOptions,'invalid'|'unreachable']>=[
+    ['raw mismatch',{raw:docsMdTaskIdentity(task())!.source+' changed'},'invalid'],
+    ['wrong canonical',{html:publicHtml({canonical:'https://docs-md.com/other'})},'unreachable'],
+    ['missing canonical',{html:publicHtml({canonicalCount:0})},'unreachable'],
+    ['multiple canonical',{html:publicHtml({canonicalCount:2})},'unreachable'],
+    ['noindex meta',{html:publicHtml({metaRobots:'noindex,follow'})},'invalid'],
+    ['noindex header',{pageHeaders:{'x-robots-tag':'noindex'}},'invalid'],
+    ['hidden shell',{html:publicHtml({shellHidden:true})},'unreachable'],
+    ['hidden permanent child',{html:publicHtml({permanent:'<span hidden>Permanent link</span>'})},'unreachable'],
+    ['hidden expiry child',{html:publicHtml({expiry:'<span style="display:none">This link does not expire.</span>'})},'unreachable'],
+    ['hidden filename child',{html:publicHtml({filename:'<span hidden>publication.md</span>'})},'unreachable'],
+    ['hidden raw label child',{html:publicHtml({rawLabel:'<span hidden>Raw</span>'})},'unreachable'],
+    ['wrong permanent marker',{html:publicHtml({permanent:'Temporary link'})},'invalid'],
+    ['wrong expiry marker',{html:publicHtml({expiry:'Expires tomorrow.'})},'invalid'],
+    ['changed badge wording',{html:publicHtml({permanent:'Share link'})},'unreachable'],
+    ['changed footer wording',{html:publicHtml({expiry:'Available to read'})},'unreachable'],
+    ['wrong raw link',{html:publicHtml({rawHref:'https://docs-md.com/raw/other'})},'unreachable'],
+    ['wrong filename',{html:publicHtml({filename:'other.md'})},'unreachable'],
+    ['missing article root',{html:publicHtml({outerCount:0})},'unreachable'],
+    ['duplicate article root',{html:publicHtml({outerCount:2})},'unreachable'],
+    ['missing target link',{html:publicHtml({articleSource:'# A reviewed Docs MD guide\n\nA complete reviewed guide without its source.'})},'invalid'],
+    ['missing ugc rel',{html:publicHtml({rel:'nofollow noopener noreferrer'})},'invalid'],
+    ['redirect',{pageStatus:302,pageHeaders:{location:'https://docs-md.com/other'}},'unreachable'],
+    ['offsite final URL',{pageUrl:'https://mirror.example/public'},'unreachable'],
+    ['wrong content type',{pageType:'application/json'},'unreachable'],
+    ['robots 401',{robotsStatus:401},'unreachable'],
+    ['page 401',{pageStatus:401},'unreachable'],
   ];
-  for(const [name,options] of cases)await t.test(name,async()=>{const result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport([],options)});assert.equal(result.found,false,name);assert.equal(result.outcome,'invalid',name)});
+  for(const [name,options,outcome] of cases)await t.test(name,async()=>{const result=await verifyDocsMdPublication(saved(),site().url,{fetch:readTransport([],options)});assert.equal(result.found,false,name);assert.equal(result.outcome,outcome,name)});
 });

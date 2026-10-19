@@ -3,11 +3,11 @@ import { load } from 'cheerio';
 import { marked } from 'marked';
 import { verbosePostSlug } from '../shared/publication';
 import { applyDeclaredArticleVisibility, elementConcealed, publicPagePolicy, withPageNofollow } from './article-visibility';
-import type { Account, ExecutionContext, ExecutionResult, LinkResult, Task, VerboseReceipt } from '../shared/types';
+import type { Account, ExecutionContext, ExecutionResult, LinkResult, Site, Task, VerboseReceipt } from '../shared/types';
 
 const ORIGIN = 'https://verbose.blog';
 const USER = /^(?=.{3,32}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const SLUG = /^lf-[a-z0-9]{1,32}-[a-f0-9]{12}$/;
+const SLUG = /^(?:lf-[a-z0-9]{1,32}-[a-f0-9]{12}|[a-z0-9](?:[a-z0-9-]{2,39}))$/;
 const TOKEN = /^vb_live_[a-zA-Z0-9]{20,128}$/;
 type Json = Record<string, unknown>;
 export type VerboseTransport = (url: string, init: RequestInit) => Promise<Response>;
@@ -38,7 +38,7 @@ function validReceipt(value: unknown): value is VerboseReceipt {
     && typeof value.contentHash === 'string' && /^[a-f0-9]{64}$/.test(value.contentHash)
     && ['submitting', 'published'].includes(String(value.stage));
 }
-function article(task: Task, target: string, approval = true) {
+function article(task: Task, target: string, approval = true, site?: Pick<Site,'name'|'domain'|'url'>) {
   const draft = task.draft;
   if (!draft || approval && !Number.isFinite(Date.parse(task.articleApprovedAt ?? '')))
     throw Error('Verbose 全文须先通过当前稿件核对');
@@ -58,7 +58,9 @@ function article(task: Task, target: string, approval = true) {
   const contentHash = sha(JSON.stringify({ title: draft.title, body, target: targetHref }));
   const id = task.id.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32);
   if (!id) throw new VerboseError('invalid');
-  return { title: draft.title, body, target: targetHref, contentHash, slug: verbosePostSlug(task.id, contentHash), html };
+  const slug=task.verbose?.slug??verbosePostSlug(task.id,contentHash,site??{name:'',domain:new URL(target).hostname,url:target});
+  if(!SLUG.test(slug))throw new VerboseError('invalid');
+  return { title: draft.title, body, target: targetHref, contentHash, slug, html };
 }
 type Article = ReturnType<typeof article>;
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -88,7 +90,7 @@ async function request(path: string, deps: VerboseDependencies, payload?: Json, 
       method: payload ? 'POST' : 'GET', redirect: 'manual', credentials: 'omit', cache: 'no-store',
       referrerPolicy: 'no-referrer', signal: controller.signal,
       headers: { accept: path.startsWith('/v0/') ? 'application/json' : 'text/html',
-        'user-agent': 'Linkflow (original-article publisher)', ...(payload ? { 'content-type': 'application/json' } : {}),
+        'user-agent': 'Mozilla/5.0', ...(payload ? { 'content-type': 'application/json' } : {}),
         ...(token ? { authorization: `Bearer ${token}` } : {}) },
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     }), controller.signal);
@@ -147,21 +149,21 @@ async function ready(context: ExecutionContext, deps: VerboseDependencies): Prom
   let account = context.getAccount();
   if (!account) {
     if (context.task.accountId || context.task.verbose || context.task.submittedAt || context.task.publicUrl || context.signal.aborted)
-      return { status: 'needs_input', message: 'Verbose 原身份或投稿状态待核对，不会另建账号' };
+      return { status: 'needs_input', message: 'Verbose 原账号或投稿状态待核对，不会另建账号' };
     const at = stamp(deps), username = `reading-notes-${randomBytes(6).toString('hex')}`;
     account = { id: randomUUID(), channelId: 'verbose', email: '', username, publicationUrl: home(username),
       credentialKind: 'api_token', status: 'draft', hasPassword: false, source: 'generated', registrationAttempts: 0, createdAt: at, updatedAt: at };
-    try { await context.saveAccount(account); } catch { return { status: 'queued', message: 'Verbose 身份未保存，未提交注册' }; }
+    try { await context.saveAccount(account); } catch { return { status: 'queued', message: 'Verbose 发布账号未保存，未提交注册' }; }
   }
   if (account.channelId !== 'verbose' || !!context.task.accountId && account.id !== context.task.accountId || !USER.test(account.username)
     || account.credentialKind !== 'api_token' || account.publicationUrl !== home(account.username)
     || ['restricted', 'credentials_invalid', 'needs_verification'].includes(account.status))
-    return { status: 'needs_input', message: 'Verbose 原作者身份不可用，其他渠道可继续' };
+    return { status: 'needs_input', message: 'Verbose 原作者账号不可用，其他平台可继续' };
   if (account.status === 'draft' && account.source === 'generated' && account.registrationAttempts === 0) {
     const pending: Account = { ...account, status: 'unknown', registrationAttempts: 1, updatedAt: stamp(deps),
-      diagnostic: { code: 'registration_unknown', message: '注册意图已保存；一次性令牌返回不明时不会换号重试', at: stamp(deps), retryable: false } };
+      diagnostic: { code: 'registration_unknown', message: '注册计划已保存；一次性令牌返回不明时不会换号重试', at: stamp(deps), retryable: false } };
     try { await context.saveAccount(pending); context.checkpoint({ checkpoint: 'verbose_account_create_pending' }); }
-    catch { return { status: 'queued', message: 'Verbose 注册意图未保存，未提交注册' }; }
+    catch { return { status: 'queued', message: 'Verbose 注册计划未保存，未提交注册' }; }
     account = pending;
     try {
       const result = await json('/v0/profiles', deps, { username: account.username });
@@ -174,14 +176,14 @@ async function ready(context: ExecutionContext, deps: VerboseDependencies): Prom
     } catch (error) {
       if (error instanceof VerboseError && error.code === 'challenge') {
         try { await context.saveAccount({ ...account, status: 'needs_verification', diagnostic: {
-          code: 'verification_required', message: '平台要求人工验证；保留原身份且不重试注册', at: stamp(deps), retryable: false } }); } catch { /* pending retained */ }
+          code: 'verification_required', message: '平台要求人工验证；保留原账号且不重试注册', at: stamp(deps), retryable: false } }); } catch { /* pending retained */ }
       }
-      return { status: 'needs_input', checkpoint: 'verbose_account_create_pending', message: 'Verbose 一次性账号令牌未能确认，保留原身份；不会重建，其他平台继续' };
+      return { status: 'needs_input', checkpoint: 'verbose_account_create_pending', message: 'Verbose 一次性账号令牌未能确认，保留原账号；不会重建，其他平台继续' };
     }
   }
   let token: string;
   try { token = tokenFrom(await context.secrets.get(`account:${account.id}`), account.username); }
-  catch { return { status: 'needs_input', checkpoint: 'verbose_account_create_pending', message: 'Verbose 缺少原始一次性令牌；无法找回时跳过本渠道，其他任务继续' }; }
+  catch { return { status: 'needs_input', checkpoint: 'verbose_account_create_pending', message: 'Verbose 缺少原始一次性令牌；无法找回时跳过本平台，其他任务继续' }; }
   try {
     const data = await json(`/v0/profiles/${account.username}`, deps);
     if (data.username !== account.username) throw new VerboseError('invalid');
@@ -194,7 +196,7 @@ async function ready(context: ExecutionContext, deps: VerboseDependencies): Prom
   }
 }
 export async function prepareVerboseIdentity(context: ExecutionContext, deps: VerboseDependencies = {}): Promise<ExecutionResult | undefined> {
-  if (!contextMatches(context)) return { status: 'needs_input', message: '当前任务不属于 Verbose 全文发布渠道' };
+  if (!contextMatches(context)) return { status: 'needs_input', message: '当前任务不属于 Verbose 全文发布平台' };
   const result = await ready(context, { ...deps, signal: context.signal });
   return 'status' in result ? result : undefined;
 }
@@ -252,21 +254,21 @@ export async function verifyVerbosePublication(task: Task, target: string, deps:
   try {
     const saved = task.verbose;
     if (task.channelId !== 'verbose' || task.sourceDomain !== 'verbose.blog' || !validReceipt(saved) || saved.stage !== 'published'
-      || task.publicUrl !== publicUrl(saved.username, saved.slug)) return failed('invalid', 'Verbose 缺少一致的已发布回执');
+      || task.publicUrl !== publicUrl(saved.username, saved.slug)) return failed('invalid', 'Verbose 缺少一致的已发布记录');
     const expected = article(task, target, false);
-    if (saved.contentHash !== expected.contentHash || saved.slug !== expected.slug) return failed('invalid', 'Verbose 原文摘要与回执不符');
+    if (saved.contentHash !== expected.contentHash || saved.slug !== expected.slug) return failed('invalid', 'Verbose 原文摘要与记录不符');
     const result = await found(saved, expected, deps);
     return { found: true, outcome: 'found', url: result.url, rel: result.rel, reason: 'Verbose 原文、匿名完整正文及所有链接一致；不代表搜索收录' };
   } catch (error) {
     return failed(error instanceof VerboseError && error.code === 'absent' ? 'absent'
-      : error instanceof VerboseError && ['network', 'timeout', 'cancelled', 'challenge', 'rate'].includes(error.code) ? 'unreachable' : 'invalid', 'Verbose 原公开全文暂未核验通过');
+      : error instanceof VerboseError && ['network', 'timeout', 'cancelled', 'challenge', 'rate'].includes(error.code) ? 'unreachable' : 'invalid', 'Verbose 原公开全文暂未检查通过');
   }
 }
 export async function runVerboseTask(context: ExecutionContext, deps: VerboseDependencies = {}): Promise<VerboseExecutionResult> {
-  if (!contextMatches(context)) return { status: 'needs_input', message: '当前渠道不支持 Verbose 全文 API' };
+  if (!contextMatches(context)) return { status: 'needs_input', message: '当前平台不支持 Verbose 全文 API' };
   const prior = context.task.verbose;
   let expected: Article;
-  try { expected = article(context.task, context.site.url, !prior); }
+  try { expected = article(context.task, context.site.url, !prior, context.site); }
   catch (error) { return { status: 'needs_input', message: error instanceof Error ? error.message : 'Verbose 原稿无效' }; }
   if (prior) {
     const result = await reconcileVerboseTask(context, deps);
@@ -276,19 +278,19 @@ export async function runVerboseTask(context: ExecutionContext, deps: VerboseDep
     }
     return result.status === 'found' ? { status: 'review', message: 'Verbose 原投稿已找到，未再次发送', publicUrl: result.publicUrl,
       verbose: result.verbose, checkpoint: 'verbose_published', submittedAt: context.task.submittedAt }
-      : { status: 'review', message: 'Verbose 原投稿结果不明，只读核验且不会重发', checkpoint: 'verbose_publish_submitting' };
+      : { status: 'review', message: 'Verbose 原投稿结果不明；只检查原记录，不会重发', checkpoint: 'verbose_publish_submitting' };
   }
   if (context.task.submittedAt || context.task.publicUrl || ['verbose_publish_submitting', 'verbose_published'].includes(context.task.checkpoint ?? ''))
-    return { status: 'needs_input', message: 'Verbose 投稿痕迹缺少回执，禁止重发' };
+    return { status: 'needs_input', message: 'Verbose 投稿痕迹缺少记录，禁止重发' };
   const original = context.getAccount();
   const access = await ready(context, { ...deps, signal: context.signal }); if ('status' in access) return access;
   if (original?.status !== 'registered' || original.id !== access.account.id)
-    return { status: 'queued', message: 'Verbose 作者身份已就绪，请先以此身份独立核对稿件' };
+    return { status: 'queued', message: 'Verbose 作者账号已就绪；稍后会用这个账号重新核对稿件，再投稿。' };
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未投稿' };
   const saved: VerboseReceipt = { username: access.account.username, slug: expected.slug, contentHash: expected.contentHash, stage: 'submitting' };
   const submittedAt = stamp(deps);
   try { context.checkpoint({ verbose: saved, checkpoint: 'verbose_publish_submitting', submittedAt }); }
-  catch { return { status: 'queued', message: 'Verbose 投稿意图未保存，未提交' }; }
+  catch { return { status: 'queued', message: 'Verbose 投稿计划未保存，未提交' }; }
   try {
     const result = await json(`/v0/profiles/${saved.username}/posts`, { ...deps, signal: context.signal },
       { title: expected.title, body: expected.body, slug: saved.slug }, access.token);
@@ -300,9 +302,9 @@ export async function runVerboseTask(context: ExecutionContext, deps: VerboseDep
     const receipt: VerboseReceipt = { ...saved, stage: 'published' };
     try { context.checkpoint({ verbose: receipt, checkpoint: 'verbose_published', publicUrl: result.url, submittedAt }); }
     catch { /* Pending original receipt is durable; a later read may finish it. */ }
-    return { status: 'review', message: 'Verbose 全文与匿名链接已核验', publicUrl: result.url, verbose: receipt, checkpoint: 'verbose_published', submittedAt };
+    return { status: 'review', message: 'Verbose 全文与匿名链接已检查', publicUrl: result.url, verbose: receipt, checkpoint: 'verbose_published', submittedAt };
   } catch {
-    return { status: 'review', message: 'Verbose 投稿结果仍待只读核验，不会重发', verbose: saved, checkpoint: 'verbose_publish_submitting', submittedAt };
+    return { status: 'review', message: 'Verbose 投稿结果仍待检查，不会重发', verbose: saved, checkpoint: 'verbose_publish_submitting', submittedAt };
   }
 }
 export const verboseTesting = { article, rendered, validReceipt, publicUrl };

@@ -187,7 +187,7 @@ const escapeAttribute = (value: string) => escapeText(value).replace(/"/g, '&quo
 function article(task: Task, target: string, requireApproval = true) {
   const draft = task.draft;
   if (!draft || requireApproval && !currentlyApproved(task)) {
-    throw Error('Better Than HTML 全文须先通过当前稿件的独立核对');
+    throw Error('Better Than HTML 全文须先通过当前稿件的 AI 复核');
   }
   if (typeof draft.title !== 'string' || draft.title !== draft.title.trim() || codePoints(draft.title) < 1
     || codePoints(draft.title) > 80 || /[\u0000-\u001f\u007f<>]/.test(draft.title)) {
@@ -220,7 +220,7 @@ function article(task: Task, target: string, requireApproval = true) {
   const selected = publicHttps(task.topicUrl ?? site);
   if (!sameSite(site, selected)) throw Error('Better Than HTML 选题链接必须属于当前网站');
   if (!body.links.some(link => link.href === selected)) {
-    throw Error('Better Than HTML 全文必须包含已核对的公开 HTTPS 正文链接');
+    throw Error('Better Than HTML 全文必须包含已检查的公开 HTTPS 正文链接');
   }
   const parsedBody = load(body.html, undefined, false);
   const paragraphs = parsedBody('p,li').toArray().filter(node => normalizedText(parsedBody(node).text()));
@@ -238,7 +238,7 @@ function article(task: Task, target: string, requireApproval = true) {
     + 'pre{overflow:auto;padding:1rem;background:#ece9df;border-radius:.5rem}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}'
     + 'blockquote{margin-left:0;padding-left:1rem;border-left:4px solid #b7aa87}table{border-collapse:collapse;width:100%}'
     + 'th,td{padding:.5rem;border:1px solid #c9c2b0;text-align:left}</style>\n</head>\n<body>\n'
-    + `<main id="linkflow-article"><article><h1>${escapeText(draft.title)}</h1><div id="linkflow-article-body">${body.html}</div></article></main>`
+    + `<main id="article"><article><h1>${escapeText(draft.title)}</h1><div id="article-body">${body.html}</div></article></main>`
     + '\n</body>\n</html>';
   if (Buffer.byteLength(document, 'utf8') >= MAX_DOCUMENT_BYTES) {
     throw Error('Better Than HTML 完整 HTML 超过平台 2 MB 上限，不会截断发布');
@@ -310,7 +310,7 @@ async function request(
       signal: controller.signal,
       headers: {
         accept: submit || list ? 'application/json' : 'text/html',
-        'user-agent': 'Linkflow (reviewed static-article publisher)',
+        'user-agent': 'Mozilla/5.0',
         ...(submit ? { 'content-type': 'application/json' } : {}),
       },
       ...(submit ? { body: JSON.stringify(payload) } : {}),
@@ -435,10 +435,10 @@ function rendered(html: string, expected: Article, url: string, headers: Headers
       || $('meta[http-equiv]').filter((_, node) => ($(node).attr('http-equiv') ?? '').trim().toLowerCase() === 'refresh').length) return;
     const canonicals = $('link[rel]').filter((_, node) => ($(node).attr('rel') ?? '').toLowerCase().split(/\s+/).includes('canonical'));
     if (canonicals.length && (canonicals.length !== 1 || new URL(canonicals.attr('href') ?? '', url).toString() !== url)) return;
-    const main = $('main#linkflow-article');
+    const main = $('main#article,main#linkflow-article');
     const articleNode = main.children('article');
     const heading = articleNode.children('h1');
-    const body = articleNode.children('div#linkflow-article-body');
+    const body = articleNode.children('div#article-body,div#linkflow-article-body');
     if (main.length !== 1 || articleNode.length !== 1 || heading.length !== 1 || body.length !== 1
       || articleNode.children().length !== 2 || main.children().length !== 1
       || heading.children().length || normalizedText(heading.text()) !== normalizedText(expected.title)
@@ -460,10 +460,10 @@ function rendered(html: string, expected: Article, url: string, headers: Headers
 function contentIdentity(html: string, expected: Article): 'match' | 'mismatch' | 'unknown' {
   try {
     const $ = load(html);
-    const main = $('main#linkflow-article');
+    const main = $('main#article,main#linkflow-article');
     const articleNode = main.children('article');
     const heading = articleNode.children('h1');
-    const body = articleNode.children('div#linkflow-article-body');
+    const body = articleNode.children('div#article-body,div#linkflow-article-body');
     if (main.length !== 1 || articleNode.length !== 1 || heading.length !== 1 || body.length !== 1) return 'unknown';
     if (normalizedText(heading.text()) !== normalizedText(expected.title)) return 'mismatch';
     let actual: ReturnType<typeof canonicalBody>;
@@ -630,19 +630,19 @@ export async function verifyBetterThanHtml(
     const saved = task.betterthanhtml;
     if (task.channelId !== 'betterthanhtml' || task.sourceDomain !== 'betterthanhtml.com'
       || !receipt(saved) || saved.stage !== 'published' || !saved.id || task.publicUrl !== publicUrl(saved.id)) {
-      return failed('invalid', 'Better Than HTML 缺少一致的已发布回执');
+      return failed('invalid', 'Better Than HTML 缺少一致的已发布记录');
     }
     const expected = article(task, target, false);
     if (saved.contentHash !== expected.contentHash) {
-      return failed('invalid', 'Better Than HTML 原文摘要与回执不符');
+      return failed('invalid', 'Better Than HTML 原文摘要与记录不符');
     }
     const result = await found(saved, expected, deps);
     return { found: true, outcome: 'found', url: result.url, rel: result.rel,
-      reason: 'Better Than HTML 公开页的标题、完整正文及全部链接与已核对稿件一致；这不保证搜索收录或排名' };
+      reason: 'Better Than HTML 公开页的标题、完整正文及全部链接与已检查稿件一致；这不保证搜索收录或排名' };
   } catch (error) {
     return failed(error instanceof BetterThanHtmlError && error.code === 'absent' ? 'absent'
       : error instanceof BetterThanHtmlError && ['network', 'timeout', 'cancelled', 'challenge', 'rate'].includes(error.code)
-        ? 'unreachable' : 'invalid', 'Better Than HTML 原公开全文暂未核验通过');
+        ? 'unreachable' : 'invalid', 'Better Than HTML 原公开全文暂未检查通过');
   }
 }
 
@@ -650,7 +650,7 @@ export async function runBetterThanHtmlTask(
   context: ExecutionContext,
   deps: BetterThanHtmlDependencies = {},
 ): Promise<BetterThanHtmlExecutionResult> {
-  if (!contextMatches(context)) return { status: 'needs_input', message: '当前渠道不支持 Better Than HTML 全文 API' };
+  if (!contextMatches(context)) return { status: 'needs_input', message: '当前平台不支持 Better Than HTML 全文 API' };
   const prior = context.task.betterthanhtml;
   let expected: Article;
   try { expected = article(context.task, context.site.url, !prior); }
@@ -662,7 +662,7 @@ export async function runBetterThanHtmlTask(
     const checkpoint = receipt(prior) && prior.stage === 'published'
       ? 'betterthanhtml_published' : 'betterthanhtml_publish_submitting';
     if (priorUrl && context.task.publicUrl && context.task.publicUrl !== priorUrl) {
-      return { status: 'needs_input', message: 'Better Than HTML 原回执与公开地址不一致，禁止重发',
+      return { status: 'needs_input', message: 'Better Than HTML 原记录与公开地址不一致，禁止重发',
         betterthanhtml: prior, checkpoint, submittedAt: context.task.submittedAt };
     }
     const result = await reconcileBetterThanHtmlTask(context, deps);
@@ -675,13 +675,13 @@ export async function runBetterThanHtmlTask(
         publicUrl: result.publicUrl, betterthanhtml: result.betterthanhtml,
         checkpoint: 'betterthanhtml_published', submittedAt: context.task.submittedAt };
     }
-    return { status: 'review', message: 'Better Than HTML 原投稿结果不明，只读核验且不会重发',
+    return { status: 'review', message: 'Better Than HTML 原投稿结果不明；只检查原记录，不会重发',
       betterthanhtml: prior, checkpoint, submittedAt: context.task.submittedAt,
       ...(priorUrl ? { publicUrl: priorUrl } : {}) };
   }
   if (context.task.submittedAt || context.task.publicUrl
     || ['betterthanhtml_publish_submitting', 'betterthanhtml_published'].includes(context.task.checkpoint ?? '')) {
-    return { status: 'needs_input', message: 'Better Than HTML 投稿痕迹缺少匹配回执，禁止重发' };
+    return { status: 'needs_input', message: 'Better Than HTML 投稿痕迹缺少匹配记录，禁止重发' };
   }
   if (context.signal.aborted) return { status: 'queued', message: '任务已暂停，尚未投稿' };
   const pending: BetterThanHtmlReceipt = { contentHash: expected.contentHash, stage: 'submitting' };
@@ -689,7 +689,7 @@ export async function runBetterThanHtmlTask(
   try {
     context.checkpoint({ betterthanhtml: pending, checkpoint: 'betterthanhtml_publish_submitting', submittedAt });
   } catch {
-    return { status: 'queued', message: 'Better Than HTML 投稿意图未保存，未提交' };
+    return { status: 'queued', message: 'Better Than HTML 投稿计划未保存，未提交' };
   }
   let response: Json;
   try { response = await submit(expected, { ...deps, signal: context.signal }); }
@@ -698,12 +698,12 @@ export async function runBetterThanHtmlTask(
       && ['challenge', 'rate', 'cancelled', 'timeout'].includes(error.code);
     return { status: 'review', message: stopped
       ? 'Better Than HTML 要求验证、限流或请求中断，已停止且不会重发'
-      : 'Better Than HTML 投稿结果不明；平台无匿名幂等找回接口，不会重发',
+      : 'Better Than HTML 投稿结果不明；平台无匿名防重复找回方式，不会重发',
       betterthanhtml: pending, checkpoint: 'betterthanhtml_publish_submitting', submittedAt };
   }
   const identity = responseIdentity(response);
   if (!identity) {
-    return { status: 'review', message: 'Better Than HTML 返回结果无法安全确认，保留单次投稿意图且不会重发',
+    return { status: 'review', message: 'Better Than HTML 返回结果无法安全确认，保留单次投稿计划且不会重发',
       betterthanhtml: pending, checkpoint: 'betterthanhtml_publish_submitting', submittedAt };
   }
   const identified: BetterThanHtmlReceipt = { ...pending, id: identity.id };
@@ -714,7 +714,7 @@ export async function runBetterThanHtmlTask(
     saved = true;
   } catch { /* Return the validated ID and URL so the caller can persist them without another POST. */ }
   if (!saved) {
-    return { status: 'review', message: 'Better Than HTML 已返回公开地址；待本机保存匹配回执后只读核验，不会重发',
+    return { status: 'review', message: 'Better Than HTML 已返回公开地址；待本机保存匹配记录后检查，不会重发',
       publicUrl: identity.url, betterthanhtml: identified,
       checkpoint: 'betterthanhtml_publish_submitting', submittedAt };
   }
@@ -725,11 +725,11 @@ export async function runBetterThanHtmlTask(
       context.checkpoint({ betterthanhtml: published, checkpoint: 'betterthanhtml_published',
         publicUrl: result.url, submittedAt });
     } catch { /* The identified receipt remains recoverable through GET only. */ }
-    return { status: 'review', message: 'Better Than HTML 匿名公开全文已核验；平台未提供修改或删除契约，搜索收录不保证',
+    return { status: 'review', message: 'Better Than HTML 匿名公开全文已检查；平台未提供修改或删除契约，搜索收录不保证',
       publicUrl: result.url, betterthanhtml: published,
       checkpoint: 'betterthanhtml_published', submittedAt };
   } catch {
-    return { status: 'review', message: 'Better Than HTML 已返回公开地址，完整全文仍待只读核验；不会重发',
+    return { status: 'review', message: 'Better Than HTML 已返回公开地址，完整全文仍待检查；不会重发',
       publicUrl: identity.url, betterthanhtml: identified,
       checkpoint: 'betterthanhtml_publish_submitting', submittedAt };
   }

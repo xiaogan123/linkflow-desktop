@@ -8,10 +8,12 @@ import {runGistTask} from '../src/integrations/gist';
 import type {Site,Task} from '../src/shared/types';
 import type {Vault} from '../src/main/vault';
 
+test.beforeEach(context=>(context as import('node:test').TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-09-01T12:17:00.000Z')}));
+
 const stamp='2026-09-01T00:00:00.000Z';
 const site:Site={id:'11111111-1111-4111-8111-111111111111',domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'Example',description:'A maintained technical project',category:'developer',language:'en',monthlyTarget:1,status:'ready',createdAt:stamp,qualifications:{developer:'https://example.com/project'}};
 const body=['We operate the Example website. '+ 'Record every input and output in this reusable technical checklist. '.repeat(6),'Compare the public documentation and capture uncertainty. '.repeat(6),'Consult the [official site](https://example.com/) to verify the published project details. '+ 'Review all error conditions before relying on the result. '.repeat(6)].join('\n\n');
-function task(channelId:string):Task{return {id:'22222222-2222-4222-8222-222222222222',siteId:site.id,channelId,sourceDomain:CHANNELS.find(c=>c.id===channelId)!.domain,status:'queued',createdAt:stamp,updatedAt:stamp,scheduledAt:stamp,attempts:0,message:'fixture',articleApprovedAt:stamp,draft:{title:'Reusable technical checklist',description:'A reproducible guide',body}}}
+function task(channelId:string):Task{return {id:'22222222-2222-4222-8222-222222222222',siteId:site.id,channelId,sourceDomain:CHANNELS.find(c=>c.id===channelId)!.domain,status:'queued',createdAt:stamp,updatedAt:stamp,scheduledAt:new Date().toISOString(),attempts:0,message:'fixture',articleApprovedAt:stamp,draft:{title:'Reusable technical checklist',description:'A reproducible guide',body}}}
 const vault={ready:true,available:()=>true,get:async()=> 'synthetic-token-123456789012345',encryptSecrets:()=>({})} as unknown as Vault;
 
 for(const channelId of ['telegraph','github-gist'])test(`${channelId} retains a validated publish receipt when pause wins the response race`,async()=>{

@@ -1,3 +1,5 @@
+import {beforeEach,type TestContext} from 'node:test';
+beforeEach(t=>{if(["normal Controller reuses the encrypted identity, writes once, read-only accepts, and restores the bound backup"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-15T10:17:00.000Z')});});
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -8,6 +10,7 @@ import {marked} from 'marked';
 import {CHANNELS} from '../src/integrations/catalog';
 import {acceptWordcellPublication,createWordcellIdentity,publishWordcellArticle,WORDCELL_OPERATION_CONTRACT,WORDCELL_TOKEN_URL,type WordcellIdentityPersistence,type WordcellIntent,type WordcellOpaqueResponse,type WordcellPublicationPersistence,type WordcellPublicationReceipt} from '../src/integrations/wordcell';
 import {parseWordcellCredential} from '../src/integrations/wordcell-publisher';
+import {publicIdentitySlug} from '../src/integrations/public-identity';
 import {encryptBackup,decryptBackup} from '../src/main/backup';
 import {validateBackup} from '../src/main/backup-validation';
 import {Controller} from '../src/main/controller';
@@ -115,7 +118,7 @@ test('acceptance rejects crawler-specific denial, hidden authored content, and c
 });
 
 test('normal Controller reuses the encrypted identity, writes once, read-only accepts, and restores the bound backup',async()=>{
-  const directory=mkdtempSync(join(tmpdir(),'wordcell-controller-')),store=new Store(join(directory,'state.sqlite')),siteId='44444444-4444-4444-8444-444444444444',taskId='55555555-5555-4555-8555-555555555555',bindingId='66666666-6666-4666-8666-666666666666',taskSlug='linkflow-5555555555554555',taskPublicUrl=`https://wordcell.io/p/${key8}/${taskSlug}/`,catalog=CHANNELS.map(value=>value.id==='wordcell'?{...value,enabled:true}:value),state=emptyState(),secret=registeredSecret(),plain=new Map<string,string>([[`account:${accountId}`,secret]]);
+  const directory=mkdtempSync(join(tmpdir(),'wordcell-controller-')),store=new Store(join(directory,'state.sqlite')),siteId='44444444-4444-4444-8444-444444444444',taskId='55555555-5555-4555-8555-555555555555',bindingId='66666666-6666-4666-8666-666666666666',taskSlug=publicIdentitySlug({name:'Example software',url:'https://github.com/xiaogan123/linkflow-desktop/'},taskId,40),taskPublicUrl=`https://wordcell.io/p/${key8}/${taskSlug}/`,catalog=CHANNELS.map(value=>value.id==='wordcell'?{...value,enabled:true}:value),state=emptyState(),secret=registeredSecret(),plain=new Map<string,string>([[`account:${accountId}`,secret]]);
   state.settings.autoRun=true;state.settings.notify=false;state.settings.articleReviewMode='manual';state.settings.timezone='UTC';state.settings.channelOverrides=Object.fromEntries(catalog.map(value=>[value.id,value.id==='wordcell']));
   state.sites=[{id:siteId,domain:'github.com',url:'https://github.com/xiaogan123/linkflow-desktop/',email:'owner@example.test',name:'Example software',description:'Developer software',category:'software',language:'zh',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:targetUrl,developer:targetUrl},status:'ready',createdAt,analyzedAt:createdAt,topicsCheckedAt:new Date().toISOString(),topics:[{url:targetUrl,discoveredAt:createdAt}]}];
   state.tasks=[{id:taskId,siteId,channelId:'wordcell',accountId,sourceDomain:'wordcell.io',status:'queued',createdAt,scheduledAt:new Date(Date.now()-1000).toISOString(),updatedAt:createdAt,attempts:0,message:'fixture',topicUrl:targetUrl,draft:{title,description:'',body:markdown},draftRevision:1,articleApprovedAt:createdAt}];

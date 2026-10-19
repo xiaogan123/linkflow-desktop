@@ -28,7 +28,7 @@ export interface RaindropExecutionResult extends ExecutionResult {raindrop?:Rain
 export type RaindropReconcileResult={status:'found';publicUrl:string;raindrop:RaindropReceipt}|{status:'unknown'};
 
 export class RaindropError extends Error{
-  constructor(readonly code:'auth'|'restricted'|'rate_limited'|'timeout'|'network'|'cancelled'|'invalid_response'|'public_mismatch',message?:string){super(message??`Raindrop request failed (${code})`);this.name='RaindropError'}
+  constructor(readonly code:'auth'|'restricted'|'rate_limited'|'timeout'|'network'|'cancelled'|'invalid_response'|'public_mismatch'|'display_hidden',message?:string){super(message??`Raindrop request failed (${code})`);this.name='RaindropError'}
 }
 
 function object(value:unknown):value is Json{return !!value&&typeof value==='object'&&!Array.isArray(value)}
@@ -60,7 +60,7 @@ export function canonicalRaindropPublicUrl(value:string):string{
 }
 function canonicalTarget(value:string):string{
   const url=new URL(value);
-  if(url.protocol!=='https:'||url.username||url.password||url.port&&url.port!=='443'||url.hash)throw Error('Raindrop 目标必须是无凭据和片段的 HTTPS 地址');
+  if(url.protocol!=='https:'||url.username||url.password||url.port&&url.port!=='443'||url.hash)throw Error('Raindrop 目标必须是无账号密码和片段的 HTTPS 地址');
   if(url.port==='443')url.port='';return url.href;
 }
 function operationId(taskId:string):string{return `raindrop_${taskId.toLowerCase().replace(/[^a-f0-9]/g,'')}`}
@@ -113,7 +113,7 @@ export async function listRaindropCollections(token:string,deps:RaindropDependen
   if(!Array.isArray(roots.items)||!Array.isArray(children.items))throw new RaindropError('invalid_response');
   const collections=[...roots.items.map(item=>collectionOption(item)),...children.items.map(item=>{const parsed=collectionOption(item,'unknown');return {...parsed,parentId:parsed.parentId??'unknown'}})];
   const ids=new Set<string>();for(const item of collections)if(ids.has(item.id))throw new RaindropError('invalid_response');else ids.add(item.id);
-  const owners=[...new Set(collections.filter(item=>item.accessLevel===4).map(item=>item.ownerId))];if(owners.length!==1)throw new RaindropError('invalid_response','Raindrop 本人合集身份无法唯一核对');
+  const owners=[...new Set(collections.filter(item=>item.accessLevel===4).map(item=>item.ownerId))];if(owners.length!==1)throw new RaindropError('invalid_response','Raindrop 本人合集的账号无法唯一核对');
   return {ownerId:owners[0],collections};
 }
 
@@ -145,7 +145,7 @@ async function publicPage(publicUrl:string,deps:RaindropDependencies,page?:numbe
 export async function verifyRaindropPublicCollection(publicUrl:string,collectionId:string,ownerId:string,deps:RaindropDependencies={}):Promise<{title:string;view:string}>{
   const page=await publicPage(publicUrl,deps);
   if(page.collectionId!==collectionId||page.ownerId!==ownerId)throw new RaindropError('public_mismatch','公开页与选定合集或所有者不一致');
-  if(page.hide.has('title')||page.hide.has('excerpt'))throw new RaindropError('public_mismatch',`该公开合集的 ${page.view} 视图隐藏了标题或摘要；请本人在 Raindrop 启用显示后再连接`);
+  if(page.hide.has('title')||page.hide.has('excerpt'))throw new RaindropError('display_hidden',`该公开合集的 ${page.view} 视图隐藏了标题或摘要；请本人在 Raindrop 启用显示后再连接`);
   return {title:page.title,view:page.view};
 }
 
@@ -177,7 +177,7 @@ export function validRaindropAccount(account:Account|undefined):account is Accou
 type BoundPayload={target:string;title:string;excerpt:string;account:Account&{raindrop:NonNullable<Account['raindrop']>}};
 function boundPayload(context:ExecutionContext):BoundPayload{
   const account=context.getAccount();if(!validRaindropAccount(account))throw Error('请先连接本人 Raindrop 公开根合集');
-  if(context.channel.id!==CHANNEL_ID||context.channel.domain!==SOURCE_DOMAIN||context.channel.automation!=='api'||context.task.channelId!==CHANNEL_ID||context.task.sourceDomain!==SOURCE_DOMAIN||context.task.accountId!==account.id)throw Error('Raindrop 任务与连接身份不一致');
+  if(context.channel.id!==CHANNEL_ID||context.channel.domain!==SOURCE_DOMAIN||context.channel.automation!=='api'||context.task.channelId!==CHANNEL_ID||context.task.sourceDomain!==SOURCE_DOMAIN||context.task.accountId!==account.id)throw Error('Raindrop 任务与连接发布账号不一致');
   if(!context.task.draft)throw Error('Raindrop 标题、目标和摘要不完整');
   const target=canonicalTarget(context.task.topicUrl??''),site=new URL(context.site.url);if(new URL(target).hostname!==site.hostname)throw Error('Raindrop 只能收藏当前站点已审核的选题地址');
   const title=context.task.draft.title,excerpt=context.task.draft.body,format=raindropDraftError(context.task.draft);if(format)throw Error(format);
@@ -186,7 +186,7 @@ function boundPayload(context:ExecutionContext):BoundPayload{
 function approvedPayload(context:ExecutionContext):BoundPayload{
   const payload=boundPayload(context),mode=getArticleReviewMode(context.site,context.settings);
   const approved=mode==='ai'?articleReviewStillValid(context.task,context.site,context.channel,context.settings,payload.account):!!context.task.articleApprovedAt;
-  if(!approved)throw Error(mode==='ai'?'Raindrop 标题、目标和摘要尚未通过当前独立审核':'Raindrop 标题、目标和摘要尚未获得当前人工批准');
+  if(!approved)throw Error(mode==='ai'?'Raindrop 标题、目标和摘要尚未通过当前 AI 复核':'Raindrop 标题、目标和摘要尚未获得当前人工批准');
   return payload;
 }
 export function raindropTaskPayload(context:ExecutionContext){return approvedPayload(context)}
@@ -245,21 +245,21 @@ export async function reconcileRaindropTask(context:ExecutionContext,deps:Raindr
 export async function verifyRaindropPublication(task:Task,_target:string,deps:RaindropDependencies={}):Promise<LinkResult>{
   const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:task.publicUrl??'https://raindrop.io/',rel:'unknown',reason});
   const receipt=task.raindrop;if(task.channelId!==CHANNEL_ID||task.sourceDomain!==SOURCE_DOMAIN||!receipt||receipt.stage!=='published'||!receipt.itemId||!task.publicUrl)return fail('invalid','Raindrop 缺少已绑定的公开回读证据');
-  return fail('unreachable','Raindrop 公开核验必须使用原账号和合集绑定');
+  return fail('unreachable','Raindrop 公开检查必须使用原账号和合集绑定');
 }
 
 export async function verifyRaindropTask(context:ExecutionContext,deps:RaindropDependencies={}):Promise<LinkResult>{
   const result=await reconcileRaindropTask(context,deps);if(result.status!=='found')return {found:false,outcome:'unreachable',url:context.task.publicUrl??context.getAccount()?.publicationUrl??'https://raindrop.io/',rel:'unknown',reason:'Raindrop API 与公开页的原条目还未同时核对'};
   const account=context.getAccount();if(!validRaindropAccount(account))return {found:false,outcome:'invalid',url:result.publicUrl,rel:'unknown',reason:'Raindrop 原合集绑定已失效'};
   const page=await verifyPublic(result.raindrop,account,{...deps,signal:context.signal});if(!page)return {found:false,outcome:'invalid',url:result.publicUrl,rel:'unknown',reason:'Raindrop 公开页未显示原标题、摘要和直达链接'};
-  return {found:true,outcome:'found',url:page.url,rel:page.rel,reason:`Raindrop 原合集公开页可见标题、摘要与直达链接；robots=${page.robots}，不代表搜索收录`};
+  return {found:true,outcome:'found',url:page.url,rel:page.rel,reason:`Raindrop 原合集公开页可见标题、摘要与直达链接；抓取规则=${page.robots}，不代表搜索收录`};
 }
 
 export async function runRaindropTask(context:ExecutionContext,deps:RaindropDependencies={}):Promise<RaindropExecutionResult>{
   const prior=context.task.raindrop;
   if(prior){
-    const account=context.getAccount();if(!raindropReceiptMatchesTask(context.task,account,prior))return {status:'needs_input',message:'Raindrop 原意图、账号或合集已改变，禁止重发',raindrop:prior,checkpoint:`raindrop_${prior.stage}`,submittedAt:prior.createdAt};
-    const recovered=await reconcileRaindropTask(context,deps);return recovered.status==='found'?{status:'review',message:'Raindrop 原条目已通过 API 和公开页找回，没有重发',publicUrl:recovered.publicUrl,raindrop:recovered.raindrop,checkpoint:'raindrop_published',submittedAt:prior.createdAt}:{status:'review',message:'Raindrop 原提交仍未能唯一确认；保留完整意图且不会重发',...(prior.itemId?{publicUrl:account!.raindrop!.publicUrl}:{}),raindrop:prior,checkpoint:`raindrop_${prior.stage}`,submittedAt:prior.createdAt};
+    const account=context.getAccount();if(!raindropReceiptMatchesTask(context.task,account,prior))return {status:'needs_input',message:'Raindrop 原提交信息、账号或合集已改变，禁止重发',raindrop:prior,checkpoint:`raindrop_${prior.stage}`,submittedAt:prior.createdAt};
+    const recovered=await reconcileRaindropTask(context,deps);return recovered.status==='found'?{status:'review',message:'Raindrop 原条目已通过 API 和公开页找回，没有重发',publicUrl:recovered.publicUrl,raindrop:recovered.raindrop,checkpoint:'raindrop_published',submittedAt:prior.createdAt}:{status:'review',message:'Raindrop 原提交仍未能唯一确认；保留完整提交信息且不会重发',...(prior.itemId?{publicUrl:account!.raindrop!.publicUrl}:{}),raindrop:prior,checkpoint:`raindrop_${prior.stage}`,submittedAt:prior.createdAt};
   }
   if(context.task.submittedAt||context.task.publicUrl||/^raindrop_/.test(context.task.checkpoint??''))return {status:'needs_input',message:'Raindrop 已有不完整提交痕迹，不会重发'};
   const payload=approvedPayload(context),binding=payload.account.raindrop;
@@ -273,11 +273,11 @@ export async function runRaindropTask(context:ExecutionContext,deps:RaindropDepe
   context.checkpoint({raindrop:prepared,checkpoint:'raindrop_prepared',submittedAt:createdAt});
   if(!baseline.complete)return {status:'needs_input',message:'Raindrop 合集基线超过有界读取范围，未发送；请换用专用空根合集',raindrop:prepared,checkpoint:'raindrop_prepared',submittedAt:createdAt};
   const submitting={...prepared,stage:'submitting' as const};context.checkpoint({raindrop:submitting,checkpoint:'raindrop_submitting',submittedAt:createdAt});
-  let value:Json;try{value=await api('/rest/v1/raindrop',token,{method:'POST',body:JSON.stringify({link:payload.target,title:payload.title,excerpt:payload.excerpt,collection:{$id:Number(binding.collectionId)},type:'link'})},{...deps,signal:context.signal})}catch{return {status:'review',message:'Raindrop 单次创建结果不明；已保留基线与原意图，只会读取对账',raindrop:submitting,checkpoint:'raindrop_submitting',submittedAt:createdAt}}
+  let value:Json;try{value=await api('/rest/v1/raindrop',token,{method:'POST',body:JSON.stringify({link:payload.target,title:payload.title,excerpt:payload.excerpt,collection:{$id:Number(binding.collectionId)},type:'link'})},{...deps,signal:context.signal})}catch{return {status:'review',message:'Raindrop 单次创建结果不明；已保留基线与原提交信息，只会读取核对',raindrop:submitting,checkpoint:'raindrop_submitting',submittedAt:createdAt}}
   const item=remoteItem(value.item);if(!item||!matches(item,submitting)||baseline.items.some(existing=>existing.id===item.id))return {status:'review',message:'Raindrop 返回内容无法绑定原账号、合集或内容；不会重发',raindrop:submitting,checkpoint:'raindrop_submitting',submittedAt:createdAt};
   const accepted={...submitting,stage:'api_receipt' as const,itemId:item.id,remoteCreatedAt:item.created};context.checkpoint({raindrop:accepted,checkpoint:'raindrop_api_receipt',submittedAt:createdAt,publicUrl:binding.publicUrl});
   const verified=await reconcileRaindropTask({...context,task:{...context.task,raindrop:accepted,submittedAt:createdAt,publicUrl:binding.publicUrl}},deps);
-  return verified.status==='found'?{status:'review',message:'Raindrop API 回执及公开页标题、摘要和链接已一致',publicUrl:verified.publicUrl,raindrop:verified.raindrop,checkpoint:'raindrop_published',submittedAt:createdAt}:{status:'review',message:'Raindrop API 回执已保留；公开页尚未同时显示标题、摘要和链接，暂不计数',publicUrl:binding.publicUrl,raindrop:accepted,checkpoint:'raindrop_api_receipt',submittedAt:createdAt};
+  return verified.status==='found'?{status:'review',message:'Raindrop 平台返回记录及公开页标题、摘要和链接已一致',publicUrl:verified.publicUrl,raindrop:verified.raindrop,checkpoint:'raindrop_published',submittedAt:createdAt}:{status:'review',message:'Raindrop 平台返回记录已保留；公开页尚未同时显示标题、摘要和链接，暂不计数',publicUrl:binding.publicUrl,raindrop:accepted,checkpoint:'raindrop_api_receipt',submittedAt:createdAt};
 }
 
 export const raindropTesting={api,collectionOption,parsePublicContext,remoteItem,payloadHash,visibleMatch,validAccount:validRaindropAccount};

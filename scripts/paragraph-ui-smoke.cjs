@@ -211,7 +211,7 @@ if(!process.versions.electron){
     'window.__paragraphFixture.actions.filter(action=>action.command==='+JSON.stringify(command)+').length',
   );
   const openNewParagraph=async()=>{
-    await clickText('添加 / 连接账号');
+    await clickText('连接账号');
     await waitFor('document.querySelector(".account-guide-drawer")!==null');
     const picked=await evaluate('(()=>{const option=[...document.querySelectorAll(".account-guide-drawer [role=option]")].find(item=>item.querySelector("strong")?.textContent==="Paragraph");if(!option)return false;option.click();return true})()');
     assert(picked,'Paragraph platform option');
@@ -241,7 +241,7 @@ if(!process.versions.electron){
 
       check(
         'Paragraph connection entry is discoverable on the accounts page',
-        await evaluate('[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="添加 / 连接账号"&&!button.disabled)'),
+        await evaluate('[...document.querySelectorAll("button")].some(button=>button.innerText.trim()==="连接账号"&&!button.disabled)'),
       );
       const paragraphReveal=await buttonInfo('\u67e5\u770b @existing-publication \u7684\u5bc6\u7801');
       const ordinaryReveal=await buttonInfo('\u67e5\u770b password-owner \u7684\u5bc6\u7801');

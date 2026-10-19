@@ -1,3 +1,6 @@
+import {beforeEach,type TestContext} from 'node:test';
+// Tests that run the scheduler use a fixed daytime clock, so they do not depend on the hour they happen to run.
+beforeEach(t=>{if(["an eligibility failure retires the old task while a new platform remains schedulable","a verified same-channel replacement resumes an unsubmitted invalid-credential task only once"].includes(t.name))(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(stamp)+60000});});
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Store} from '../src/main/store';
@@ -13,7 +16,7 @@ import type {Vault} from '../src/main/vault';
 const siteId='11111111-1111-4111-8111-111111111111';
 const taskId='22222222-2222-4222-8222-222222222222';
 const accountId='33333333-3333-4333-8333-333333333333';
-const stamp='2026-10-06T00:00:00.000Z';
+const stamp='2026-10-06T10:00:00.000Z';
 const vault={ready:true,available:()=>true,get:async()=>undefined,set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault;
 
 function fixture(channelId='github-gist'){
@@ -55,7 +58,7 @@ function controller(store:Store){
   return {value,counts:()=>({writes,reviews})};
 }
 
-test('restoring an explicit eligibility wait continues the same task and preserves its draft and cost',async()=>{
+test('an eligibility failure retires the old task while a new platform remains schedulable',async()=>{
   const store=fixture(),gist=CHANNELS.find(channel=>channel.id==='github-gist')!;
   store.update(state=>{const task=state.tasks[0];task.attempts=1;task.articleReview={status:'passed',reason:'Review for the old qualification context',reviewedAt:stamp,evidenceUrls:[state.sites[0].url,gist.rulesUrl],draftRevision:task.draftRevision??0,contentHash:articleContentHash(task),contextHash:articleContextHash(state.sites[0],gist,state.settings)};});
   const original=structuredClone(store.read().tasks[0]),{value,counts}=controller(store);
@@ -63,7 +66,7 @@ test('restoring an explicit eligibility wait continues the same task and preserv
     store.update(state=>state.sites[0].qualifications={});
     await value.tick();
     let saved=store.read().tasks[0];
-    assert.equal(saved.status,'needs_input');
+    assert.equal(saved.status,'skipped');
     assert.equal(saved.checkpoint,'eligibility_wait');
     assert.deepEqual(counts(),{writes:0,reviews:0});
 
@@ -73,10 +76,18 @@ test('restoring an explicit eligibility wait continues the same task and preserv
     assert.equal(saved.id,original.id);
     assert.deepEqual(saved.draft,original.draft);
     assert.deepEqual(saved.cost,original.cost);
-    assert.equal(saved.attempts,original.attempts+1);
-    assert.notEqual(saved.articleReview?.contextHash,original.articleReview?.contextHash);
-    assert.equal(store.read().tasks.length,1);
-    assert.deepEqual(counts(),{writes:1,reviews:1});
+    assert.equal(saved.status,'skipped');
+    assert.equal(saved.reasonCode,'channel_ineligible');
+    assert.equal(saved.attempts,original.attempts);
+    assert.equal(taskHasAutomaticFollowup(saved),false);
+    assert.equal(taskAutomaticFollowupAt(saved),undefined);
+    assert.equal(taskPresentation(saved).kind,'closed');
+    assert.deepEqual(counts(),{writes:0,reviews:0});
+    const next=store.read().tasks.find(task=>task.id!==original.id);
+    assert.ok(next);
+    assert.equal(next.status,'queued');
+    assert.equal(next.channelId,'');
+    assert.equal(next.scheduling?.version,1);
   }finally{store.close();}
 });
 
@@ -96,8 +107,13 @@ test('eligibility recovery respects automatic pause, site pause, manual review, 
       assert.equal(saved.id,taskId);
       assert.deepEqual(saved.draft,{title:'Practical guide',description:'A reusable technical guide',body:'Original reproducible technical documentation with a useful complete checklist.'});
       assert.deepEqual(counts(),{writes:0,reviews:0});
-      if(boundary==='manual-review'){assert.equal(saved.status,'needs_input');assert.equal(saved.checkpoint,'article_review');assert.equal(saved.articleApprovedAt,undefined);}
-      else {assert.equal(saved.status,'needs_input');assert.equal(saved.checkpoint,'eligibility_wait');}
+      assert.deepEqual(saved.cost,boundary==='budget-exhausted'?{aiCalls:6}:{aiCalls:2});
+      if(boundary==='automatic-pause'||boundary==='site-pause'){
+        assert.equal(saved.status,'needs_input');assert.equal(saved.checkpoint,'eligibility_wait');
+      }else{
+        assert.equal(saved.status,'skipped');assert.equal(saved.checkpoint,'eligibility_wait');
+        assert.equal(taskHasAutomaticFollowup(saved),false);
+      }
     }finally{store.close();}
   });
 });

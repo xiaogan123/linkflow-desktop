@@ -1,3 +1,5 @@
+import {publicationDraftHash, publicationReadContext} from '../main/publication-snapshot';
+import {BLOGGER_MESSAGES,BLOGGER_AUTHOR_LABELS} from '../shared/blogger-messages';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import {load} from 'cheerio';
@@ -75,6 +77,8 @@ interface ArticlePayload {
   title: string;
   baseContent: string;
   contentHash: string;
+  /** The page the article links to: the reviewed topic or home page, or the home page for early posts. */
+  targetUrl: string;
   content: (operationId: string) => string;
 }
 
@@ -254,7 +258,7 @@ async function apiRequest(
   const headers: Record<string, string> = {
     accept: 'application/json',
     authorization: `Bearer ${accessToken}`,
-    'user-agent': 'Linkflow-Desktop',
+    'user-agent': 'Mozilla/5.0',
   };
   if (options.body) headers['content-type'] = 'application/json';
   return fixedRequest(apiUrl(path, options.query), {
@@ -268,7 +272,7 @@ async function tokenRequest(parameters: URLSearchParams, dependencies?: BloggerD
   try {
     return await fixedRequest(new URL(TOKEN_ENDPOINT), {
       method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'Linkflow-Desktop' },
+      headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'Mozilla/5.0' },
       body: parameters.toString(),
     }, dependencies);
   } catch (error) {
@@ -609,7 +613,7 @@ export async function revokeBloggerCredential(credential: unknown, dependencies?
   try {
     await fixedRequest(new URL(REVOKE_ENDPOINT), {
       method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'Linkflow-Desktop' },
+      headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', 'user-agent': 'Mozilla/5.0' },
       body: parameters.toString(),
     }, dependencies, true);
   } catch (error) {
@@ -622,11 +626,65 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
 }
 
+/** The draft body (plain Markdown) as simple HTML: headings, lists, paragraphs, bold and its one link. */
+function bodyHtml(body: string): string {
+  const inline = (text: string) => escapeHtml(text)
+    .replace(/!\[([^\]\n]*)\]\([^)\s]*\)/g, '$1') // images are not carried over; keep their alt text only
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?![*\w])/g, '$1<em>$2</em>')
+    .replace(/\[([^\]\n]+)\]\((https:\/\/[^\s)]+)\)/g, (_match, label: string, href: string) => `<a href="${href}">${label}</a>`)
+    .replace(/\[([^\]\n]+)\]\([^)\s]*\)/g, '$1'); // non-https links keep their words, never the raw Markdown
+  const out: string[] = [];
+  let paragraph: string[] = [], list: { tag: 'ul' | 'ol'; items: string[] } | undefined, quote: string[] = [], code: string[] | undefined;
+  const flush = () => {
+    if (paragraph.length) out.push(`<p>${paragraph.map(inline).join('<br>')}</p>`);
+    if (list) out.push(`<${list.tag}>${list.items.map(item => `<li>${inline(item)}</li>`).join('')}</${list.tag}>`);
+    if (quote.length) out.push(`<blockquote><p>${quote.map(inline).join('<br>')}</p></blockquote>`);
+    paragraph = []; list = undefined; quote = [];
+  };
+  for (const raw of body.replace(/\r\n?/g, '\n').split('\n')) {
+    if (code) { if (/^\s*```/.test(raw)) { out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`); code = undefined; } else code.push(raw); continue; }
+    const line = raw.trim();
+    if (/^```/.test(line)) { flush(); code = []; continue; }
+    if (!line) { flush(); continue; }
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) { flush(); const level = heading[1].length <= 2 ? 2 : 3; out.push(`<h${level}>${inline(heading[2].replace(/\s+#+$/, ''))}</h${level}>`); continue; }
+    const bullet = line.match(/^[-*+]\s+(.+)$/), numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      const tag = bullet ? 'ul' : 'ol';
+      if (!list || list.tag !== tag) { flush(); list = { tag, items: [] }; }
+      list.items.push((bullet ?? numbered)![1]); continue;
+    }
+    const quoted = line.match(/^>\s?(.*)$/);
+    if (quoted) { if (paragraph.length || list) flush(); quote.push(quoted[1]); continue; }
+    if (list || quote.length) flush();
+    paragraph.push(line);
+  }
+  if (code) out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+  flush();
+  return out.join('\n');
+}
+
+/** The rendered body already links the target page when any of its links points there. */
+function linksTarget(html: string, targetUrl: string): boolean {
+  for (const match of html.matchAll(/<a href="([^"]+)"/g)) {
+    try { if (canonicalPublicUrl(match[1].replace(/&amp;/g, '&'), true) === targetUrl) return true; } catch { /* not a usable URL */ }
+  }
+  return false;
+}
+
 function articlePayload(context: ExecutionContext, requireApproval: boolean): ArticlePayload {
+  const snapshot = context.task.submittedAt ? context.task.publicationSnapshot : undefined;
+  if (snapshot && (!context.task.submittedAt || snapshot.capturedAt !== context.task.submittedAt
+    || publicationDraftHash(snapshot.draft) !== snapshot.contentHash)) {
+    throw new Error(BLOGGER_MESSAGES.invalidSnapshot);
+  }
+  if(!requireApproval)context=publicationReadContext(context);
   const draft = context.task.draft;
   if (!draft) throw new Error('请先生成并核对 Blogger 文章草稿');
   if (requireApproval && !context.task.articleApprovedAt && context.task.articleReview?.status !== 'passed') {
-    throw new Error('文章尚未通过独立核对，不会发布到 Blogger');
+    throw new Error('文章尚未通过 AI 复核，不会发布到 Blogger');
   }
   if (!boundedString(draft.title, 256, 4) || !articleText(draft.description, 3_000, 1)
     || !articleText(draft.body, 100_000, 200) || !boundedString(context.site.name, 512, 1)) {
@@ -636,14 +694,34 @@ function articlePayload(context: ExecutionContext, requireApproval: boolean): Ar
   const paragraphs = draft.body.split(/\n\s*\n/).map(value => value.trim()).filter(Boolean);
   if (paragraphs.length < 2) throw new Error('Blogger 文章需要至少两个有实际信息的段落');
   const description = `<p>${escapeHtml(draft.description)}</p>`;
-  const body = paragraphs.map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`).join('\n');
-  const attribution = `<p><strong>Author:</strong> ${escapeHtml(context.site.name)}</p>`;
-  const backlink = `<p><a href="${escapeHtml(homepage)}" rel="nofollow">${escapeHtml(context.site.name)}</a></p>`;
-  const baseContent = [description, body, attribution, backlink].join('\n');
+  const oldBody = paragraphs.map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`).join('\n');
+  const oldContent = [description, oldBody, `<p><strong>Author:</strong> ${escapeHtml(context.site.name)}</p>`,
+    `<p><a href="${escapeHtml(homepage)}" rel="nofollow">${escapeHtml(context.site.name)}</a></p>`].join('\n');
+  // Previously submitted Blogger drafts keep their original HTML. Changing it
+  // while resuming could publish a different article under the same receipt.
+  const legacyHash = sha256(`${draft.title}\u0000${oldContent}`);
+  const useLegacy = context.task.blogger?.contentHash === legacyHash;
+  let baseContent = oldContent, targetUrl = homepage;
+  if (!useLegacy) {
+    // The writing envelope already placed one link sentence in the body; render it, never add a second.
+    targetUrl = canonicalPublicUrl(context.task.topicUrl ?? context.site.url, true);
+    let body = bodyHtml(draft.body);
+    // A draft written before link sentences existed gets one short sentence in its last paragraph, never a bare link line.
+    if (!linksTarget(body, targetUrl)) {
+      const anchor = `<a href="${escapeHtml(targetUrl)}">${escapeHtml(context.site.name)}</a>`;
+      const sentence = (/^zh(?:[-_]|$)/i.test(context.site.language) ? BLOGGER_MESSAGES.fallbackLinkZh : BLOGGER_MESSAGES.fallbackLinkEn).replace('{link}', anchor);
+      const last = body.lastIndexOf('</p>');
+      body = last >= 0 ? `${body.slice(0, last)}${/^zh(?:[-_]|$)/i.test(context.site.language) ? '' : ' '}${sentence}${body.slice(last)}` : `${body}\n<p>${sentence}</p>`;
+    }
+    const authorLabel = BLOGGER_AUTHOR_LABELS[context.site.language.toLowerCase().split(/[-_]/)[0]] ?? BLOGGER_AUTHOR_LABELS.en;
+    baseContent = [description, body, `<p><strong>${authorLabel}</strong> ${escapeHtml(context.site.name)}</p>`].join('\n');
+  }
   const contentHash = sha256(`${draft.title}\u0000${baseContent}`);
-  const content = (operationId: string) => `<div data-linkflow-operation="${escapeHtml(operationId)}" data-linkflow-content-sha256="${contentHash}">\n${baseContent}\n</div>`;
+  // The post ID, canonical URL and the reviewed content hash live in the local
+  // receipt. Do not add reconciliation attributes to public article HTML.
+  const content = (_operationId: string) => baseContent;
   if (Buffer.byteLength(content('00000000-0000-4000-8000-000000000000'), 'utf8') > MAX_ARTICLE_BYTES) throw new Error('Blogger 文章内容过大');
-  return { title: draft.title, baseContent, contentHash, content };
+  return { title: draft.title, baseContent, contentHash, content, targetUrl };
 }
 
 function approvedArticle(context: ExecutionContext): ArticlePayload {
@@ -661,9 +739,14 @@ function postFrom(value: JsonObject, expectedBlogId: string, fallbackStatus?: Po
   return { id: value.id, blogId: expectedBlogId, status: status as PostStatus, title: value.title, content: value.content, ...(url ? { url } : {}) };
 }
 
+function legacyContent(content: string, title: string, operationId: string, prefix: 'linkflow' | 'publication'): string {
+  const hash = sha256(`${title}\u0000${content}`);
+  return `<div data-${prefix}-operation="${escapeHtml(operationId)}" data-${prefix}-content-sha256="${hash}">\n${content}\n</div>`;
+}
 function exactPost(post: BloggerPost, title: string, content: string, operationId: string): boolean {
-  const marker = `data-linkflow-operation="${operationId}"`;
-  return post.title === title && post.content === content && post.content.includes(marker);
+  return post.title === title && (post.content === content
+    || post.content === legacyContent(content, title, operationId, 'linkflow')
+    || post.content === legacyContent(content, title, operationId, 'publication'));
 }
 
 async function getPost(blogId: string, postId: string, token: string, dependencies?: BloggerDependencies): Promise<BloggerPost> {
@@ -709,10 +792,10 @@ async function findExactPost(
 
 function failureMessage(error: unknown, phase: 'verify' | 'insert' | 'publish' | 'read'): string {
   if (!(error instanceof BloggerError)) return 'Blogger 请求失败，未输出远端错误详情';
-  if (error.code === 'cancelled') return phase === 'insert' || phase === 'publish' ? 'Blogger 提交期间任务已暂停，结果需要对账' : 'Blogger 操作已取消';
-  if (error.code === 'auth') return 'Blogger OAuth 授权已失效，请重新连接原 Google 身份';
+  if (error.code === 'cancelled') return phase === 'insert' || phase === 'publish' ? 'Blogger 提交期间任务已暂停，结果需要核对' : 'Blogger 操作已取消';
+  if (error.code === 'auth') return 'Blogger OAuth 授权已失效，请重新连接原 Google 发布账号';
   if (error.code === 'forbidden') return 'Google 拒绝 Blogger 写入权限，请确认 API 已启用且账号是该博客管理员';
-  if (error.code === 'rate_limited') return 'Blogger API 已触发速率限制，请稍后只进行对账';
+  if (error.code === 'rate_limited') return 'Blogger API 已触发速率限制，请稍后只进行核对';
   if (error.code === 'timeout') return 'Blogger 请求超时，提交结果不会自动重做';
   if (error.code === 'network') return 'Blogger 网络或服务暂时不可用，提交结果不会自动重做';
   if (error.code === 'rejected') return 'Blogger 明确拒绝了请求，请检查博客状态与内容';
@@ -726,8 +809,8 @@ async function markAccountError(context: ExecutionContext, account: Account, err
     ...account,
     status: restricted ? 'restricted' : 'credentials_invalid',
     diagnostic: diagnostic(restricted ? 'restricted' : 'bad_password', restricted
-      ? 'Google 拒绝了 Blogger 权限或该身份不再具有博客管理权限。'
-      : 'Blogger OAuth 授权已失效或不属于原连接身份。', dependencies),
+      ? 'Google 拒绝了 Blogger 权限或该发布账号不再具有博客管理权限。'
+      : 'Blogger OAuth 授权已失效或不属于原连接发布账号。', dependencies),
     updatedAt: stamp(dependencies),
   });
 }
@@ -773,8 +856,9 @@ function validBloggerState(value: NonNullable<Task['blogger']>): boolean {
     && ['inserting', 'draft', 'publishing', 'published'].includes(value.stage);
 }
 
-/** Public HTML retains the immutable operation marker written with the full article. */
+/** Check the saved post URL against its reviewed title, full body and links. */
 export async function verifyBloggerPublication(context:ExecutionContext,dependencies:BloggerDependencies={}):Promise<LinkResult>{
+  context=publicationReadContext(context);
   const fallback=context.task.publicUrl??context.site.blogger?.url??'https://www.blogger.com/';
   const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:fallback,rel:'unknown',reason});
   let article:ArticlePayload,state:NonNullable<Task['blogger']>,url:string;
@@ -783,25 +867,37 @@ export async function verifyBloggerPublication(context:ExecutionContext,dependen
     if(context.task.channelId!=='blogger'||!saved||!validBloggerState(saved)||!saved.postId||saved.stage!=='published'||!bound||bound.blogId!==saved.blogId)throw Error();
     url=canonicalPublicUrl(fallback);if(new URL(url).origin!==new URL(canonicalPublicUrl(bound.url)).origin)throw Error();
     article=articlePayload(context,false);state=saved;if(article.contentHash!==state.contentHash)throw Error();
-  }catch{return fail('invalid','Blogger 原稿、博客绑定或发布回执不一致；不会重发');}
+  }catch{return fail('invalid','Blogger 原稿、博客绑定或发布记录不一致；不会重发');}
   try{
     const page=await fetchPublicText(url,context.signal,dependencies.publicFetch,{allowRedirect:(_from,to)=>to.href===url});
     if(page.url!==url)return fail('invalid','Blogger 公开地址与原记录不一致');
     const $=load(page.text);applyDeclaredArticleVisibility($);
-    const selector=`[data-linkflow-operation="${state.operationId}"][data-linkflow-content-sha256="${state.contentHash}"]`;
-    const marker=$(selector);
-    if(marker.length!==1||!marker.closest('.post-body,.entry-content,article').length||marker.closest('header,footer,nav,aside').length)return fail('invalid','Blogger 原操作标记不在文章正文中');
-    const publicationSelector='article,.post,.hentry',publication=marker.closest(publicationSelector).first();
-    if(publication.length!==1)return fail('invalid','Blogger 原稿缺少可确认的文章容器');
-    const titles=publication.find('.post-title,.entry-title,h1,h2').toArray().filter(node=>
-      $(node).closest(publicationSelector)[0]===publication[0]
-      &&!$(node).closest('aside,footer,nav,.post-body,.entry-content').length
-      &&!$(node).add($(node).parents()).toArray().some(item=>elementConcealed($,item)));
-    if(titles.length!==1||$(titles[0]).text().normalize('NFC').replace(/\s+/g,' ').trim()!==article.title.normalize('NFC').replace(/\s+/g,' ').trim())return fail('invalid','Blogger 原文章未唯一呈现原稿标题');
-    const rendered=inspectRenderedArticle(page.text,article.baseContent,canonicalPublicUrl(context.site.url,true),selector,{pageUrl:page.url,robotsHeader:page.robotsHeader});
-    if(!rendered.found)return fail('invalid','Blogger 原操作标记、完整可见正文、全部链接或索引规则不一致；原投稿仍保留');
-    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Blogger 原稿、公开操作标记、可见完整正文及全部链接一致；不代表搜索收录'};
-  }catch{return fail('unreachable','Blogger 原公开文章暂时无法完整核验；不会重发');}
+    const publicationSelector='article,.post,.hentry';
+    const matchingPublications=$(publicationSelector).toArray().filter(node=>{
+      const publication=$(node);
+      const titles=publication.find('.post-title,.entry-title,h1,h2').toArray().filter(title=>
+        $(title).closest(publicationSelector)[0]===node
+        &&!$(title).closest('aside,footer,nav,.post-body,.entry-content').length
+        &&!$(title).add($(title).parents()).toArray().some(item=>elementConcealed($,item)));
+      return titles.length===1&&$(titles[0]).text().normalize('NFC').replace(/\s+/g,' ').trim()===article.title.normalize('NFC').replace(/\s+/g,' ').trim();
+    });
+    if(matchingPublications.length!==1)return fail('invalid','Blogger 原文章未唯一呈现原稿标题');
+    const publication=$(matchingPublications[0]);
+    const bodies=publication.find('.post-body,.entry-content').toArray()
+      .filter(node=>$(node).closest(publicationSelector)[0]===matchingPublications[0]);
+    if(bodies.length!==1)return fail('invalid','Blogger 原稿缺少唯一文章正文容器');
+    const body=$(bodies[0]);
+    const oldSelectors=[`[data-linkflow-operation="${state.operationId}"][data-linkflow-content-sha256="${state.contentHash}"]`,
+      `[data-publication-operation="${state.operationId}"][data-publication-content-sha256="${state.contentHash}"]`];
+    const oldMarkers=oldSelectors.flatMap(selector=>body.find(selector).toArray());
+    if(oldMarkers.length>1)return fail('invalid','Blogger 历史标记不唯一');
+    // The scope attribute exists only in this parsed verification copy.
+    const scope=oldMarkers.length===1?$(oldMarkers[0]):body;
+    scope.attr('data-verification-scope',state.postId);
+    const rendered=inspectRenderedArticle($.html(),article.baseContent,article.targetUrl,`[data-verification-scope="${state.postId}"]`,{pageUrl:page.url,robotsHeader:page.robotsHeader});
+    if(!rendered.found)return fail('invalid','Blogger 公开文章的完整可见正文、全部链接或索引规则不一致；原投稿仍保留');
+    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Blogger 记录网址、可见完整正文及全部链接一致；不代表搜索收录'};
+  }catch{return fail('unreachable','Blogger 原公开文章暂时无法完整检查；不会重发');}
 }
 
 export async function reconcileBloggerTask(
@@ -812,6 +908,7 @@ export async function reconcileBloggerTask(
   | { status: 'draft'; blogger: NonNullable<Task['blogger']> }
   | { status: 'unknown' }
 > {
+  context=publicationReadContext(context);
   const unknown = { status: 'unknown' as const };
   const state = context.task.blogger;
   const account = context.getAccount();
@@ -847,31 +944,43 @@ export async function reconcileBloggerTask(
 
 export async function runBloggerTask(context: ExecutionContext, dependencies: BloggerDependencies = {}): Promise<ExecutionResult> {
   if (context.channel.id !== 'blogger' || context.channel.automation !== 'api' || context.task.channelId !== 'blogger') {
-    return { status: 'needs_input', message: '该渠道没有启用 Blogger API 自动化' };
+    return { status: 'needs_input', message: '该平台没有启用 Blogger API 自动化' };
   }
   const account = context.getAccount();
   if (!account || account.channelId !== 'blogger' || context.task.accountId !== account.id) {
     return { status: 'needs_input', message: '请先连接真实 Blogger 账号并为网站绑定博客' };
   }
   if (account.credentialKind !== 'oauth' || account.status !== 'registered' || !account.hasPassword) {
-    return { status: 'needs_input', message: 'Blogger OAuth 身份不可用，请重新连接原 Google 身份' };
+    return { status: 'needs_input', message: 'Blogger OAuth 发布账号不可用，请重新连接原 Google 发布账号' };
   }
   const bound = context.site.blogger;
   if (!bound || !numericId(bound.blogId)) return { status: 'needs_input', message: '请先为网站绑定一个可写的 Blogger 博客' };
+  const prior = context.task.blogger;
+  const snapshot = context.task.submittedAt ? context.task.publicationSnapshot : undefined;
+  if (prior && snapshot) {
+    if (!context.task.submittedAt || snapshot.capturedAt !== context.task.submittedAt
+      || publicationDraftHash(snapshot.draft) !== snapshot.contentHash) {
+      return { status: 'needs_input', message: BLOGGER_MESSAGES.invalidSnapshot };
+    }
+    if (!context.task.draft || publicationDraftHash(context.task.draft) !== snapshot.contentHash
+      || context.site.name !== snapshot.siteName || context.site.url !== snapshot.siteUrl
+      || context.site.language !== snapshot.language) {
+      return { status: 'needs_input', message: BLOGGER_MESSAGES.manualPublishEdited };
+    }
+  }
   let article: ArticlePayload;
-  try { article = approvedArticle(context); }
+  try { article = approvedArticle(context.task.blogger ? publicationReadContext(context) : context); }
   catch (error) { return { status: 'needs_input', message: error instanceof Error ? error.message : 'Blogger 草稿不符合发布要求' }; }
 
-  const prior = context.task.blogger;
   const remoteCheckpoint = ['blogger_insert_submitting', 'blogger_draft_created', 'blogger_publish_submitting', 'blogger_published'].includes(context.task.checkpoint ?? '');
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
-    return { status: 'needs_input', message: '已有 Blogger 提交或公开网址但缺少幂等记录，不会创建新文章', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
+    return { status: 'needs_input', message: '已有 Blogger 提交或公开网址但缺少防重复记录，不会创建新文章', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
   }
   if (prior && (prior.blogId !== bound.blogId || prior.contentHash !== article.contentHash)) {
     return { status: 'needs_input', message: 'Blogger 提交记录与当前博客或核准稿件不一致；保留原记录并停止发布', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
   }
   if (prior && !validBloggerState(prior)) {
-    return { status: 'needs_input', message: '保存的 Blogger 幂等记录无效；不会发布或新建文章', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
+    return { status: 'needs_input', message: '保存的 Blogger 防重复记录无效；不会发布或新建文章', checkpoint: context.task.checkpoint, submittedAt: context.task.submittedAt, publicUrl: context.task.publicUrl };
   }
   let access: { token: string; blog: BloggerBlog };
   try {
@@ -897,7 +1006,7 @@ export async function runBloggerTask(context: ExecutionContext, dependencies: Bl
     if (existing.status === 'live' && existing.url) {
       state = bloggerState(state.blogId, operationId, article.contentHash, 'published', existing.id);
       context.checkpoint({ blogger: state, checkpoint: 'blogger_published', submittedAt, publicUrl: existing.url });
-      return { status: 'review', message: '已回读并确认 Blogger 文章，等待公开页面外链核验', publicUrl: existing.url, checkpoint: 'blogger_published', submittedAt };
+      return { status: 'review', message: '已回读并确认 Blogger 文章，等待公开页面外链检查', publicUrl: existing.url, checkpoint: 'blogger_published', submittedAt };
     }
     if (existing.status === 'scheduled') {
       return { status: 'needs_input', message: 'Blogger 帖子处于定时发布状态，保留原帖子并等待人工核对', checkpoint: context.task.checkpoint, submittedAt };
@@ -944,7 +1053,7 @@ export async function runBloggerTask(context: ExecutionContext, dependencies: Bl
     if (inserted.status === 'live' && inserted.url) {
       state = bloggerState(bound.blogId, operationId, article.contentHash, 'published', inserted.id);
       context.checkpoint({ blogger: state, checkpoint: 'blogger_published', submittedAt, publicUrl: inserted.url });
-      return { status: 'review', message: 'Blogger 已返回公开文章，等待公开页面外链核验', publicUrl: inserted.url, checkpoint: 'blogger_published', submittedAt };
+      return { status: 'review', message: 'Blogger 已返回公开文章，等待公开页面外链检查', publicUrl: inserted.url, checkpoint: 'blogger_published', submittedAt };
     }
     if (inserted.status !== 'draft') {
       return { status: 'needs_input', message: 'Blogger 未返回可安全继续的草稿状态；不会再次插入', checkpoint: 'blogger_insert_submitting', submittedAt };
@@ -973,7 +1082,7 @@ export async function runBloggerTask(context: ExecutionContext, dependencies: Bl
   context.checkpoint({ blogger: state, checkpoint: 'blogger_published', submittedAt, publicUrl: published.url });
   return {
     status: 'review',
-    message: context.signal.aborted ? 'Blogger 文章已发布并保留回执；暂停后只会核验该网址' : 'Blogger 文章已发布，等待公开页面外链核验',
+    message: context.signal.aborted ? 'Blogger 文章已发布并保留记录；暂停后只会检查该网址' : 'Blogger 文章已发布，等待公开页面外链检查',
     publicUrl: published.url,
     checkpoint: 'blogger_published',
     submittedAt,

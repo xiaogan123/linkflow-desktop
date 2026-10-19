@@ -58,7 +58,7 @@ test('a failed in-flight site analysis preserves a later user pause and records 
   } finally { f.finish(); f.store.close(); }
 });
 
-test('a successful in-flight analysis updates facts but preserves a later user pause', async () => {
+test('a successful in-flight analysis updates facts without overwriting the existing site name or a later pause', async () => {
   const f = fixture(false);
   try {
     const pending = f.controller.analyze(site.id);
@@ -67,7 +67,7 @@ test('a successful in-flight analysis updates facts but preserves a later user p
     f.finish();
     await pending;
     assert.equal(f.store.read().sites[0].status, 'paused');
-    assert.equal(f.store.read().sites[0].name, 'Updated guides');
+    assert.equal(f.store.read().sites[0].name, site.name);
     assert.equal(f.store.read().sites[0].error, undefined);
     assert.equal(f.controller.hasPendingWork(), false);
   } finally { f.finish(); f.store.close(); }

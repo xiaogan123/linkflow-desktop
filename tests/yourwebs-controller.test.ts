@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import test from 'node:test';
+import test,{type TestContext} from 'node:test';
 import {CHANNELS} from '../src/integrations/catalog';
 import {createYourwebsPage,yourwebsPublicUrl,YOURWEBS_ANONYMOUS_TTL_MS,YOURWEBS_CREATE_URL,type YourwebsIntent,type YourwebsOpaqueResponse,type YourwebsPersistence,type YourwebsReceipt} from '../src/integrations/yourwebs';
 import {validateBackup} from '../src/main/backup-validation';
@@ -12,7 +12,9 @@ import {yourwebsTaskIdentity} from '../src/main/yourwebs-publication';
 import type {Vault} from '../src/main/vault';
 import type {Site,Task} from '../src/shared/types';
 
-const at='2026-10-13T03:00:00.000Z',late='2026-10-13T03:02:00.000Z',created=Date.parse(at),taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='PAGE_EXAMPLE_01',subdomain='recovery-guide',publicUrl=yourwebsPublicUrl(subdomain);
+test.beforeEach(t=>(t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)}));
+
+const at='2026-10-13T12:34:00.000Z',late='2026-10-13T12:36:00.000Z',created=Date.parse(at),taskId='11111111-1111-4111-8111-111111111111',siteId='22222222-2222-4222-8222-222222222222',id='PAGE_EXAMPLE_01',subdomain='recovery-guide',publicUrl=yourwebsPublicUrl(subdomain);
 const draft={title:'A safe backup recovery guide',description:'Practical developer guide',body:'Keep the original backup before restoring settings. The [project guide](https://example.com/guide) explains the complete recovery process.'};
 function site():Site{return {id:siteId,domain:'example.com',url:'https://example.com/',email:'owner@example.com',name:'Example software',description:'Developer software',category:'software',language:'en',monthlyTarget:1,articleReviewMode:'manual',qualifications:{software:'https://example.com/product',developer:'https://example.com/guide'},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:'https://example.com/guide',discoveredAt:at}]}}
 function task(extra:Partial<Task>={}):Task{return {id:taskId,siteId,channelId:'yourwebs',sourceDomain:'yourwebs.cc',status:'review',createdAt:at,scheduledAt:at,updatedAt:at,attempts:0,message:'fixture',topicUrl:'https://example.com/guide',draft:{...draft},draftRevision:1,articleApprovedAt:at,health:'pending',...extra}}

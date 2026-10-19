@@ -1,8 +1,10 @@
+import {publicationReadContext} from '../main/publication-snapshot';
 import { randomUUID } from 'node:crypto';
 import {load} from 'cheerio';
 import {fetchPublicText,type PublicFetchDependencies} from './web';
 import {inspectRenderedArticle} from './article-rendering';
 import {applyDeclaredArticleVisibility,elementConcealed} from './article-visibility';
+import {TELEGRAPH_FALLBACK_MESSAGES} from './telegraph-messages';
 import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, Task,LinkResult } from '../shared/types';
 
 const API_ORIGIN = 'https://api.telegra.ph';
@@ -159,7 +161,7 @@ function canonicalTelegraphContent(value: unknown): string | undefined {
 
 function sourceUrl(value: string): string {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('网站来源地址必须是不含凭据的 HTTPS 网址');
+  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('网站来源地址必须是不含账号密码的 HTTPS 网址');
   url.hash = '';
   return url.toString();
 }
@@ -254,7 +256,7 @@ function pushText(nodes: TelegraphNode[], value: string): void {
   else nodes.push(value);
 }
 
-function appendRawHttps(nodes: TelegraphNode[], value: string, target: string): void {
+function appendRawHttps(nodes: TelegraphNode[], value: string, target: string, siteLink?: { used: boolean }): void {
   const pattern = /https:\/\/[^\s<>()\[\]{}"']+/gi;
   let cursor = 0;
   for (const match of value.matchAll(pattern)) {
@@ -265,30 +267,36 @@ function appendRawHttps(nodes: TelegraphNode[], value: string, target: string): 
     while (/[.,;:!?]$/.test(raw)) { punctuation = raw.slice(-1) + punctuation; raw = raw.slice(0, -1); }
     const safe = safeCitationUrl(raw);
     if (!safe) pushText(nodes, raw);
-    else if (!sameTargetSite(safe, target)) nodes.push({ tag: 'a', attrs: { href: safe }, children: [raw] });
+    else if (sameTargetSite(safe, target)) {
+      if (siteLink && !siteLink.used) { nodes.push({ tag: 'a', attrs: { href: safe }, children: [raw] }); siteLink.used = true; }
+      else if (siteLink) pushText(nodes, raw);
+      // Legacy pages omitted same-site bare URLs from prose and linked only in the footer.
+    } else nodes.push({ tag: 'a', attrs: { href: safe }, children: [raw] });
     pushText(nodes, punctuation);
     cursor = start + match[0].length;
   }
   pushText(nodes, value.slice(cursor));
 }
 
-function inlineNodes(value: string, target: string): TelegraphNode[] {
+function inlineNodes(value: string, target: string, siteLink?: { used: boolean }): TelegraphNode[] {
   const clean = cleanInlineText(value.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'));
   const nodes: TelegraphNode[] = [];
   const markdownLink = /\[([^\]\n]{1,500})\]\(([^)\n]{1,2048})\)/g;
   let cursor = 0;
   for (const match of clean.matchAll(markdownLink)) {
     const start = match.index ?? 0;
-    appendRawHttps(nodes, clean.slice(cursor, start), target);
+    appendRawHttps(nodes, clean.slice(cursor, start), target, siteLink);
     const label = cleanInlineText(match[1]).trim();
     const rawHref = match[2].trim();
     const safe = safeCitationUrl(rawHref);
-    if (safe && !sameTargetSite(safe, target)) nodes.push({ tag: 'a', attrs: { href: safe }, children: [label || safe] });
-    else if (safe) pushText(nodes, label);
+    if (safe && sameTargetSite(safe, target)) {
+      if (siteLink && !siteLink.used) { nodes.push({ tag: 'a', attrs: { href: safe }, children: [label || safe] }); siteLink.used = true; }
+      else pushText(nodes, label);
+    } else if (safe) nodes.push({ tag: 'a', attrs: { href: safe }, children: [label || safe] });
     else pushText(nodes, `${label}${label ? ' ' : ''}(${rawHref})`);
     cursor = start + match[0].length;
   }
-  appendRawHttps(nodes, clean.slice(cursor), target);
+  appendRawHttps(nodes, clean.slice(cursor), target, siteLink);
   return nodes.filter(node => typeof node !== 'string' || node.length > 0);
 }
 
@@ -301,28 +309,52 @@ export function articleToTelegraphNodes(body: string, siteName: string, siteUrl:
   const name = plainInline(siteName).slice(0, 120);
   if (!name) throw new Error('网站名称不可为空');
   const href = sourceUrl(siteUrl);
-  const source: TelegraphNode = language.toLowerCase().startsWith('zh')
-    ? { tag: 'p', children: ['文中所述网站：', { tag: 'a', attrs: { href }, children: [name] }, '。'] }
-    : { tag: 'p', children: ['Website discussed: ', { tag: 'a', attrs: { href }, children: [name] }, '.'] };
+  const siteLink = { used: false };
   const nodes: TelegraphNode[] = blocks.map(block => block.tag === 'pre'
     ? { tag: 'pre', children: [block.text] }
-    : { tag: block.tag, children: inlineNodes(block.text, href) });
-  nodes.push({ tag: 'hr' }, source);
+    : { tag: block.tag, children: inlineNodes(block.text, href, siteLink) });
+  if (!siteLink.used) {
+    const paragraph = nodes.find((node): node is Exclude<TelegraphNode, string> => typeof node !== 'string' && node.tag === 'p');
+    if (!paragraph) throw new Error('文章需要至少一个正文段落');
+    paragraph.children ??= [];
+    const hostname = new URL(href).hostname;
+    const messages = language.toLowerCase().startsWith('zh') ? TELEGRAPH_FALLBACK_MESSAGES.zh : TELEGRAPH_FALLBACK_MESSAGES.en;
+    const variant = [...hostname].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % messages.length;
+    paragraph.children.push(messages[variant](name),
+      { tag: 'a', attrs: { href }, children: [hostname] }, language.toLowerCase().startsWith('zh') ? '。' : '.');
+  }
   if (Buffer.byteLength(JSON.stringify(nodes), 'utf8') > MAX_CONTENT_BYTES) throw new Error('文章超出 Telegraph 64 KB 内容上限');
   return nodes;
 }
 
-// Read-only fingerprint for pages submitted before the author-label correction.
-// Never use this content or label in createAccount/createPage requests.
-function priorTelegraphFingerprint(body: string, siteName: string, siteUrl: string, language: string): { author: string; content: string } | undefined {
-  const nodes = articleToTelegraphNodes(body, siteName, siteUrl, language);
+// Pages created by previous versions keep their exact attribution in read-only checks.
+function legacyTelegraphNodes(body: string, siteName: string, siteUrl: string, language: string): TelegraphNode[] {
+  const blocks = articleBlocks(body);
+  const characters = blocks.reduce((sum, block) => sum + block.text.replace(/\s/g, '').length, 0);
+  if (characters < MIN_ARTICLE_CHARACTERS || blocks.length < MIN_ARTICLE_BLOCKS) throw new Error('历史 Telegraph 原稿不完整');
+  const name = plainInline(siteName).slice(0, 120);
+  const href = sourceUrl(siteUrl);
+  const nodes: TelegraphNode[] = blocks.map(block => block.tag === 'pre'
+    ? { tag: 'pre', children: [block.text] }
+    : { tag: block.tag, children: inlineNodes(block.text, href) });
+  nodes.push({ tag: 'hr' }, language.toLowerCase().startsWith('zh')
+    ? { tag: 'p', children: ['文中所述网站：', { tag: 'a', attrs: { href }, children: [name] }, '。'] }
+    : { tag: 'p', children: ['Website discussed: ', { tag: 'a', attrs: { href }, children: [name] }, '.'] });
+  return nodes;
+}
+function priorTelegraphFingerprint(body: string, siteName: string, siteUrl: string, language: string): Array<{ author: string; content: string }> {
+  const nodes = legacyTelegraphNodes(body, siteName, siteUrl, language);
+  const neutral = canonicalTelegraphContent(nodes);
   const name = plainInline(siteName).slice(0, 120);
   const href = sourceUrl(siteUrl);
   nodes[nodes.length - 1] = language.toLowerCase().startsWith('zh')
     ? { tag: 'p', children: ['作者披露：本文由该网站的所有者或运营方发布，文中主体为 ', name, '。官方来源：', { tag: 'a', attrs: { href }, children: [name] }, '。'] }
     : { tag: 'p', children: ['Author disclosure: Published by the owner or operator of ', name, '. Official source: ', { tag: 'a', attrs: { href }, children: [name] }, '.'] };
   const content = canonicalTelegraphContent(nodes);
-  return content ? { author: `${plainInline(siteName).slice(0, 108)} site owner`.slice(0, 128).normalize('NFC'), content } : undefined;
+  return [
+    ...(neutral ? [{ author: promotionalAuthorName(language).normalize('NFC'), content: neutral }] : []),
+    ...(content ? [{ author: `${plainInline(siteName).slice(0, 108)} site owner`.slice(0, 128).normalize('NFC'), content }] : []),
+  ];
 }
 
 function countTargetLinks(nodes: unknown, target: string): number {
@@ -330,8 +362,19 @@ function countTargetLinks(nodes: unknown, target: string): number {
   if (!nodes || typeof nodes !== 'object') return 0;
   const node = nodes as { tag?: unknown; attrs?: unknown; children?: unknown };
   let count = 0;
-  if (node.tag === 'a' && node.attrs && typeof node.attrs === 'object' && (node.attrs as { href?: unknown }).href === target) count++;
+  if (node.tag === 'a' && node.attrs && typeof node.attrs === 'object') {
+    const href = (node.attrs as { href?: unknown }).href;
+    if (typeof href === 'string' && sameTargetSite(href, target)) count++;
+  }
   return count + countTargetLinks(node.children, target);
+}
+
+function firstSiteLink(nodes: unknown, target: string): string | undefined {
+  if (Array.isArray(nodes)) return nodes.map(node => firstSiteLink(node, target)).find(Boolean);
+  if (!nodes || typeof nodes !== 'object') return undefined;
+  const node = nodes as { tag?: unknown; attrs?: { href?: unknown }; children?: unknown };
+  if (node.tag === 'a' && typeof node.attrs?.href === 'string' && sameTargetSite(node.attrs.href, target)) return node.attrs.href;
+  return firstSiteLink(node.children, target);
 }
 
 function pageIdentity(result: ApiSuccess): { path: string; url: string } | undefined {
@@ -347,7 +390,7 @@ function pageIdentity(result: ApiSuccess): { path: string; url: string } | undef
 
 function accountBlock(account: Account | undefined, task: Task): ExecutionResult | undefined {
   if (task.publicUrl || task.submittedAt || ['telegraph_publish_submitting', 'telegraph_publish_uncertain', 'telegraph_published'].includes(task.checkpoint ?? '')) {
-    return { status: 'review', message: '此任务已发起发布，只核验原结果，不会重复发文', publicUrl: task.publicUrl, checkpoint: task.checkpoint, submittedAt: task.submittedAt };
+    return { status: 'review', message: '此任务已发起发布，只检查原结果，不会重复发文', publicUrl: task.publicUrl, checkpoint: task.checkpoint, submittedAt: task.submittedAt };
   }
   if (['telegraph_account_create_pending', 'account_registration_submitted'].includes(task.checkpoint ?? '')) {
     if (account?.status === 'registered' && account.hasPassword && account.credentialKind === 'api_token') return undefined;
@@ -355,7 +398,7 @@ function accountBlock(account: Account | undefined, task: Task): ExecutionResult
   }
   if (!account) return undefined;
   if (account.status === 'restricted') return { status: 'needs_input', message: 'Telegraph 账号或访问已受限，已停止自动操作' };
-  if (account.status === 'credentials_invalid') return { status: 'needs_input', message: 'Telegraph 访问令牌不可用，请人工更新账号凭据' };
+  if (account.status === 'credentials_invalid') return { status: 'needs_input', message: 'Telegraph 访问令牌不可用，请人工更新账号登录信息' };
   if (account.status === 'unknown') return { status: 'needs_input', message: 'Telegraph 账号状态无法确认，不会自动创建替代账号' };
   if (account.status === 'needs_verification') return { status: 'needs_input', message: 'Telegraph 账号需要人工确认后才能继续' };
   return undefined;
@@ -363,12 +406,25 @@ function accountBlock(account: Account | undefined, task: Task): ExecutionResult
 
 function accountFailure(code: string): { status: 'credentials_invalid' | 'restricted' | 'unknown'; diagnostic: AccountDiagnostic; message: string } {
   if (/ACCESS_TOKEN_INVALID|ACCESS_TOKEN_REQUIRED|AUTH_KEY_INVALID/.test(code)) {
-    return { status: 'credentials_invalid', diagnostic: diagnostic('bad_password', 'Telegraph 拒绝了已保存的访问令牌。'), message: 'Telegraph 访问令牌不可用，请人工更新凭据' };
+    return { status: 'credentials_invalid', diagnostic: diagnostic('bad_password', 'Telegraph 拒绝了已保存的访问令牌。'), message: 'Telegraph 访问令牌不可用，请人工更新登录信息' };
   }
-  if (/FLOOD|BLOCK|BANNED|DENIED|RESTRICT/.test(code)) {
+  if (/BLOCK|BANNED|DENIED|RESTRICT/.test(code)) {
     return { status: 'restricted', diagnostic: diagnostic('restricted', 'Telegraph 报告账号或访问受到限制。'), message: 'Telegraph 报告账号或访问受限，已停止自动操作' };
   }
   return { status: 'unknown', diagnostic: diagnostic('registration_failed', 'Telegraph API 拒绝了请求，账号状态未安全确认。'), message: 'Telegraph 账号状态待确认，已停止自动操作' };
+}
+
+function floodWaitUntil(code: string): string | undefined {
+  const match = /^FLOOD_WAIT_([0-9]+)$/.exec(code);
+  if (!match) return undefined;
+  const seconds = Number(match[1]);
+  const at = Date.now() + Math.max(1, seconds) * 1_000;
+  return Number.isSafeInteger(seconds) && seconds <= 365 * 86400 && Number.isFinite(at) ? new Date(at).toISOString() : undefined;
+}
+
+function floodWaitResult(context: ExecutionContext, checkpoint: string, scheduledAt: string): ExecutionResult {
+  context.checkpoint({ checkpoint, submittedAt: undefined, scheduledAt, nextCheckAt: scheduledAt, attempts: Math.max(0, context.task.attempts - 1) });
+  return { status: 'queued', checkpoint, scheduledAt, nextCheckAt: scheduledAt, message: 'Telegraph 要求等待后重试，已按返回秒数顺延原任务' };
 }
 
 async function markAccountFailure(context: ExecutionContext, account: Account, code: string): Promise<ExecutionResult> {
@@ -379,7 +435,9 @@ async function markAccountFailure(context: ExecutionContext, account: Account, c
 
 async function createAccount(context: ExecutionContext, transport: TelegraphTransport, draft?: AccountWithCredential): Promise<{ account: AccountWithCredential; token: string } | ExecutionResult> {
   const createdAt = now();
-  const shortName = plainInline(context.site.name || context.site.domain).slice(0, 32) || 'Linkflow site';
+  const siteName = plainInline(context.site.name || context.site.domain).slice(0, 128) || context.site.domain;
+  const shortName = siteName.slice(0, 32);
+  const homepage = sourceUrl(context.site.url);
   const account: AccountWithCredential = draft ?? {
     id: randomUUID(), channelId: context.channel.id, email: context.site.publicEmail||context.site.email,mailboxId:context.mailbox?.id, username: shortName,
     createdAt, updatedAt: createdAt, status: 'draft', source: 'generated', registrationAttempts: 0,
@@ -395,18 +453,23 @@ async function createAccount(context: ExecutionContext, transport: TelegraphTran
   await context.saveAccount(pending);
   context.checkpoint({ checkpoint: 'telegraph_account_create_pending' });
   try {
-    const result = await apiCall('createAccount', { short_name: shortName, author_name: promotionalAuthorName(context.site.language) }, context, transport);
+    const result = await apiCall('createAccount', { short_name: shortName, author_name: siteName, author_url: homepage }, context, transport);
     if (typeof result.access_token !== 'string' || result.access_token.length < 20 || result.access_token.length > 256) throw new TelegraphUncertainError('account');
     const registeredAt = now();
     const registered: AccountWithCredential = { ...pending, status: 'registered', hasPassword: true, registeredAt, lastUsedAt: registeredAt, updatedAt: registeredAt, diagnostic: undefined };
     await context.saveAccount(registered, result.access_token);
     try { context.checkpoint({ checkpoint: 'telegraph_account_registered' }); }
     catch {
-      return { status: 'queued', message: 'Telegraph 访问令牌已安全保存，恢复后将核验并复用该账号', checkpoint: 'telegraph_account_create_pending' };
+      return { status: 'queued', message: 'Telegraph 访问令牌已安全保存，恢复后将检查并复用该账号', checkpoint: 'telegraph_account_create_pending' };
     }
     return { account: registered, token: result.access_token };
   } catch (error) {
-    const restricted = error instanceof TelegraphApiRejection && /FLOOD|BLOCK|BANNED|DENIED|RESTRICT/.test(error.code);
+    const cooldown = error instanceof TelegraphApiRejection ? floodWaitUntil(error.code) : undefined;
+    if (cooldown) {
+      await context.saveAccount({ ...account, status: 'draft', registrationAttempts: 0, diagnostic: undefined });
+      return floodWaitResult(context, 'telegraph_account_flood_wait', cooldown);
+    }
+    const restricted = error instanceof TelegraphApiRejection && /BLOCK|BANNED|DENIED|RESTRICT/.test(error.code);
     const status = restricted ? 'restricted' as const : 'unknown' as const;
     const message = restricted ? 'Telegraph 报告账号创建受限，不会重试或生成新令牌' : 'Telegraph 账号创建结果无法确认，不会重试或生成新令牌';
     await context.saveAccount({ ...pending, status, diagnostic: diagnostic(restricted ? 'restricted' : 'registration_unknown', message) });
@@ -429,7 +492,10 @@ async function existingAccount(context: ExecutionContext, account: Account, tran
     await context.saveAccount(verified);
     return { account: verified, token };
   } catch (error) {
-    if (error instanceof TelegraphApiRejection) return markAccountFailure(context, account, error.code);
+    if (error instanceof TelegraphApiRejection) {
+      const cooldown = floodWaitUntil(error.code);
+      return cooldown ? floodWaitResult(context, 'telegraph_account_flood_wait', cooldown) : markAccountFailure(context, account, error.code);
+    }
     return { status: 'failed', message: 'Telegraph 账号验证暂时失败，尚未发布文章' };
   }
 }
@@ -449,6 +515,7 @@ function nodesHtml(nodes:TelegraphNode[]):string{
 
 /** Rechecks the exact originally emitted article, including supported historical attribution. */
 export async function verifyTelegraphPublication(context:ExecutionContext,dependencies:TelegraphVerificationDependencies={}):Promise<LinkResult>{
+  context=publicationReadContext(context);
   const fallback=context.task.publicUrl??PUBLIC_ORIGIN;
   const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:fallback,rel:'unknown',reason});
   let identity:{path:string;url:string},title:string,target:string,fingerprints:Array<{author:string;content:string}>;
@@ -458,8 +525,8 @@ export async function verifyTelegraphPublication(context:ExecutionContext,depend
     identity=parsed;target=sourceUrl(context.site.url);title=plainInline(context.task.draft.title).slice(0,256).normalize('NFC');
     const content=canonicalTelegraphContent(articleToTelegraphNodes(context.task.draft.body,context.site.name,target,context.site.language));
     const prior=priorTelegraphFingerprint(context.task.draft.body,context.site.name,target,context.site.language);
-    if(!content||!prior||title.length<4)throw Error();
-    fingerprints=[{author:promotionalAuthorName(context.site.language).normalize('NFC'),content},prior];
+    if(!content||title.length<4)throw Error();
+    fingerprints=[{author:plainInline(context.site.name||context.site.domain).slice(0,128).normalize('NFC'),content},...prior];
   }catch{return fail('invalid','Telegraph 原稿或公开地址无效，保留原记录且不会重发');}
   try{
     const remote=await apiCall('getPage',{return_content:'true'},context,dependencies.transport??fetch,identity.path);
@@ -472,10 +539,13 @@ export async function verifyTelegraphPublication(context:ExecutionContext,depend
     if(page.url!==identity.url||article.length!==1||heading.length!==1||heading.text().normalize('NFC').trim()!==title||byline.length!==1
       ||heading.add(heading.parents()).add(byline).toArray().some(node=>elementConcealed($,node)))return fail('invalid','Telegraph 公开页标题或全文容器不一致或不可见');
     heading.remove();byline.remove();
-    const rendered=inspectRenderedArticle($.html(),nodesHtml(JSON.parse(matched.content) as TelegraphNode[]),target,'article.tl_article_content',{pageUrl:page.url,robotsHeader:page.robotsHeader});
+    const expectedNodes=JSON.parse(matched.content) as TelegraphNode[];
+    const linkedPage=firstSiteLink(expectedNodes,target);
+    if(!linkedPage||countTargetLinks(expectedNodes,target)!==1)return fail('invalid','Telegraph 原稿中的本站链接不唯一');
+    const rendered=inspectRenderedArticle($.html(),nodesHtml(expectedNodes),linkedPage,'article.tl_article_content',{pageUrl:page.url,robotsHeader:page.robotsHeader});
     if(!rendered.found)return fail('invalid','Telegraph 可见全文、全部链接或索引规则不一致；原投稿仍保留');
     return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Telegraph API 与原稿及公开可见全文、全部链接一致；不代表搜索收录'};
-  }catch{return fail('unreachable','Telegraph 原公开文章暂时无法完整核验；不会重发');}
+  }catch{return fail('unreachable','Telegraph 原公开文章暂时无法完整检查；不会重发');}
 }
 
 /**
@@ -487,6 +557,7 @@ export async function reconcileTelegraphTask(
   context: ExecutionContext,
   dependencies: TelegraphReconcileDependencies = {},
 ): Promise<TelegraphReconcileResult> {
+  context=publicationReadContext(context);
   const unknown: TelegraphReconcileResult = { status: 'unknown' };
   const task = context.task;
   if (context.signal.aborted || context.channel.id !== 'telegraph' || context.channel.automation !== 'api'
@@ -509,8 +580,8 @@ export async function reconcileTelegraphTask(
     const target = sourceUrl(context.site.url);
     const currentContent = canonicalTelegraphContent(articleToTelegraphNodes(task.draft.body, context.site.name, target, context.site.language));
     const prior = priorTelegraphFingerprint(task.draft.body, context.site.name, target, context.site.language);
-    if (!currentContent || !prior) return unknown;
-    expectedFingerprints = [{ author: promotionalAuthorName(context.site.language).normalize('NFC'), content: currentContent }, prior];
+    if (!currentContent) return unknown;
+    expectedFingerprints = [{ author: plainInline(context.site.name||context.site.domain).slice(0,128).normalize('NFC'), content: currentContent }, ...prior];
     expectedTitle = plainInline(task.draft.title).slice(0, 256).normalize('NFC');
   } catch { return unknown; }
   if (expectedTitle.length < 4) return unknown;
@@ -572,7 +643,7 @@ export async function reconcileTelegraphTask(
 }
 
 async function runWithTransport(context: ExecutionContext, transport: TelegraphTransport): Promise<ExecutionResult> {
-  if (context.channel.id !== 'telegraph' || context.channel.automation !== 'api') return { status: 'needs_input', message: '该渠道没有启用 Telegraph API 自动化' };
+  if (context.channel.id !== 'telegraph' || context.channel.automation !== 'api') return { status: 'needs_input', message: '该平台没有启用 Telegraph API 自动化' };
   const blocked = accountBlock(context.getAccount(), context.task);
   if (blocked) return blocked;
   if (!context.task.draft) return { status: 'needs_input', message: '请先生成并检查原创文章草稿' };
@@ -603,12 +674,15 @@ async function runWithTransport(context: ExecutionContext, transport: TelegraphT
     created = await apiCall('createPage', {
       access_token: ready.token,
       title,
-      author_name: promotionalAuthorName(context.site.language),
+      author_name: plainInline(context.site.name||context.site.domain).slice(0,128),
+      author_url: target,
       content: JSON.stringify(content),
       return_content: 'false',
     }, context, transport);
   } catch (error) {
     if (error instanceof TelegraphApiRejection) {
+      const cooldown = floodWaitUntil(error.code);
+      if (cooldown) return floodWaitResult(context, 'telegraph_publish_flood_wait', cooldown);
       const failure = accountFailure(error.code);
       if (failure.status !== 'unknown') await context.saveAccount({ ...ready.account, status: failure.status, diagnostic: failure.diagnostic });
       context.checkpoint({ checkpoint: failure.status === 'unknown' ? 'telegraph_publish_rejected' : 'telegraph_publish_blocked', submittedAt: undefined });
@@ -627,7 +701,7 @@ async function runWithTransport(context: ExecutionContext, transport: TelegraphT
   const verified = await verifyPage(context, identity.path, identity.url, target, transport);
   return {
     status: 'review',
-    message: verified ? 'Telegraph 公开文章已发布并通过 API 回读，等待外链核验' : 'Telegraph 文章已发布，公开回读待核验；不会重复发文',
+    message: verified ? 'Telegraph 公开文章已发布并通过 API 回读，等待外链检查' : 'Telegraph 文章已发布，公开回读待检查；不会重复发文',
     publicUrl: identity.url,
     checkpoint: 'telegraph_published',
     submittedAt,

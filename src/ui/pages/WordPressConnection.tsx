@@ -1,4 +1,5 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
+import {displayDateTime} from '../display-time';
 import {ArrowSquareOut,WarningCircle,X} from '@phosphor-icons/react';
 import type {Account,Snapshot} from '../../shared/types';
 import {Button,Field} from '../components';
@@ -44,7 +45,7 @@ export function WordPressConnection({data,disabled,account,onClose,onAction}:Pro
 
   const blogs=useMemo(()=>eligibleWordPressBlogs(authorization?.blogs??[],account),[account,authorization]);
   const selectedBlog=blogs.find(blog=>blog.id===blogId);
-  const expiresAt=authorization&&Number.isFinite(Date.parse(authorization.expiresAt))?new Date(authorization.expiresAt).toLocaleString('zh-CN',{hour12:false}):'';
+  const expiresAt=authorization&&Number.isFinite(Date.parse(authorization.expiresAt))?displayDateTime(authorization.expiresAt):'';
 
   useEffect(()=>{
     aliveRef.current=true;
@@ -126,9 +127,9 @@ export function WordPressConnection({data,disabled,account,onClose,onAction}:Pro
 
   const operationDisabled=disabled||busy!==null;
   const configured=status?.configured===true;
-  return <div className="side-drawer-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)void cancelAndClose()}}><aside className="side-drawer" role="dialog" aria-modal="true" aria-label={account?'修复 WordPress.com 连接':'连接 WordPress.com 博客'}><header><div><span className="eyebrow">WORDPRESS.COM OAUTH</span><h2>{account?'修复 WordPress.com 连接':'连接 WordPress.com 博客'}</h2></div><button className="icon-button" disabled={busy==='connect'} onClick={()=>void cancelAndClose()} aria-label="关闭"><X size={18}/></button></header><div className="drawer-form">
-    <p className="drawer-intro"><strong>在系统浏览器完成 WordPress.com 授权</strong><br/>只会列出本人可管理、已公开且可发布的 WordPress.com 托管博客。授权凭据仅加密保存在本机，不会在页面中显示。</p>
-    {account&&<p className="cell-note">要撤销授权，请到 WordPress.com 的应用授权设置中操作；本机保留原博客身份和已发布文章记录。</p>}
+  return <div className="side-drawer-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)void cancelAndClose()}}><aside className="side-drawer" role="dialog" aria-modal="true" aria-label={account?'修复 WordPress.com 连接':'连接 WordPress.com 博客'}><header><div><h2>{account?'修复 WordPress.com 连接':'连接 WordPress.com 博客'}</h2></div><button className="icon-button" disabled={busy==='connect'} onClick={()=>void cancelAndClose()} aria-label="关闭"><X size={18}/></button></header><div className="drawer-form">
+    <p className="drawer-intro"><strong>在默认浏览器完成 WordPress.com 授权</strong><br/>只会列出本人可管理、已公开且可发布的 WordPress.com 托管博客。授权信息仅加密保存在本机，不会在页面中显示。</p>
+    {account&&<p className="cell-note">要撤销授权，请到 WordPress.com 的应用授权设置中操作；本机保留原博客发布账号和已发布文章记录。</p>}
     {statusLoading?<p className="drawer-intro" role="status">正在检查浏览器授权是否可用…</p>:!configured?<p className="account-diagnostic" role="status"><WarningCircle size={13}/>WordPress.com 浏览器授权待接入验收。当前版本暂不能发起授权；已有本地连接记录会保留。</p>:null}
     <Button className="wordpress-primary" variant="primary" disabled={operationDisabled||statusLoading||!configured} onClick={()=>void authorize()}><ArrowSquareOut size={15}/>{busy==='authorize'?'等待浏览器授权…':configured?(account?'重新授权原博客':'在浏览器授权 WordPress.com'):'待接入验收'}</Button>
     {busy==='authorize'&&<p className="drawer-intro" role="status">浏览器授权正在进行。完成后返回这里选择博客；取消或关闭会结束本次连接。</p>}

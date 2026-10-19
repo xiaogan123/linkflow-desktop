@@ -41,11 +41,16 @@ export function reportSampleLabel(index:ReportIndex,url:string):string{
   return index.current.has(url)?'本次样本出现':'本次样本未出现';
 }
 export function pageLinkLabel(task:Task):string{
-  if(task.linkCheck==='found')return '公开页链接已核验';
-  if(task.linkCheck==='absent')return '本次网页未发现链接';
-  if(task.linkCheck==='unreachable')return '本次网页暂不可达';
-  if(task.linkCheck==='invalid')return '地址不符合渠道要求';
-  return task.verifiedAt?'曾核验存在，当前待检查':'尚未核验';
+  if(task.status==='expired'||task.checkpoint==='yourwebs_expired')return '找不到了';
+  if(task.health==='unknown')return '页面打不开';
+  if(task.health==='missing')return '找不到了';
+  if(task.linkUsesLegacyOrigin)return '指向旧域名';
+  if(task.linkIndexable===false)return '禁止收录';
+  if(task.linkCheck==='found')return '有效';
+  if(task.linkCheck==='absent')return '找不到了';
+  if(task.linkCheck==='unreachable')return '页面打不开';
+  if(task.linkCheck==='invalid')return '地址有误';
+  return task.verifiedAt?'待复查':'还没检查';
 }
 
 export function trackingDetailUrls(row:TrackingRow,view:'published'|'sources',query:string):string[]{
@@ -55,7 +60,7 @@ export function trackingDetailUrls(row:TrackingRow,view:'published'|'sources',qu
 }
 export function reportSourcesEmptyLabel(row:TrackingRow):string{
   const reports=[row.gsc.report,row.bing.report];
-  if(reports.every(report=>!report))return '尚未导入 GSC 或检查 Bing，暂无可展示的报告来源。';
+  if(reports.every(report=>!report))return '尚未导入 Google 报告，也没检查 Bing，暂无可展示的报告来源。';
   if(!reports.some(report=>report&&!report.error))return '报告检查失败，保留的旧样本不会作为本次结果展示。';
   return '当前成功报告没有来源记录；空样本不代表全网没有外链。';
 }

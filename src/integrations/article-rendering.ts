@@ -28,6 +28,8 @@ export interface RenderedArticleOptions {
   title?: string;
   pageUrl?: string;
   robotsHeader?: string;
+  /** HackMD text/linkify compatibility; code and every other provider remain exact. */
+  hackmdCompatibility?: boolean;
 }
 
 function canonicalHttps(input: string): string {
@@ -69,21 +71,32 @@ function nodeOrAncestorIsHidden(value: unknown): boolean {
   return false;
 }
 
-function renderedVisibleText(value: unknown): string {
-  const visit = (node: HtmlNodeLike): string => {
-    if (node.type === 'text') return node.data ?? '';
+function renderedVisibleText(value: unknown, hackmdCompatibility=false): string {
+  const visit = (node: HtmlNodeLike, exact=false): string => {
+    if (node.type === 'text') return hackmdCompatibility&&!exact ? normalizedTypography(node.data??'') : node.data??'';
     if (nodeIsHidden(node)) return '';
-    const text = (node.children ?? []).map(visit).join('');
+    const preserve=exact||['code','pre'].includes(nodeName(node));
+    const text = (node.children ?? []).map(child=>visit(child,preserve)).join('');
     return BLOCK_ELEMENTS.has(nodeName(node)) ? ` ${text} ` : text;
   };
   return visit(value as HtmlNodeLike);
 }
 
-function normalizedVisibleText(value: string): string {
-  return value.normalize('NFC').replace(/\s+/gu, ' ').replace(/(?<=[\p{L}\p{M}]) +(?=[.!?,;:](?: |$))/gu, '').trim();
+function normalizedTypography(value:string):string {
+  return value
+    .replace(/[\u2018\u2019\u201a\u201b]/gu, "'")
+    .replace(/[\u201c\u201d\u201e\u201f]/gu, '"')
+    .replace(/[\u2010-\u2015\u2212]/gu, '-')
+    .replace(/-{2,}/gu, '-')
+    .replace(/\u2026|\.{3}/gu, '...');
 }
 
-function expectedArticleTextVariants(article: { content: string; title?: string }): string[] {
+function normalizedVisibleText(value: string): string {
+  return value.normalize('NFC').replace(/\s+/gu, ' ')
+    .replace(/(?<=[\p{L}\p{M}]) +(?=[.!?,;:](?: |$))/gu, '').trim();
+}
+
+function expectedArticleTextVariants(article: { content: string; title?: string },hackmdCompatibility=false): string[] {
   try {
     // Marked only produces an HTML string here. Cheerio parses it without a
     // browser, so raw HTML in Markdown is never executed.
@@ -92,14 +105,14 @@ function expectedArticleTextVariants(article: { content: string; title?: string 
     const $ = load(rendered, undefined, false);
     const root = $.root().get(0);
     if (!root) return [];
-    const variants = [normalizedVisibleText(renderedVisibleText(root))];
+    const variants = [normalizedVisibleText(renderedVisibleText(root,hackmdCompatibility))];
     if (article.title) {
       const firstVisible = $.root().children().toArray()
-        .find(node => normalizedVisibleText(renderedVisibleText(node)).length > 0);
+        .find(node => normalizedVisibleText(renderedVisibleText(node,hackmdCompatibility)).length > 0);
       if (firstVisible && nodeName(firstVisible) === 'h1'
-        && normalizedVisibleText(renderedVisibleText(firstVisible)) === normalizedVisibleText(article.title)) {
+        && normalizedVisibleText(renderedVisibleText(firstVisible,hackmdCompatibility)) === normalizedVisibleText(hackmdCompatibility?normalizedTypography(article.title):article.title)) {
         $(firstVisible).remove();
-        variants.push(normalizedVisibleText(renderedVisibleText(root)));
+        variants.push(normalizedVisibleText(renderedVisibleText(root,hackmdCompatibility)));
       }
     }
     return [...new Set(variants)];
@@ -108,23 +121,39 @@ function expectedArticleTextVariants(article: { content: string; title?: string 
   }
 }
 
-function renderedLinks($:ReturnType<typeof load>, root:unknown):string{
+function renderedLinks($:ReturnType<typeof load>, root:unknown,hackmdCompatibility=false):string{
   return JSON.stringify($(root as Parameters<typeof $>[0]).find('a[href]').toArray()
-    .filter(element=>!nodeOrAncestorIsHidden(element))
+    .filter(element=>{
+      const href=($(element).attr('href')??'').trim();
+      if(nodeOrAncestorIsHidden(element)||href.startsWith('#'))return false;
+      if(!hackmdCompatibility)return true;
+      const text=normalizedVisibleText(renderedVisibleText(element,true));
+      if(text===href)return false;
+      try{
+        const resolved=new URL(href);
+        if(text===resolved.href)return false;
+        if(/^\S+\.\S+$/u.test(text)&&['http:','https:'].includes(resolved.protocol)
+          &&['http:','https:'].some(protocol=>{
+            try{return new URL(`${protocol}//${text}`).href===resolved.href}catch{return false}
+          }))return false;
+      }catch{/* Relative links remain exact. */}
+      return true;
+    })
     .map(element=>{
       const href=$(element).attr('href')??'';
       let exact=href;
       try{exact=new URL(href).href;}catch{/* Relative links remain exact. */}
-      return [exact,normalizedVisibleText(renderedVisibleText(element))];
+      return [exact,normalizedVisibleText(renderedVisibleText(element,hackmdCompatibility))];
     }));
 }
 
 export function articleSemanticsMatch(
   value: unknown,
   article: { content: string; title?: string },
+  hackmdCompatibility=false,
 ): boolean {
-  const rendered = normalizedVisibleText(renderedVisibleText(value));
-  return expectedArticleTextVariants(article).includes(rendered);
+  const rendered = normalizedVisibleText(renderedVisibleText(value,hackmdCompatibility));
+  return expectedArticleTextVariants(article,hackmdCompatibility).includes(rendered);
 }
 
 /**
@@ -149,11 +178,11 @@ export function inspectRenderedArticle(
     if(!policy.valid)return {found:false,reason:'policy'};
     const bodies = $(bodySelector).toArray().filter(element => !nodeOrAncestorIsHidden(element)&&!$(element).closest('footer,nav,aside').length);
     if (bodies.length !== 1) return { found: false, reason: 'body' };
-    if (!articleSemanticsMatch(bodies[0], { content: markdown, title: options.title })) {
+    if (!articleSemanticsMatch(bodies[0], { content: markdown, title: options.title },options.hackmdCompatibility)) {
       return { found: false, reason: 'semantics' };
     }
     const expected=load(String(marked.parse(markdown,{async:false,gfm:true})));
-    if(renderedLinks($,bodies[0])!==renderedLinks(expected,expected.root()))return {found:false,reason:'semantics'};
+    if(renderedLinks($,bodies[0],options.hackmdCompatibility)!==renderedLinks(expected,expected.root(),options.hackmdCompatibility))return {found:false,reason:'semantics'};
     const targetAnchors = $(bodies[0]).find('a[href]').toArray()
       .filter(element => !nodeOrAncestorIsHidden(element)&&normalizedVisibleText(renderedVisibleText(element)).length>0)
       .filter(element => {

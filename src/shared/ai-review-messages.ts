@@ -1,0 +1,18 @@
+export const AI_REVIEW_MESSAGES={
+  completionLimitInvalid:'AI 输出 token 上限无效',
+  taskPaused:'任务已暂停',
+  formatRepairExhausted:'稿件连续两次格式不合要求，已停止本稿的自动修补。',
+  reviewInputTooLong:'完整稿件与资料超过审核输入上限，资料已尝试压缩一次。',
+  termsReviewInvalid:'平台条款审核结论无效，已停止本次审核。',
+  termsReviewUnavailable:'AI 服务返回异常，平台规则这次没能检查；稍后会重试。',
+  reviewUnavailable:'AI 服务返回异常，这篇稿件这次没能复核；稍后会重试，本次未发布。',
+  termsCacheInvalid:'平台条款记录无效',
+  factReviewInvalid:'事实审核结论格式无效，已停止本次审核。',
+  factReviewRejected:'稿件事实未通过审核。',
+  policyForbidden:'平台条款禁止当前金融或推广内容。',
+  policyUnknown:'平台条款未确认当前内容可发布。',
+  citationInvalid:'事实审核引用未能在固定资料快照逐字核对。',
+  patchInvalid:'局部补丁无法唯一定位或引入了无资料依据的内容。',
+  returnPromiseAfterPatch:'修改后仍有收益承诺。',
+  structuredPayloadNeedsFreeze:'结构化公开请求需要按局部修改重新冻结。',
+} as const;

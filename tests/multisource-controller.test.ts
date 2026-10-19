@@ -1,10 +1,13 @@
-import test from 'node:test';
+import test,{mock} from 'node:test';
 import assert from 'node:assert/strict';
+test.beforeEach(()=>{mock.timers.reset();mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-18T12:17:00.000Z')})});
+test.afterEach(()=>mock.timers.reset());
 import {Store} from '../src/main/store';
 import {Controller} from '../src/main/controller';
 import {CHANNELS} from '../src/integrations/catalog';
 import {articleContentHash,articleContextHash} from '../src/main/article-review';
 import {applySiteUpdate} from '../src/main/site-service';
+import {selectTaskPlatform} from '../src/main/planner';
 import {saveTaskDraft} from '../src/main/task-draft';
 import type {ArticleReview,ExecutionContext,Task} from '../src/shared/types';
 import type {Vault} from '../src/main/vault';
@@ -12,7 +15,7 @@ import type {Vault} from '../src/main/vault';
 const siteId='11111111-1111-4111-8111-111111111111',taskId='22222222-2222-4222-8222-222222222222';
 const paragraphAccount='33333333-3333-4333-8333-333333333333',nostrAccount='44444444-4444-4444-8444-444444444444';
 const publicationId='PublicationFixture0001',postId='PostFixture000000001',pubkey='a'.repeat(64);
-const stamp=new Date(Date.now()-60_000).toISOString();
+const stamp='2026-10-18T12:16:00.000Z';
 const draft={title:'A reproducible operational review',description:'Documented checks and limitations.',body:'This independent guide records inputs, verification steps, limitations, and the operator relationship in enough detail for readers to reproduce the checks.'};
 function channel(id:string){return CHANNELS.find(item=>item.id===id)!}
 function vault(){return {ready:true,available:()=>true,get:async()=> 'synthetic-local-vault-record',set:async()=>{},delete:async()=>{},encryptSecrets:()=>({})} as unknown as Vault}
@@ -21,7 +24,7 @@ function passed(task:Task,context:ReturnType<Store['read']>,channelId=task.chann
 function storeFor(channelId:'paragraph'|'nostr',withTask=true){
   const store=new Store(':memory:');
   store.update(state=>{
-    state.settings.autoRun=true;state.settings.articleReviewMode='ai';state.settings.channelOverrides=Object.fromEntries(CHANNELS.map(item=>[item.id,item.id===channelId]));
+    state.settings.timezone='UTC';state.settings.autoRun=true;state.settings.articleReviewMode='ai';state.settings.channelOverrides=Object.fromEntries(CHANNELS.map(item=>[item.id,item.id===channelId]));
     state.sites=[{id:siteId,url:'https://example.com/',domain:'example.com',email:'owner@example.com',name:'Example',description:'Original educational guides',category:'content',language:'en',monthlyTarget:1,articleReviewMode:'ai',status:'ready',createdAt:stamp,analyzedAt:stamp,topicsCheckedAt:new Date().toISOString(),topics:[{url:'https://example.com/guides/verification',discoveredAt:stamp}],...(channelId==='paragraph'?{paragraph:{publicationId,url:'https://paragraph.com/@fixture-publication/'}}:{})}];
     if(channelId==='paragraph')state.accounts=[{id:paragraphAccount,channelId,email:'',username:publicationId,displayName:'Fixture Publication',publicationUrl:'https://paragraph.com/@fixture-publication/',credentialKind:'api_token',status:'registered',hasPassword:true,source:'imported',createdAt:stamp}];
     else state.accounts=[{id:nostrAccount,channelId,email:'',username:pubkey,credentialKind:'api_token',status:'registered',hasPassword:true,source:'generated',createdAt:stamp}];
@@ -41,7 +44,7 @@ test('Controller plans a real Nostr article without a human-created account',()=
   const store=storeFor('nostr',false);try{
     store.update(state=>{state.accounts=[];state.accountBindings=[]});
     const controller=new Controller(store,vault(),'fixture');controller.plan();
-    const tasks=store.read().tasks;assert.equal(tasks.length,1);assert.equal(tasks[0].channelId,'nostr');assert.equal(tasks[0].accountId,undefined);assert.equal(tasks[0].status,'queued');assert.equal(tasks[0].topicUrl,'https://example.com/guides/verification');
+    const tasks=store.read().tasks;assert.equal(tasks.length,1);assert.equal(tasks[0].channelId,'');assert.equal(tasks[0].accountId,undefined);assert.equal(tasks[0].status,'queued');assert.equal(tasks[0].topicUrl,undefined);store.update(state=>assert.equal(selectTaskPlatform(state,state.tasks[0],[{channel:channel('nostr'),score:100,reason:'fixture'}],new Date(state.tasks[0].scheduledAt))?.id,'nostr'));assert.equal(store.read().tasks[0].topicUrl,'https://example.com/guides/verification');
   }finally{store.close()}
 });
 

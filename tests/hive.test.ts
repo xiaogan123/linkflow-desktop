@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import { PrivateKey } from 'hive-tx';
 import { marked } from 'marked';
 import { connectHiveAccount, reconcileHiveTask, runHiveTask, verifyHivePublication,
@@ -174,6 +175,7 @@ test('approved full article persists intent before one root comment broadcast an
       assert.equal(comment.title, task.draft!.title);
       assert.equal(comment.body, BODY);
       assert.deepEqual(JSON.parse(comment.json_metadata).tags, ['general']);
+      assert.doesNotMatch(comment.json_metadata,/linkflow|"app"/i);
       post = comment;
       return { id: 'a'.repeat(40) };
     },
@@ -363,6 +365,19 @@ test('unavailable transaction header or cancellation before intent stays retryab
     assert.equal(task.hive, undefined);
     assert.equal(writes, 0);
   }
+});
+
+test('historical Hive metadata remains bound to its saved hash and is read without broadcast',async()=>{
+  const {context,task}=fixture();
+  const metadata=JSON.stringify({tags:['general'],app:'linkflow/1.0',format:'markdown',description:task.draft!.description});
+  const hash=createHash('sha256').update(JSON.stringify({author:AUTHOR,title:task.draft!.title,body:BODY,json_metadata:metadata,target:TARGET})).digest('hex');
+  const permlink=`a-reproducible-operational-review-${hash.slice(0,20)}`;
+  const oldPost:HiveComment={parent_author:'',parent_permlink:'general',author:AUTHOR,permlink,title:task.draft!.title,body:BODY,json_metadata:metadata};
+  task.hive={author:AUTHOR,permlink,contentHash:hash,stage:'submitting'};
+  task.submittedAt=NOW;
+  const result=await reconcileHiveTask(context,{rpc:rpcFor(()=>oldPost),broadcastComment:async()=>{throw Error('reconciliation must remain read only')}});
+  assert.equal(result.status,'found');
+  assert.equal(result.status==='found'&&result.hive.permlink,permlink);
 });
 
 test('unknown broadcast response and restart never trigger another write', async () => {

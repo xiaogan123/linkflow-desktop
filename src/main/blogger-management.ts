@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Account, AccountDiagnostic, SecretStore } from '../shared/types';
 import type { Store } from './store';
+import { BLOGGER_GUIDANCE, BLOGGER_MESSAGES } from '../shared/blogger-messages';
+import { bloggerBlogOwner } from '../shared/blogger-ownership';
 import {
   authorizeBlogger,
   BloggerError,
@@ -18,6 +20,10 @@ import {
 } from '../integrations/blogger';
 
 type StateStore = Pick<Store, 'read' | 'update'>;
+
+export function getBloggerGuidance() {
+  return BLOGGER_GUIDANCE;
+}
 
 export interface BloggerManagementDependencies extends BloggerDependencies {
   openExternal?: (url: string) => Promise<unknown>;
@@ -42,7 +48,7 @@ function accountDisplayName(value: string): string {
 function requireAccount(store: StateStore, accountId: string): Account {
   const account = store.read().accounts.find(item => item.id === accountId && item.channelId === 'blogger');
   if (!account) throw new Error('Blogger 账号不存在');
-  if (account.credentialKind !== 'oauth') throw new Error('Blogger 账号不是 OAuth 身份');
+  if (account.credentialKind !== 'oauth') throw new Error('Blogger 账号不是 OAuth 发布账号');
   return account;
 }
 
@@ -50,8 +56,8 @@ function message(error: unknown): string {
   if (!(error instanceof BloggerError)) return error instanceof Error ? error.message : 'Blogger 操作失败';
   if (error.code === 'cancelled') return 'Blogger OAuth 已取消';
   if (error.code === 'timeout') return 'Blogger OAuth 或 API 请求超时';
-  if (error.code === 'auth') return 'Blogger OAuth 授权已失效，请重新连接原 Google 身份';
-  if (error.code === 'forbidden') return 'Google 拒绝 Blogger 权限，请确认该身份拥有博客管理权限且已启用 Blogger API';
+  if (error.code === 'auth') return 'Blogger OAuth 授权已失效，请重新连接原 Google 发布账号';
+  if (error.code === 'forbidden') return 'Google 拒绝 Blogger 权限，请确认该发布账号拥有博客管理权限且已启用 Blogger API';
   if (error.code === 'rate_limited') return 'Blogger API 已触发速率限制，请稍后重试';
   if (error.code === 'network') return '暂时无法连接 Google Blogger 服务';
   if (error.code === 'rejected') return 'Google 明确拒绝了 Blogger 请求';
@@ -67,8 +73,8 @@ function markConnectionFailure(store: StateStore, account: Account, error: unkno
     current.status = restricted ? 'restricted' : 'credentials_invalid';
     current.updatedAt = timestamp(dependencies);
     current.diagnostic = diagnostic(restricted ? 'restricted' : 'bad_password', restricted
-      ? 'Google 拒绝了 Blogger 权限或该身份不再具有博客管理权限。'
-      : 'Blogger OAuth 授权已失效或不属于原连接身份。', dependencies);
+      ? 'Google 拒绝了 Blogger 权限或该发布账号不再具有博客管理权限。'
+      : 'Blogger OAuth 授权已失效或不属于原连接发布账号。', dependencies);
   });
 }
 
@@ -79,7 +85,7 @@ async function authorizedAccount(
   dependencies: BloggerDependencies = {},
 ): Promise<{ account: Account; accessToken: string }> {
   const account = requireAccount(store, accountId);
-  if (!account.hasPassword) throw new Error('本机保险箱中没有 Blogger OAuth 凭据');
+  if (!account.hasPassword) throw new Error('本机保险箱中没有 Blogger OAuth 登录信息');
   try {
     const access = await getBloggerAccessToken(vault, account.id, dependencies);
     if (access.credential.userId !== account.username) throw new BloggerError('auth');
@@ -87,7 +93,7 @@ async function authorizedAccount(
     if (identity.id !== account.username) throw new BloggerError('auth');
     store.update(state => {
       const current = state.accounts.find(item => item.id === account.id && item.channelId === 'blogger');
-      if (!current || current.username !== identity.id) throw new Error('Blogger 身份在验证期间发生变化');
+      if (!current || current.username !== identity.id) throw new Error('Blogger 发布账号在验证期间发生变化');
       current.status = 'registered';
       current.hasPassword = true;
       current.email = '';
@@ -113,7 +119,7 @@ export async function connectBlogger(
   vault: SecretStore,
   desktopClientJson: string | unknown,
   dependencies: BloggerManagementDependencies,
-): Promise<{ account: Account; blogs: BloggerBlog[] }> {
+): Promise<{ account: Account; blogs: BloggerBlog[]; guidance: typeof BLOGGER_GUIDANCE }> {
   if (!dependencies.openExternal) throw new Error('Blogger OAuth 需要由主进程打开系统浏览器');
   const client = parseBloggerDesktopClient(desktopClientJson);
   let authorized: Awaited<ReturnType<typeof authorizeBlogger>>;
@@ -127,7 +133,7 @@ export async function connectBlogger(
     : undefined;
   if (dependencies.existingAccountId && !requested) throw new Error('要更新的 Blogger 账号不存在');
   if (requested && requested.username !== authorized.identity.id) {
-    throw new Error('新授权属于不同 Google Blogger 身份，不会覆盖已有账号；请新增连接。');
+    throw new Error('新授权属于不同 Google Blogger 发布账号，不会覆盖已有账号；请新增连接。');
   }
   const old = requested ?? before.accounts.find(item => item.channelId === 'blogger' && item.username === authorized.identity.id);
   const accountId = old?.id ?? randomUUID();
@@ -154,7 +160,7 @@ export async function connectBlogger(
     store.update(state => {
       const current = state.accounts.find(item => item.id === accountId);
       if (current && (current.channelId !== 'blogger' || current.username !== authorized.identity.id)) {
-        throw new Error('Blogger 身份在连接期间发生变化，请重新连接');
+        throw new Error('Blogger 发布账号在连接期间发生变化，请重新连接');
       }
       state.accounts = state.accounts.filter(item => item.id !== accountId);
       state.accounts.push(account);
@@ -164,7 +170,7 @@ export async function connectBlogger(
     else await vault.delete(`account:${accountId}`);
     throw error;
   }
-  return { account, blogs: authorized.blogs };
+  return { account, blogs: authorized.blogs, guidance: getBloggerGuidance() };
 }
 
 /**
@@ -177,7 +183,7 @@ export async function reconnectBlogger(
   vault: SecretStore,
   accountId: string,
   dependencies: BloggerManagementDependencies,
-): Promise<{ account: Account; blogs: BloggerBlog[] }> {
+): Promise<{ account: Account; blogs: BloggerBlog[]; guidance: typeof BLOGGER_GUIDANCE }> {
   requireAccount(store, accountId);
   let credential: Awaited<ReturnType<typeof readBloggerCredential>>;
   try { credential = await readBloggerCredential(vault, accountId); }
@@ -228,6 +234,11 @@ function bindingChangeBlocked(
   });
 }
 
+function otherBlogOwner(state: ReturnType<StateStore['read']>, siteId: string, blogId: string): string | undefined {
+  const owner = bloggerBlogOwner(state, siteId, blogId);
+  return owner === undefined ? undefined : typeof owner === 'string' ? '另一个已有网站' : owner.domain;
+}
+
 export async function bindBloggerBlog(
   store: StateStore,
   vault: SecretStore,
@@ -254,9 +265,12 @@ export async function bindBloggerBlogs(
 ): Promise<BloggerBlog> {
   if (!siteIds.length) throw new Error('请至少选择一个要绑定的网站');
   if (new Set(siteIds).size !== siteIds.length) throw new Error('要绑定的网站不能重复');
+  if (siteIds.length !== 1) throw new Error(BLOGGER_MESSAGES.bindOneSite);
   const before = store.read();
   const requestedSites = siteIds.map(siteId => before.sites.find(item => item.id === siteId));
   if (requestedSites.some(site => !site)) throw new Error('所选网站中有网站不存在，请刷新后重试');
+  const owner = otherBlogOwner(before, siteIds[0], blogId);
+  if (owner) throw new Error(BLOGGER_MESSAGES.blogOccupied.replace('{domain}', owner));
   const expectedTargets = new Map(requestedSites.map(site => [site!.id, {
     blogger: site!.blogger ? { ...site!.blogger } : undefined,
     binding: before.accountBindings.find(item => item.siteId === site!.id && item.channelId === 'blogger'),
@@ -285,7 +299,9 @@ export async function bindBloggerBlogs(
   const sourceDomain = new URL(verified.url).hostname.toLowerCase();
   store.update(state => {
     const currentAccount = state.accounts.find(item => item.id === accountId && item.channelId === 'blogger');
-    if (!currentAccount || currentAccount.username !== account.username) throw new Error('Blogger 身份在绑定期间发生变化');
+    if (!currentAccount || currentAccount.username !== account.username) throw new Error('Blogger 发布账号在绑定期间发生变化');
+    const owner = otherBlogOwner(state, siteIds[0], blogId);
+    if (owner) throw new Error(BLOGGER_MESSAGES.blogOccupied.replace('{domain}', owner));
     const currentSites = siteIds.map(siteId => state.sites.find(item => item.id === siteId));
     if (currentSites.some(site => !site)) throw new Error('网站在绑定期间发生变化，请刷新后重试');
     const changes = currentSites.map(site => {
@@ -346,7 +362,7 @@ export async function disconnectBlogger(
   const account = requireAccount(store, accountId);
   let raw: string | undefined;
   try { raw = await vault.get(`account:${accountId}`); }
-  catch { throw new Error('系统钥匙串不可用，未删除 Blogger OAuth 凭据'); }
+  catch { throw new Error('系统钥匙串不可用，未删除 Blogger OAuth 登录信息'); }
   if (raw) {
     try {
       await revokeBloggerCredential(raw, dependencies);
@@ -364,7 +380,7 @@ export async function disconnectBlogger(
     current.status = 'credentials_invalid';
     current.hasPassword = false;
     current.updatedAt = stamp;
-    current.diagnostic = diagnostic('password_missing', 'Blogger OAuth 已断开；历史任务与身份归属仍保留。', dependencies);
+    current.diagnostic = diagnostic('password_missing', 'Blogger OAuth 已断开；历史任务与发布账号归属仍保留。', dependencies);
     const boundSiteIds = new Set(state.accountBindings.filter(item => item.channelId === 'blogger' && item.accountId === accountId).map(item => item.siteId));
     state.accountBindings = state.accountBindings.filter(item => !(item.channelId === 'blogger' && item.accountId === accountId));
     for (const site of state.sites) if (boundSiteIds.has(site.id)) delete site.blogger;

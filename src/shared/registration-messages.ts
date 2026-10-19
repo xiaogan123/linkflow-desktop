@@ -1,0 +1,67 @@
+/** Backend placeholders; UI wording is maintained in a later batch. */
+export const REGISTRATION_MESSAGES = {
+  waitingEmail: '正在等邮件，其他任务继续。',
+  emailExpired: '邮件验证已过期，请在原平台继续。',
+  emailReceived: '已收到验证邮件，继续原任务。',
+  emailUncertain: '验证结果待确认，请查看原账号。',
+  mailboxRequired: '请先配置并验证收信邮箱。',
+  taskMissing: '任务不存在。',
+  retryLive: '这篇已经有外链了，请检查现有链接。',
+  retryLimit: '已达重试上限，请检查或跳过。',
+  humanPending: '请先完成页面中的验证。',
+  signupConsentInvalid: '注册同意状态已变化，请重新检查。',
+  humanDone: '验证已完成，继续原任务。',
+  humanSkipped: '已跳过人工步骤，保留原记录。',
+  signupAiInstruction: '仅定位已有页面控件，返回一个 CSS 选择器；不要操作页面，不要解决验证码，不要编造身份。',
+  platformDrift: '平台页面可能改版，请检查。',
+} as const;
+
+export const MAIL_AUTOMATION_MESSAGES = {
+  oauthRequired: '此邮箱需要 OAuth 登录，当前版本暂不支持，请选择其他邮箱。',
+  cancelled: '任务已取消',
+  invalidConnection: '请配置 TLS 邮箱服务器、端口和账号',
+  identityChanged: '收件箱已改变，请重新测试连接',
+  connectionFailed: '邮箱连接失败，请检查配置后重试',
+  ambiguous: '发现多个不同验证码，请手动确认',
+  noAutomaticAlias: '此邮箱不自动生成别名，请使用已确认的邮箱地址',
+} as const;
+
+export const HUMAN_ACTION_MESSAGES = {
+  captcha: '请在平台页面完成验证码。',
+  phone: '请在平台页面完成手机验证。',
+  consent: '请查看并确认平台协议。',
+  email_code_ambiguous: '请确认本次验证邮件。',
+  email_confirmation: '收到 {平台} 的验证邮件，确认是你刚注册的就点「确认」。',
+  selector_drift: '请查看平台页面并完成当前步骤。',
+  account_login: '请在平台页面登录原账号。',
+  other: '请查看并完成当前人工步骤。',
+  immediateTitle: '验证即将到期',
+  immediate: '请及时完成平台验证。',
+  dailyTitle: '待处理任务',
+  daily: '有任务等待人工处理。',
+  invalidState: '人工步骤状态无效。',
+  invalidEmailWait: '邮件等待状态无效。',
+  invalidSignup: '账号注册状态无效。',
+  redacted: '[已隐藏]',
+} as const;
+
+export const SIGNUP_MESSAGES = {
+  policy_unverified:'平台注册规则尚未确认，请人工继续',
+  existing_identity:'请使用已有的发布账号，不能重复创建',
+  consent_required:'首次创建平台账号前，请站主确认一次',
+  captcha:'页面需要人工验证码',
+  phone:'页面需要人工手机验证',
+  manual_review:'平台正在人工审核，请人工继续',
+  selector_drift:'页面结构发生变化，请人工继续',
+  irreversible_unknown:'注册操作结果待确认，不能重复提交',
+  window_lost:'注册窗口已关闭，请人工确认当前账号状态',
+  circuit_open:'该平台注册已暂停七天，请人工检查',
+  circuit_deferred:'该平台注册已暂停，任务到期后自动继续',
+  script_changed:'注册流程已变化，请人工确认',
+  human_step:'请完成页面要求后继续',
+  execution_failed:'注册流程未完成，请人工检查',
+  waiting_email:'等待注册验证邮件',
+  done:'注册流程已完成',
+  cancelled:'注册任务已暂停',
+  invalid_script:'注册流程配置无效',
+} as const;

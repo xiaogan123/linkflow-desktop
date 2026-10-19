@@ -17,7 +17,7 @@ const articleBody = [
 ].join('\n\n');
 
 const title = 'Practical guidance for a clear product page';
-const author = 'Promotional content publisher';
+const author = 'Example Product';
 const token = 'secret-telegraph-token-1234567890';
 
 function channel(): Channel {
@@ -94,9 +94,16 @@ function expectedContent(): TelegraphNode[] {
   return articleToTelegraphNodes(articleBody, 'Example Product', 'https://example.com/', 'en');
 }
 
-function priorContent(): TelegraphNode[] {
-  const nodes = expectedContent();
+function priorContent(body = articleBody): TelegraphNode[] {
+  const nodes = body.split('\n\n').map(text => ({ tag: 'p' as const, children: [text.replaceAll('https://example.com/guides/verification', '').trim()] })) as TelegraphNode[];
+  nodes.push({ tag: 'hr' }, { tag: 'p', children: ['Website discussed: ', { tag: 'a', attrs: { href: 'https://example.com/' }, children: ['Example Product'] }, '.'] });
   nodes[nodes.length - 1] = { tag: 'p', children: ['Author disclosure: Published by the owner or operator of ', 'Example Product', '. Official source: ', { tag: 'a', attrs: { href: 'https://example.com/' }, children: ['Example Product'] }, '.'] };
+  return nodes;
+}
+
+function neutralHistoricalContent(): TelegraphNode[] {
+  const nodes = priorContent();
+  nodes[nodes.length - 1] = { tag: 'p', children: ['Website discussed: ', { tag: 'a', attrs: { href: 'https://example.com/' }, children: ['Example Product'] }, '.'] };
   return nodes;
 }
 
@@ -132,6 +139,29 @@ test('reconciliation recovers a page submitted with the previous byline without 
   };
   assert.deepEqual(await reconcileTelegraphTask(context, { transport }), { status: 'found', publicUrl: 'https://telegra.ph/Earlier-10-04' });
   assert.deepEqual(paths, ['/getPageList', '/getPage/Earlier-10-04']);
+  assert.deepEqual(mutations, { checkpoints: 0, accountWrites: 0, secretWrites: 0 });
+});
+
+test('legacy reconciliation preserves the old bare site URL stripping fingerprint', async () => {
+  const body = articleBody.replace('clear scope, concrete examples, and visible limitations.',
+    'clear scope, concrete examples, and visible limitations. Read https://example.com/guides/verification for the source.');
+  const { context, mutations } = fixture({ task: { draft: { title, description: 'Useful guidance', body } } });
+  const historical = priorContent(body);
+  assert.equal(JSON.stringify(historical).includes('https://example.com/guides/verification'), false);
+  assert.equal(JSON.stringify(articleToTelegraphNodes(body, author, context.site.url)).includes('https://example.com/guides/verification'), true);
+  const transport: TelegraphTransport = async url => url.endsWith('/getPageList')
+    ? apiJson({ total_count: 1, pages: [summary('Bare-10-04')] })
+    : apiJson(detail('Bare-10-04', historical, { authorName: 'Example Product site owner' }));
+  assert.deepEqual(await reconcileTelegraphTask(context, { transport }), { status: 'found', publicUrl: 'https://telegra.ph/Bare-10-04' });
+  assert.deepEqual(mutations, { checkpoints: 0, accountWrites: 0, secretWrites: 0 });
+});
+
+test('reconciliation keeps the prior neutral footer and author pair read-only', async () => {
+  const { context, mutations } = fixture();
+  const transport: TelegraphTransport = async url => url.endsWith('/getPageList')
+    ? apiJson({ total_count: 1, pages: [summary('Neutral-10-04')] })
+    : apiJson(detail('Neutral-10-04', neutralHistoricalContent(), { authorName: 'Promotional content publisher' }));
+  assert.deepEqual(await reconcileTelegraphTask(context, { transport }), { status: 'found', publicUrl: 'https://telegra.ph/Neutral-10-04' });
   assert.deepEqual(mutations, { checkpoints: 0, accountWrites: 0, secretWrites: 0 });
 });
 
@@ -254,4 +284,19 @@ test('managed Telegraph verification accepts exact current and historical pairs 
     assert.equal(result.found,accepted,`${historical}/${variant}: ${result.reason}`);if(!accepted)assert.equal(result.outcome,'invalid');
   }
   assert.deepEqual(mutations,{checkpoints:0,accountWrites:0,secretWrites:0});
+});
+
+import {publicationDraftHash} from '../src/main/publication-snapshot';
+test('Telegraph recovery and public verification rebuild the captured site fields and draft after later edits',async()=>{
+  const {context,mutations}=fixture();const draft=structuredClone(context.task.draft!);
+  context.task.publicationSnapshot={version:1,capturedAt:context.task.submittedAt!,source:'submitted_draft',siteUrl:context.site.url,targetUrl:context.site.url,siteName:context.site.name,language:'en',draft,contentHash:publicationDraftHash(draft)};
+  context.site={...context.site,name:'Changed Brand',url:'https://example-site.com/',domain:'example-site.com',language:'zh'};
+  context.task.draft={...draft,title:'Changed draft title',body:'Changed body after submission'};
+  const transport:TelegraphTransport=async url=>url.endsWith('/getPageList')?apiJson({total_count:1,pages:[summary('Snapshot-10-04')]}):apiJson(detail('Snapshot-10-04',expectedContent()));
+  assert.deepEqual(await reconcileTelegraphTask(context,{transport}),{status:'found',publicUrl:'https://telegra.ph/Snapshot-10-04'});
+  context.task.publicUrl='https://telegra.ph/Snapshot-10-04';
+  const html=(nodes:TelegraphNode[]):string=>nodes.map(node=>typeof node==='string'?node.replaceAll('&','&amp;').replaceAll('<','&lt;'): `<${node.tag}${node.attrs?` href="${node.attrs.href}"`:''}>${html(node.children??[])}</${node.tag}>`).join('');
+  const page=`<article class="tl_article_content"><h1>${title}</h1><address>${author}</address>${html(expectedContent())}</article>`;
+  const result=await verifyTelegraphPublication(context,{transport,publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from(page)})}});
+  assert.equal(result.found,true,result.reason);assert.equal(context.task.draft.title,'Changed draft title');assert.deepEqual(mutations,{checkpoints:0,accountWrites:0,secretWrites:0});
 });

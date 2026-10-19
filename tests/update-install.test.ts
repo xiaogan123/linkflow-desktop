@@ -83,7 +83,7 @@ test('Mac bundle tree binds exact POSIX executable permissions',{skip:process.pl
 test('mac helper rejects a staged tree changed after the trusted extraction',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'linkflow-helper-')),artifact=Buffer.from('archive'),{jobPath,job}=jobFields(directory,'darwin-arm64',artifact);try{
   await mkdir(join(job.applicationPath,'Contents','MacOS'),{recursive:true});await mkdir(join(job.stagedApplicationPath!,'Contents','MacOS'),{recursive:true});await mkdir(job.updatesDirectory,{recursive:true});await writeFile(join(job.applicationPath,'old.txt'),'old');const stagedExecutable=job.executablePath.replace(job.applicationPath,job.stagedApplicationPath!);await writeFile(stagedExecutable,'trusted',{mode:0o755});job.stagedTreeSha256=await hashUpdateTree(job.stagedApplicationPath!);await writeFile(stagedExecutable,'changed',{mode:0o755});await writeFile(job.artifactPath,artifact);await writeFile(jobPath,JSON.stringify(job));await writeFile(job.armPath,job.token);let verified=false;
-  await assert.rejects(runUpdateHelper(jobPath,{isAlive:()=>false,prepareMacStage:async()=>{verified=true},verifyMacReady:async()=>{}}),/应用树/);assert.equal(verified,false);assert.equal(await readFile(join(job.applicationPath,'old.txt'),'utf8'),'old');await assert.rejects(lstat(job.backupPath));
+  await assert.rejects(runUpdateHelper(jobPath,{isAlive:()=>false,prepareMacStage:async()=>{verified=true},verifyMacReady:async()=>{}}),/外链助手更新文件与已验证安装包不匹配/);assert.equal(verified,false);assert.equal(await readFile(join(job.applicationPath,'old.txt'),'utf8'),'old');await assert.rejects(lstat(job.backupPath));
  }finally{await rm(directory,{recursive:true,force:true})}
 });
 

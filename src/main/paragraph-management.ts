@@ -25,24 +25,24 @@ export async function connectParagraph(
   if(existingAccountId&&!requested)throw Error('要更新的 Paragraph 连接不存在');
   const publication=await validateParagraphApiKey(apiKey,dependencies);
   if(dependencies.signal?.aborted)throw Error('Paragraph 连接已取消');
-  if(requested&&requested.username!==publication.id)throw Error('API key 属于另一出版物，请新增连接，不会覆盖原有身份');
+  if(requested&&requested.username!==publication.id)throw Error('API key 属于另一出版物，请新增连接，不会覆盖原有发布账号');
   const previous=requested??before.accounts.find(account=>account.channelId==='paragraph'&&account.username===publication.id);
   const id=previous?.id??randomUUID(),captured=memorySecrets();
   let confirmed:Awaited<ReturnType<typeof connectParagraphPublication>>;
   try{confirmed=await connectParagraphPublication(captured.store,id,apiKey,dependencies);}
   catch(error){if(dependencies.signal?.aborted)throw Error('Paragraph 连接已取消');throw error}
   if(dependencies.signal?.aborted)throw Error('Paragraph 连接已取消');
-  if(confirmed.id!==publication.id||confirmed.url!==publication.url||confirmed.ownerUserId!==publication.ownerUserId||confirmed.slug!==publication.slug)throw Error('验证期间出版物身份发生变化');
-  const secret=captured.get('account:'+id);if(!secret)throw Error('Paragraph 凭据验证未完成');
+  if(confirmed.id!==publication.id||confirmed.url!==publication.url||confirmed.ownerUserId!==publication.ownerUserId||confirmed.slug!==publication.slug)throw Error('验证期间出版物发布账号发生变化');
+  const secret=captured.get('account:'+id);if(!secret)throw Error('Paragraph 登录信息验证未完成');
   const now=new Date().toISOString();
   const account:Account={...previous,id,channelId:'paragraph',credentialKind:'api_token',email:'',username:publication.id,displayName:publication.name,publicationUrl:publication.url,createdAt:previous?.createdAt??now,updatedAt:now,verifiedAt:now,status:'registered',hasPassword:true,source:'imported',diagnostic:undefined};
-  const key='account:'+id,ciphers=vault.encryptSecrets({[key]:secret});if(typeof ciphers[key]!=='string'||!ciphers[key])throw Error('Paragraph 凭据未能加密');
+  const key='account:'+id,ciphers=vault.encryptSecrets({[key]:secret});if(typeof ciphers[key]!=='string'||!ciphers[key])throw Error('Paragraph 登录信息未能加密');
   if(dependencies.signal?.aborted)throw Error('Paragraph 连接已取消');
   store.updateWithCiphers(state=>{
     if([...selected].some(siteId=>!state.sites.some(site=>site.id===siteId)))throw Error('所选网站已不存在');
     const current=state.accounts.find(item=>item.id===id);
-    if(previous&&(!current||current.channelId!=='paragraph'||current.username!==publication.id))throw Error('连接期间账号身份发生变化');
-    if(!previous&&current)throw Error('连接期间账号身份发生变化');
+    if(previous&&(!current||current.channelId!=='paragraph'||current.username!==publication.id))throw Error('连接期间发布账号发生变化');
+    if(!previous&&current)throw Error('连接期间发布账号发生变化');
     state.accounts=state.accounts.filter(item=>item.id!==id);state.accounts.push(account);
     const channel=CHANNELS.find(item=>item.id==='paragraph')!;
     for(const siteId of selected)bindAccount(state,id,siteId,channel);

@@ -1,3 +1,4 @@
+import {fixtureTerms,primeWritingFixtureStore,profileWriterResult} from './writing-fixture';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -14,7 +15,7 @@ import {
 } from '../src/integrations/agentswiki';
 import {AGENTSWIKI_BODY_SELECTOR} from '../src/integrations/agentswiki-public';
 import {
-  AGENTSWIKI_REGISTRATION,agentsWikiDraftError,agentsWikiStructuredDraft,agentsWikiTaskIdentity,
+  AGENTSWIKI_REGISTRATION,agentsWikiDraftError,agentsWikiRegistrationFor,agentsWikiStructuredDraft,agentsWikiTaskIdentity,
   createAgentsWikiReviewedInput,validAgentsWikiAccount,
 } from '../src/integrations/agentswiki-publisher';
 import {connectAgentsWiki} from '../src/main/agentswiki-account';
@@ -25,6 +26,8 @@ import {Controller} from '../src/main/controller';
 import {Store,emptyState} from '../src/main/store';
 import type {Vault} from '../src/main/vault';
 import type {Account,ArticleReview,Channel,Site,Task} from '../src/shared/types';
+
+test.beforeEach(context=>(context as import('node:test').TestContext).mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-18T12:17:00.000Z')}));
 
 const at='2026-10-17T00:00:00.000Z';
 const offsetCreatedAt='2026-10-17T08:00:00.123456+08:00';
@@ -45,7 +48,7 @@ function site(index=0):Site{
   return {id:siteIds[index],domain,url:origin,email:'owner'+index+'@example.test',name:label,description:'Public software documentation for '+label,category:'software',language:'en',monthlyTarget:1,articleReviewMode:'ai',qualifications:{software:target,developer:target},status:'ready',createdAt:at,analyzedAt:at,topicsCheckedAt:at,topics:[{url:target,title:label+' guide',discoveredAt:at}]};
 }
 function queuedTask(index=0,extra:Partial<Task>={}):Task{
-  return {id:taskIds[index],siteId:siteIds[index],channelId:'agentswiki',sourceDomain:'agents-wiki.com',status:'queued',createdAt:at,scheduledAt:at,updatedAt:at,attempts:0,message:'ordinary Agents Wiki task',topicUrl:targets[index],...extra};
+  return {id:taskIds[index],siteId:siteIds[index],channelId:'agentswiki',sourceDomain:'agents-wiki.com',status:'queued',createdAt:at,scheduledAt:new Date().toISOString(),updatedAt:at,attempts:0,message:'ordinary Agents Wiki task',topicUrl:targets[index],...extra};
 }
 function draftFor(target:string,label:string){
   return {
@@ -114,12 +117,16 @@ interface TransportOptions {
   onValidate?:()=>void;
 }
 function transport(options:TransportOptions={}){
-  const calls:Record<string,number>={},remote=options.account??profile(),etag=options.etag??'"'+articleId+':1"';let draft:AgentsWikiDraft|undefined;
+  const calls:Record<string,number>={},etag=options.etag??'"'+articleId+':1"';let remote=options.account??profile(),draft:AgentsWikiDraft|undefined;
   const fetch:NonNullable<AgentsWikiDependencies['fetch']>=async(url,init)=>{
     const method=init.method??'GET',key=method+' '+url;calls[key]=(calls[key]??0)+1;
     if(method==='GET'&&url===AGENTSWIKI_META)return response(url,200,meta());
     if(method==='GET'&&url==='https://agents-wiki.com/robots.txt')return response(url,200,'User-agent: *\nAllow: /\nDisallow: /api/\n','text/plain');
-    if(method==='POST'&&url===AGENTSWIKI_REGISTER){assert.deepEqual(JSON.parse(String(init.body)),AGENTSWIKI_REGISTRATION);return response(url,201,{...profileWire(remote),api_key:apiKey,rule_version:AGENTSWIKI_RULE_VERSION})}
+    if(method==='POST'&&url===AGENTSWIKI_REGISTER){
+      // The controller registers with the site's own identity; direct calls pass the fallback one.
+      const sent=JSON.parse(String(init.body));assert.ok([AGENTSWIKI_REGISTRATION,agentsWikiRegistrationFor(site())].some(value=>JSON.stringify(value)===JSON.stringify(sent)));
+      if(!options.account)remote={...remote,name:sent.name,publicDisclosure:sent.public_disclosure};
+      return response(url,201,{...profileWire(remote),api_key:apiKey,rule_version:AGENTSWIKI_RULE_VERSION})}
     if(method==='GET'&&url===AGENTSWIKI_ME){assert.equal(new Headers(init.headers).get('authorization'),'Bearer '+apiKey);return response(url,200,profileWire(remote))}
     if(method==='POST'&&url===AGENTSWIKI_VALIDATE){draft=JSON.parse(String(init.body)) as AgentsWikiDraft;options.onValidate?.();return response(url,200,{valid:true,problems:[],missing:[],write_gate:null,allowed_actions:['create own articles'],similar:draft.related.map(id=>({id}))})}
     if(method==='POST'&&url===AGENTSWIKI_ARTICLES){
@@ -140,11 +147,13 @@ function transport(options:TransportOptions={}){
   return {calls,fetch,draft:()=>draft};
 }
 function makeController(store:Store,secureVault:Vault,deps:AgentsWikiDependencies,writerInputs:unknown[]=[]){
+  primeWritingFixtureStore(store);
   const value=new Controller(store,secureVault,'isolated',{
     channelCatalog:[channel(true)],
+    prepareChannelTerms:async current=>fixtureTerms(current),
     readTopicEvidence:async(_site,url)=>({url,title:'Public recovery documentation',text:'Public technical evidence for a bounded recovery workflow.',contentHash:agentsWikiHash(url)}),
     collectArticleEvidence:async(currentSite,currentChannel)=>[{url:currentSite.url,kind:'site',text:'Public project evidence.',excerpt:'Public project evidence.'},{url:currentChannel.rulesUrl,kind:'content_policy',text:'Official contribution rules.',excerpt:'Official contribution rules.',appliesTo:'agentswiki',applicability:'verified'}],
-    aiFactory:(_settings,_vault,onCall)=>({json:async<T>(_instruction:string,data:unknown)=>{onCall?.();writerInputs.push(data);const value=data as {topicEvidence:{url:string};site:{name:string}};return draftFor(value.topicEvidence.url,value.site.name) as T}}),
+    aiFactory:(_settings,_vault,onCall)=>({json:async<T>(_instruction:string,data:unknown)=>{onCall?.();writerInputs.push(data);const value=data as {topicEvidence:{url:string};site:{name:string}};return profileWriterResult(draftFor(value.topicEvidence.url,value.site.name),data) as T}}),
     reviewArticle:async(current,currentSite,currentChannel,settings,_ai,_signal,options)=>passedReview(current,currentSite,currentChannel,settings,options?.account),
     agentsWikiDependencies:deps,
   });
@@ -180,8 +189,9 @@ test('ordinary drafting creates distinct reviewed inputs for unrelated sites and
 
 test('ordinary generated identity describes the actual operator without claiming LinkFlow ownership or maintenance',()=>{
   const disclosure=AGENTSWIKI_REGISTRATION.public_disclosure,draft=agentsWikiStructuredDraft({...queuedTask(),draft:draftFor(targets[0],site().name),draftUpdatedAt:at},site());
-  assert.match(disclosure,/person using Linkflow Assistant/i);
-  assert.doesNotMatch(disclosure,/\b(?:owner|maintainer)\b/i);
+  assert.match(disclosure,/site owner/i);
+  assert.doesNotMatch(disclosure,/linkflow/i);
+  assert.doesNotMatch(disclosure,/project (?:owner|maintainer)/i);
   assert.equal(draft.attribution.length,1);
   assert.ok(draft.attribution[0].includes(disclosure));
   assert.doesNotMatch(draft.attribution[0],/human maintainer of LinkFlow/i);
@@ -205,7 +215,7 @@ test('an imported account preserves its exact official nonempty disclosure throu
 test('an imported account with an empty or absent official disclosure is rejected without creating local identity state',async()=>{
   for(const publicDisclosure of ['',null]){
     const f=fixture(),wire=transport({account:{...profile(),publicDisclosure}});
-    try{await assert.rejects(()=>connect(f.store,f.vault,wire.fetch),/非空如实身份披露/);assert.equal(f.store.read().accounts.length,0);assert.equal(Object.keys(f.store.allCiphers()).length,0)}finally{f.cleanup()}
+    try{await assert.rejects(()=>connect(f.store,f.vault,wire.fetch),/真实且非空的账号说明/);assert.equal(f.store.read().accounts.length,0);assert.equal(Object.keys(f.store.allCiphers()).length,0)}finally{f.cleanup()}
   }
 });
 
@@ -215,7 +225,7 @@ for(const etagSuffix of ['',':0123456789abcdef'])test('ordinary Controller regis
     await runner.tick();const saved=f.store.read(),task=saved.tasks[0],account=saved.accounts[0],posted=wire.draft();
     assert.equal(wire.calls['POST '+AGENTSWIKI_REGISTER],1);assert.equal(wire.calls['POST '+AGENTSWIKI_VALIDATE],1);assert.equal(wire.calls['POST '+AGENTSWIKI_ARTICLES],1);
     assert.ok(posted);assert.deepEqual(posted,agentsWikiStructuredDraft(task,saved.sites[0],account,task.articleReview?.reviewedAt));
-    assert.ok(validAgentsWikiAccount(account));assert.equal(account.agentsWiki?.remoteCreatedAt,offsetCreatedAt);assert.equal(saved.accountBindings[0]?.accountId,account.id);
+    assert.ok(validAgentsWikiAccount(account));assert.equal(account.agentsWiki?.name,agentsWikiRegistrationFor(site()).name);assert.notEqual(account.agentsWiki?.name,AGENTSWIKI_REGISTRATION.name);assert.equal(account.agentsWiki?.remoteCreatedAt,offsetCreatedAt);assert.equal(saved.accountBindings[0]?.accountId,account.id);
     assert.equal(task.articleReview?.status,'passed');assert.equal(task.agentsWikiInput?.version,2);assert.ok(agentsWikiTaskIdentity(task,saved.sites[0],account));
     assert.equal(task.agentsWiki?.stage,'published');assert.equal(task.status,'live');assert.equal(task.publicUrl,publicUrl);assert.equal(task.linkCheck,'found');assert.equal(task.firstLiveAt,task.verifiedAt);assert.equal(JSON.stringify(saved).includes(apiKey),false);
     const accountPlain=await f.vault.get('account:'+account.id),publicationPlain=await f.vault.get('publication:'+task.id);assert.ok(accountPlain&&publicationPlain);
@@ -355,4 +365,18 @@ test('an unfamiliar complete response is encrypted and bounded recovery never re
       assert.doesNotThrow(()=>validateBackup({state:saved,secrets:{['account:'+account.id]:accountPlain!,['publication:'+task.id]:publication!}}));
     }finally{runner.stop()}
   }finally{f.cleanup()}
+});
+
+test('Agents Wiki keeps submitted snapshot validation after rename and persists a new identity beside retired history',async()=>{
+ const f=fixture(),seeded=seedReadyPublication(f.store),wire=transport(),runner=makeController(f.store,f.vault,{fetch:wire.fetch,now:()=>new Date(at),renderPage:async()=>nativePage(wire.draft()!)}),newAccountId='66666666-6666-4666-8666-666666666666';
+ try{
+  assert.throws(()=>f.store.update(state=>{state.sites[0].name='Unreviewed rename'}));
+  await runner.tick();assert.equal(f.store.read().tasks[0].status,'live');const oldCipher=f.store.getCipher('account:'+accountId);
+  f.store.update(state=>{state.accounts[0].retiredAt=at;state.sites[0].name='Renamed documentation';state.sites[0].language='zh';state.tasks.push(queuedTask(1,{siteId:siteIds[0],topicUrl:targets[0],status:'running'}))});
+  const persistence=createAgentsWikiRegistrationPersistence(f.store,f.vault,{taskId:taskIds[1],siteId:siteIds[0],accountId:newAccountId,assertAuthorized:()=>true,now:()=>new Date(at)});
+  let posts=0;const result=await registerAgentsWiki({accountId:newAccountId,taskId:taskIds[1],draft:AGENTSWIKI_REGISTRATION},persistence,{now:()=>new Date(at),fetch:async(url,init)=>{if(url===AGENTSWIKI_META)return response(url,200,meta());assert.equal(init.method,'POST');posts++;throw Error('synthetic unknown registration result')}});
+  assert.equal(result.status,'unknown');assert.equal(posts,1);f.store.update(state=>{state.accountBindings[0].accountId=newAccountId});
+  const state=f.store.read(),secrets=Object.fromEntries(await Promise.all(Object.keys(f.store.allCiphers()).map(async key=>[key,(await f.vault.get(key))!])));
+  assert.equal(state.accounts.length,2);assert.equal(state.tasks[0].accountId,accountId);assert.equal(f.store.getCipher('account:'+accountId),oldCipher);assert.equal(state.tasks[0].publicationSnapshot?.siteName,seeded.site.name);assert.equal(state.sites[0].name,'Renamed documentation');assert.doesNotThrow(()=>validateBackup({state,secrets}));
+ }finally{runner.stop();f.cleanup()}
 });

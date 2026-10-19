@@ -6,6 +6,7 @@ import {
 } from './synthfolk';
 import {parseOpenAgentChatOpaque,type OpenAgentChatDependencies} from './openagentchat';
 import {verifySynthfolkProfile} from './synthfolk-public';
+import {neutralPublicIdentityText,publicIdentitySlug} from './public-identity';
 
 const HASH=/^[a-f0-9]{64}$/;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -15,8 +16,13 @@ const targetFor=(task:Pick<Task,'topicUrl'>,site:Pick<Site,'url'>)=>task.topicUr
 const operation=(kind:'register'|'import'|'reuse',id:string)=>`synthfolk_${kind}_${id.replace(/-/g,'').toLowerCase()}`;
 function matches(context:Pick<ExecutionContext,'channel'|'task'>){return context.channel.id==='synthfolk'&&context.channel.domain==='synthfolk.ai'&&context.channel.kind==='profile'&&context.channel.automation==='api'&&context.channel.accountRequired&&context.channel.articleRequired&&context.task.channelId==='synthfolk'&&context.task.sourceDomain==='synthfolk.ai'}
 function normalize(value:string){return value.replace(/\s+/g,' ').trim()}
+function stableHandle(site:Pick<Site,'domain'|'name'|'url'>,accountId:string){if(!UUID.test(accountId))throw Error('Synthfolk 本机发布账号无效');return publicIdentitySlug(site,accountId,40)}
+// Handles planned before the neutral identity scheme: "<domain>-<first 8 of the account id>".
 function slugBase(value:string){const result=value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');return result||'project-assistant'}
-function stableHandle(site:Pick<Site,'domain'|'name'>,accountId:string){if(!UUID.test(accountId))throw Error('Synthfolk 本机身份无效');const suffix=accountId.replace(/-/g,'').slice(0,8),base=slugBase(site.domain||site.name).slice(0,Math.max(3,39-suffix.length));return `${base.replace(/-+$/,'')}-${suffix}`.slice(0,40).replace(/-+$/,'')}
+function legacyHandle(site:Pick<Site,'domain'|'name'>,accountId:string){const suffix=accountId.replace(/-/g,'').slice(0,8),base=slugBase(site.domain||site.name).slice(0,Math.max(3,39-suffix.length));return `${base.replace(/-+$/,'')}-${suffix}`.slice(0,40).replace(/-+$/,'')}
+function neutralText(value:string,site:Pick<Site,'domain'|'name'|'url'>,accountId:string){
+  return normalize(neutralPublicIdentityText(site,accountId,value));
+}
 function skillFor(site:Pick<Site,'category'>){return ({software:'Software',ai:'AI systems',developer:'Developer tools',design:'Design',business:'Business',content:'Documentation',education:'Education',finance:'Financial education',general:'Research'} as const)[site.category]}
 function plainProfileText(value:string){return !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)&&!/<\s*\/?\s*[A-Za-z][^>]*>/.test(value)&&!/!?(?:\[[^\]]*\])\s*(?:\([^)]*\)|\[[^\]]*\])/.test(value)}
 
@@ -30,13 +36,16 @@ export function accountProfile(account:Account):SynthfolkProfileDraft {
   const proof=account.synthfolk;if(!proof)throw Error('Synthfolk 账号资料缺失');return {handle:proof.handle,name:proof.name,headline:proof.headline,about:proof.about,operator:proof.operator,website:proof.website,availability:'closed',skills:[...proof.skills]};
 }
 
-export function synthfolkStructuredProfile(task:Pick<Task,'draft'|'topicUrl'>,site:Pick<Site,'url'|'domain'|'name'|'category'>,account?:Account,accountId?:string):SynthfolkProfileDraft {
-  const targetUrl=targetFor(task,site);if(validSynthfolkAccount(account)){const profile=accountProfile(account);if(profile.website!==targetUrl)throw Error('Synthfolk 单一公开身份已绑定其他网站，不能覆盖');return profile}
-  if(!task.draft||!accountId||!UUID.test(accountId))throw Error('Synthfolk 稿件或固定身份缺失');
-  const name=normalize(task.draft.title),headline=normalize(task.draft.description),generated=task.draft.body.trim(),operator='Human operator',disclosure=`This AI assistant is controlled by a human. Its Website field points to ${site.name}, and this profile describes that project only; it does not claim employment, endorsement, client work, ownership, or independent third-party status.`;
+export function synthfolkStructuredProfile(task:Pick<Task,'draft'|'topicUrl'>&Partial<Pick<Task,'synthfolkInput'>>,site:Pick<Site,'url'|'domain'|'name'|'category'>,account?:Account,accountId?:string):SynthfolkProfileDraft {
+  const targetUrl=targetFor(task,site);if(validSynthfolkAccount(account)){const profile=accountProfile(account);if(profile.website!==targetUrl)throw Error('Synthfolk 单一公开账号已绑定其他网站，不能覆盖');return profile}
+  if(!task.draft||!accountId||!UUID.test(accountId))throw Error('Synthfolk 稿件或固定发布账号缺失');
+  // An input planned before the neutral scheme keeps its handle and wording; the store re-derives and compares it.
+  const legacy=task.synthfolkInput?.accountId===accountId&&task.synthfolkInput.profile.handle===legacyHandle(site,accountId);
+  const text=(value:string)=>legacy?normalize(value):neutralText(value,site,accountId);
+  const name=text(task.draft.title),headline=text(task.draft.description),generated=legacy?task.draft.body.trim():text(task.draft.body),operator='Human operator',disclosure=`This AI assistant is controlled by a human. Its Website field points to ${legacy?site.name:text(site.name)}, and this profile describes that project only; it does not claim employment, endorsement, client work, ownership, or independent third-party status.`;
   const about=normalize(`${disclosure}\n\n${generated}`),skills=[skillFor(site),'Documentation'].filter((value,index,items)=>items.indexOf(value)===index);
   if(!plainProfileText(name)||!plainProfileText(headline)||!plainProfileText(about))throw Error('Synthfolk 公开资料必须为纯文本');
-  return synthfolkRegistrationRequest({handle:stableHandle(site,accountId),name,headline,about,operator,website:targetUrl,availability:'closed',skills},targetUrl).payload;
+  return synthfolkRegistrationRequest({handle:legacy?legacyHandle(site,accountId):stableHandle(site,accountId),name,headline,about,operator,website:targetUrl,availability:'closed',skills},targetUrl).payload;
 }
 
 export function synthfolkDraftError(task:Pick<Task,'draft'|'topicUrl'>,site:Pick<Site,'url'|'domain'|'name'|'category'>,account?:Account,accountId?:string):string|undefined{try{synthfolkStructuredProfile(task,site,account,accountId);return}catch(error){return error instanceof Error?error.message:'Synthfolk 资料稿无效'}}
@@ -69,24 +78,24 @@ async function verifyAccess(context:ExecutionContext,access:NonNullable<Awaited<
 type SynthfolkPersistence=NonNullable<ExecutionContext['synthfolkPersistence']>&{observePublished?(receipt:SynthfolkTaskReceipt,observedAt:string):Promise<void>;markUnmanaged?(intent:SynthfolkRegistrationIntent,checkedAt:string):Promise<void>};
 
 export async function runSynthfolkTask(context:ExecutionContext,deps:OpenAgentChatDependencies=context.synthfolkDependencies??{}):Promise<ExecutionResult>{
-  if(!matches(context))return {status:'needs_input',message:'当前渠道规格不支持 Synthfolk 公开资料'};
-  const account=context.getAccount(),identity=synthfolkTaskIdentity(context.task,context.site,account);if(!identity)return {status:'needs_input',message:'Synthfolk 需要把完整公开资料、目标、人类操控披露和独立 AI 审核绑定到当前任务'};
+  if(!matches(context))return {status:'needs_input',message:'当前平台规格不支持 Synthfolk 公开资料'};
+  const account=context.getAccount(),identity=synthfolkTaskIdentity(context.task,context.site,account);if(!identity)return {status:'needs_input',message:'Synthfolk 需要把完整公开资料、目标、人类操控披露和 AI 复核绑定到当前任务'};
   if(validSynthfolkAccount(account)){
-    const access=await accountAccess(context);if(!access||access.profile.website!==identity.input.targetUrl||!same(access.profile,identity.input.profile))return {status:'needs_input',message:'Synthfolk 原公开身份、加密 API key 或目标网站不一致，不能覆盖或新造身份'};
+    const access=await accountAccess(context);if(!access||access.profile.website!==identity.input.targetUrl||!same(access.profile,identity.input.profile))return {status:'needs_input',message:'Synthfolk 原公开账号、加密 API key 或目标网站不一致，不能覆盖或新造发布账号'};
     const createdAt=context.task.synthfolk?.createdAt??(deps.now?.()??new Date()).toISOString(),registered=context.task.synthfolk?.operationId===operation('register',account.id),base=registered?visible(intentFrom(identity.input,context.task,createdAt),context.task.synthfolk?.stage??'api_receipt',access.secret.receipt):context.task.synthfolk??reuseVisible(context.task,identity,account,createdAt);
-    try{const accepted=await verifyAccess(context,access,base,deps);return {status:'review',message:'Synthfolk 同一公开身份、完整资料、本人 API、原生 Website 链接和抓取策略已只读核对；没有注册或覆盖身份。',publicUrl:accepted.url,linkRel:accepted.linkRel,submittedAt:base.createdAt,checkpoint:'synthfolk_profile_published',synthfolk:accepted.published}}catch{return {status:'review',message:'Synthfolk 原账号已保留；公开资料尚未完成联合只读核验，不会注册第二个身份或覆盖网站。',...(context.task.synthfolk?{submittedAt:base.createdAt,checkpoint:context.task.checkpoint,synthfolk:context.task.synthfolk}:{} )}}
+    try{const accepted=await verifyAccess(context,access,base,deps);return {status:'review',message:'Synthfolk 同一公开账号、完整资料、本人 API、原生 Website 链接和抓取策略已检查；没有注册或覆盖发布账号。',publicUrl:accepted.url,linkRel:accepted.linkRel,submittedAt:base.createdAt,checkpoint:'synthfolk_profile_published',synthfolk:accepted.published}}catch{return {status:'review',message:'Synthfolk 原账号已保留；公开资料尚未完成检查，不会注册第二个账号或覆盖网站。',...(context.task.synthfolk?{submittedAt:base.createdAt,checkpoint:context.task.checkpoint,synthfolk:context.task.synthfolk}:{} )}}
   }
-  if(account&&account.channelId==='synthfolk')return {status:'needs_input',message:'Synthfolk 原注册意图或身份未确认；不会重复注册、换 handle 或覆盖网站'};
-  const persistence=context.synthfolkPersistence;if(!persistence||persistence.accountId!==identity.input.accountId||!persistence.loadSecret)return {status:'needs_input',message:'Synthfolk 单次注册的加密持久化边界未就绪'};
+  if(account&&account.channelId==='synthfolk')return {status:'needs_input',message:'Synthfolk 原注册计划或发布账号未确认；不会重复注册、换 handle 或覆盖网站'};
+  const persistence=context.synthfolkPersistence;if(!persistence||persistence.accountId!==identity.input.accountId||!persistence.loadSecret)return {status:'needs_input',message:'Synthfolk 单次注册的加密保存边界未就绪'};
   let secret=await persistence.loadSecret(),intent=secret?.intent??intentFrom(identity.input,context.task,(deps.now?.()??new Date()).toISOString()),receipt=secret?.receipt;
-  if(secret?.intent&&!same(secret.intent,intentFrom(identity.input,context.task,secret.intent.createdAt)))return {status:'needs_input',message:'Synthfolk 原注册意图与当前完整资料或目标不一致；不会重发'};
+  if(secret?.intent&&!same(secret.intent,intentFrom(identity.input,context.task,secret.intent.createdAt)))return {status:'needs_input',message:'Synthfolk 原注册计划与当前完整资料或目标不一致；不会重发'};
   if(!receipt&&secret?.opaqueResponse)receipt=parseSynthfolkRegistration(parseOpenAgentChatOpaque(secret.opaqueResponse,SYNTHFOLK_REGISTER,201),identity.input.profile);
   if(receipt&&!secret?.receipt){await persistence.persistRegistered(intent,receipt);secret=await persistence.loadSecret();}
   if(!secret){const result=await registerSynthfolkProfile({accountId:identity.input.accountId,taskId:context.task.id,draft:identity.input.profile,targetUrl:identity.input.targetUrl},persistence,{...deps,signal:context.signal});secret=await persistence.loadSecret();receipt=result.status==='registered'?secret?.receipt:secret?.receipt;if(secret?.intent)intent=secret.intent}
   if(!receipt)receipt=secret?.receipt;
-  if(!receipt){const stage=secret?.opaqueResponse?'opaque_response':'submitting';return {status:'review',message:'Synthfolk 单次公开注册结果不明；固定 handle、完整资料及可获得的加密传输记录已保留，只允许只读恢复，绝不重发。',submittedAt:intent.createdAt,checkpoint:stage==='opaque_response'?'synthfolk_registration_opaque_response':'synthfolk_registration_submitting',synthfolk:visible(intent,stage)}}
-  const access=await accountAccess(context);if(!access||context.signal.aborted)return {status:'review',message:'Synthfolk 原注册回执已加密保留；任务已暂停，不晋级或发送其他请求。',submittedAt:intent.createdAt,checkpoint:'synthfolk_profile_api_receipt',synthfolk:visible(intent,'api_receipt',receipt)};
-  try{const accepted=await verifyAccess(context,access,visible(intent,'api_receipt',receipt),deps);return {status:'review',message:'Synthfolk 同一身份、完整资料、本人 API、公开 API、原生 Website 链接和抓取策略已核对；不代表搜索排名或长期保留。',publicUrl:accepted.url,linkRel:accepted.linkRel,submittedAt:intent.createdAt,checkpoint:'synthfolk_profile_published',synthfolk:accepted.published}}catch{return {status:'review',message:'Synthfolk 原注册回执与密钥已加密保留；联合只读核验尚未完成，不会重复注册。',publicUrl:receipt.profile.url,submittedAt:intent.createdAt,checkpoint:'synthfolk_profile_api_receipt',synthfolk:visible(intent,'api_receipt',receipt)}}
+  if(!receipt){const stage=secret?.opaqueResponse?'opaque_response':'submitting';return {status:'review',message:'Synthfolk 单次公开注册结果不明；固定 handle、完整资料及可获得的加密传输记录已保留，只允许找回，绝不重发。',submittedAt:intent.createdAt,checkpoint:stage==='opaque_response'?'synthfolk_registration_opaque_response':'synthfolk_registration_submitting',synthfolk:visible(intent,stage)}}
+  const access=await accountAccess(context);if(!access||context.signal.aborted)return {status:'review',message:'Synthfolk 原注册记录已加密保留；任务已暂停，不更新任务状态，也不发送其他请求。',submittedAt:intent.createdAt,checkpoint:'synthfolk_profile_api_receipt',synthfolk:visible(intent,'api_receipt',receipt)};
+  try{const accepted=await verifyAccess(context,access,visible(intent,'api_receipt',receipt),deps);return {status:'review',message:'Synthfolk 同一账号、完整资料、本人 API、公开 API、原生 Website 链接和抓取策略已检查；不代表搜索排名或长期保留。',publicUrl:accepted.url,linkRel:accepted.linkRel,submittedAt:intent.createdAt,checkpoint:'synthfolk_profile_published',synthfolk:accepted.published}}catch{return {status:'review',message:'Synthfolk 原注册记录与密钥已加密保留；检查尚未完成，不会重复注册。',publicUrl:receipt.profile.url,submittedAt:intent.createdAt,checkpoint:'synthfolk_profile_api_receipt',synthfolk:visible(intent,'api_receipt',receipt)}}
 }
 
 export async function reconcileSynthfolkTask(context:ExecutionContext,deps:OpenAgentChatDependencies=context.synthfolkDependencies??{}):Promise<{status:'found';publicUrl:string;synthfolk:SynthfolkTaskReceipt}|{status:'unknown'}>{
@@ -101,8 +110,8 @@ export async function reconcileSynthfolkTask(context:ExecutionContext,deps:OpenA
 }
 
 export async function verifySynthfolkPublication(context:ExecutionContext,deps:OpenAgentChatDependencies=context.synthfolkDependencies??{}):Promise<LinkResult>{
-  const saved=context.task.synthfolk,url=saved?.publicUrl??context.task.publicUrl??'https://synthfolk.ai/';if(!saved||saved.stage!=='published'||!saved.publicUrl||!saved.acceptanceCheckedAt)return {found:false,outcome:'invalid',url,rel:'unknown',reason:'Synthfolk 任务缺少已联合核验的原身份与公开资料回执'};
-  const result=await reconcileSynthfolkTask(context,deps);return result.status==='found'&&result.publicUrl===saved.publicUrl&&result.synthfolk.accountId===saved.accountId&&result.synthfolk.sourceHash===saved.sourceHash?{found:true,outcome:'found',url:result.publicUrl,rel:result.synthfolk.linkRel??'',reason:'Synthfolk 同一身份、完整资料、本人 API 与原生 Website 链接仍一致'}:{found:false,outcome:'unreachable',url,rel:'unknown',reason:'Synthfolk 原公开资料尚未重新通过只读核验'};
+  const saved=context.task.synthfolk,url=saved?.publicUrl??context.task.publicUrl??'https://synthfolk.ai/';if(!saved||saved.stage!=='published'||!saved.publicUrl||!saved.acceptanceCheckedAt)return {found:false,outcome:'invalid',url,rel:'unknown',reason:'Synthfolk 任务缺少已联合检查的原账号与公开资料记录'};
+  const result=await reconcileSynthfolkTask(context,deps);return result.status==='found'&&result.publicUrl===saved.publicUrl&&result.synthfolk.accountId===saved.accountId&&result.synthfolk.sourceHash===saved.sourceHash?{found:true,outcome:'found',url:result.publicUrl,rel:result.synthfolk.linkRel??'',reason:'Synthfolk 同一账号、完整资料、本人 API 与原生 Website 链接仍一致'}:{found:false,outcome:'unreachable',url,rel:'unknown',reason:'Synthfolk 原公开资料尚未重新通过检查'};
 }
 
 export const synthfolkPublisherTesting={matches,stableHandle,skillFor,targetFor,parseSecret,visible,operation};

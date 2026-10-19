@@ -59,7 +59,7 @@ test('Paragraph final identity mismatch and cancellation never persist captured 
   const changed={...publication,ownerUserId:'OtherOwner000000001'};
   for(const mode of ['changed','cancelled'] as const){const f=fixture(),abort=new AbortController();let calls=0;try{
     const fetch:ParagraphTransport=async()=>{calls++;if(mode==='cancelled'&&calls===2)abort.abort();return json(calls===1?publication:mode==='changed'?changed:publication)};
-    await assert.rejects(connectParagraph(f.store,f.vault,apiKey,[f.store.read().sites[0].id],undefined,{fetch,signal:abort.signal}),mode==='changed'?/身份发生变化/:/取消|cancel/i);
+    await assert.rejects(connectParagraph(f.store,f.vault,apiKey,[f.store.read().sites[0].id],undefined,{fetch,signal:abort.signal}),mode==='changed'?/出版物发布账号发生变化/:/取消|cancel/i);
     assert.equal(Object.keys(f.ciphers()).length,0);assert.equal(f.store.read().accounts.length,0);
   }finally{f.store.close()}}
 });

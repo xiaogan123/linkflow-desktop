@@ -170,7 +170,7 @@ function canonicalHttps(value: string): string {
     url.hash = '';
     return url.toString();
   } catch {
-    throw new Error('文章目标必须是不含凭据的 HTTPS 网址');
+    throw new Error('文章目标必须是不含账号密码的 HTTPS 网址');
   }
 }
 
@@ -284,7 +284,7 @@ async function apiRequest(
   dependencies?: ParagraphDependencies,
 ): Promise<JsonObject> {
   if (options.token !== undefined && !validApiKey(options.token)) throw new ParagraphError('auth');
-  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Linkflow-Desktop' };
+  const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'Mozilla/5.0' };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
   if (options.body) headers['content-type'] = 'application/json';
   const response = await fixedRequest(apiUrl(path, options.query), {
@@ -309,7 +309,7 @@ async function publicHtml(url: string, dependencies?: ParagraphDependencies): Pr
   }
   const response = await fixedRequest(expected, {
     method: 'GET',
-    headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Linkflow-Desktop' },
+    headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'Mozilla/5.0' },
   }, dependencies, MAX_HTML_BYTES);
   return response;
 }
@@ -409,7 +409,7 @@ function approvedArticle(task: Task, site: Site, requireApproval: boolean): Appr
     throw new Error('Paragraph 副标题超出官方 300 字符规格，不会截断后发布');
   }
   if (typeof draft.body !== 'string' || draft.body !== draft.body.trim() || /\r|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(draft.body)) {
-    throw new Error('Paragraph 正文必须是已核对的完整 Markdown，不得含控制字符或隐式截断');
+    throw new Error('Paragraph 正文必须是已检查的完整 Markdown，不得含控制字符或隐式截断');
   }
   const paragraphs = draft.body.split(/\n\s*\n/).map(item => item.trim()).filter(Boolean);
   const visible = draft.body.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ')
@@ -420,11 +420,11 @@ function approvedArticle(task: Task, site: Site, requireApproval: boolean): Appr
   }
   if (Buffer.byteLength(draft.body, 'utf8') > MAX_MARKDOWN_BYTES) throw new Error('Paragraph 正文超出本机安全大小上限');
   const target = canonicalHttps(task.topicUrl ?? site.url);
-  if (!draft.body.includes(target)) throw new Error('Paragraph 全文必须包含已核对正文页的完整 HTTPS 链接');
+  if (!draft.body.includes(target)) throw new Error('Paragraph 全文必须包含已检查正文页的完整 HTTPS 链接');
   const subtitle = draft.description || undefined;
   const contentHash = sha256(JSON.stringify({ title: draft.title, subtitle: subtitle ?? null, markdown: draft.body, target }));
   const titleStem = draft.title.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80).replace(/-+$/g, '');
-  const slug = `${titleStem || 'linkflow-post'}-${contentHash.slice(0, 16)}`;
+  const slug = task.paragraph?.contentHash===contentHash?task.paragraph.slug:`${titleStem || 'article'}-${contentHash.slice(0, 16)}`;
   return { title: draft.title, ...(subtitle ? { subtitle } : {}), markdown: draft.body, target, contentHash, slug };
 }
 
@@ -617,22 +617,22 @@ async function markAccountFailure(
     status: restricted ? 'restricted' : 'credentials_invalid',
     diagnostic: diagnostic(restricted ? 'restricted' : 'bad_password', restricted
       ? 'Paragraph 拒绝了当前出版物权限。'
-      : 'Paragraph API 密钥失效、已更换出版物，或不属于原连接身份。', dependencies),
+      : 'Paragraph API 密钥失效、已更换出版物，或不属于原连接发布账号。', dependencies),
     updatedAt: timestamp(dependencies),
   });
 }
 
 function failureMessage(error: unknown, writeStarted: boolean): string {
   if (!(error instanceof ParagraphError)) return 'Paragraph 请求失败，未输出远端详情';
-  if (error.code === 'cancelled') return writeStarted ? 'Paragraph 写入期间任务已暂停，只会对账原操作' : 'Paragraph 操作已取消';
-  if (error.code === 'auth') return 'Paragraph API 密钥或原出版物身份无法验证';
-  if (error.code === 'binding') return '当前网站绑定的 Paragraph 出版物 ID 或网址与原连接身份不一致';
+  if (error.code === 'cancelled') return writeStarted ? 'Paragraph 写入期间任务已暂停，只会核对原操作' : 'Paragraph 操作已取消';
+  if (error.code === 'auth') return 'Paragraph API 密钥或原出版账号无法验证';
+  if (error.code === 'binding') return '当前网站绑定的 Paragraph 出版物 ID 或网址与原连接发布账号不一致';
   if (error.code === 'forbidden') return 'Paragraph 拒绝了当前出版物的读写权限';
-  if (error.code === 'rate_limited') return 'Paragraph API 已触发速率限制，后续只对账原操作';
+  if (error.code === 'rate_limited') return 'Paragraph API 已触发速率限制，后续只核对原操作';
   if (error.code === 'timeout') return writeStarted ? 'Paragraph 写入超时，不会重复提交' : 'Paragraph 读取超时';
   if (error.code === 'network') return writeStarted ? 'Paragraph 写入结果无法确认，不会重复提交' : 'Paragraph 网络或服务暂时不可用';
   if (error.code === 'not_found') return writeStarted ? 'Paragraph 原帖子暂时无法读回，不会新建替代帖子' : 'Paragraph 没有找到绑定资源';
-  if (error.code === 'rejected') return 'Paragraph 明确拒绝了请求，原意图记录已保留';
+  if (error.code === 'rejected') return 'Paragraph 明确拒绝了请求，原提交信息记录已保留';
   return 'Paragraph 返回了无法安全确认的结果';
 }
 
@@ -680,14 +680,14 @@ export async function verifyParagraphPublication(
   const state = paragraphTask(task).paragraph;
   const fallback = task.publicUrl ?? `${PUBLIC_ORIGIN}/`;
   if (!state || !validState(state) || !state.postId || !['publishing', 'published'].includes(state.stage)) {
-    return unavailable(fallback, 'Paragraph 任务缺少有效出版物、slug 或 postId 回执', 'invalid');
+    return unavailable(fallback, 'Paragraph 任务缺少有效出版物、slug 或 postId 记录', 'invalid');
   }
   let article: ApprovedArticle;
   try {
     article = approvedArticle(task, { url: targetSiteUrl } as Site, false);
     if (article.contentHash !== state.contentHash || article.slug !== state.slug) throw new Error('mismatch');
   } catch {
-    return unavailable(fallback, 'Paragraph 任务草稿、内容哈希或 slug 与原提交不一致', 'invalid');
+    return unavailable(fallback, 'Paragraph 任务草稿、内容校验值或 slug 与原提交不一致', 'invalid');
   }
   try {
     const publication = await getPublicPublication(state.publicationId, { ...dependencies, signal });
@@ -700,26 +700,26 @@ export async function verifyParagraphPublication(
     const expectedUrl = publicPostUrl(publication.slug, state.slug);
     if (task.publicUrl && task.publicUrl !== expectedUrl) return unavailable(task.publicUrl, 'Paragraph 公开网址与原出版物或 slug 不一致', 'invalid');
     if (!exactPost(post, article, publication, state.postId) || post.publishOnline !== true || !post.staticHtml) {
-      return unavailable(expectedUrl, 'Paragraph 公开 API 的正文、作者、出版物或可见性与原回执不一致', 'invalid');
+      return unavailable(expectedUrl, 'Paragraph 公开 API 的正文、作者、出版物或可见性与原记录不一致', 'invalid');
     }
     const rendered = renderedArticle(post.staticHtml, article, false);
     if (!rendered.found) return unavailable(expectedUrl, 'Paragraph 公开 API 渲染正文或目标链接与审核原文不一致', 'invalid');
     const pageAnchor = renderedArticle(await publicHtml(expectedUrl, { ...dependencies, signal }), article, true,expectedUrl);
     if (!pageAnchor.found) return pageAnchor.reason==='policy'
-      ?unavailable(expectedUrl,'Paragraph 原文章已保留，但公开页有索引限制、跳转或 canonical 冲突，不能计为合格来源','invalid')
+      ?unavailable(expectedUrl,'Paragraph 原文章已保留，但公开页有索引限制、跳转或规范网址冲突，不能计为合格来源','invalid')
       :unavailable(expectedUrl, 'Paragraph 公开页面尚未完整呈现审核正文及目标链接');
     return {
       found: true,
       outcome: 'found',
       url: expectedUrl,
       rel: pageAnchor.rel === 'unknown' ? rendered.rel : pageAnchor.rel,
-      reason: 'Paragraph 匿名 API 与公开页面的原文、出版物作者和目标 href 已一致核验。',
+      reason: 'Paragraph 匿名 API 与公开页面的原文、出版物作者和目标 href 已一致检查。',
     };
   } catch (error) {
     if (error instanceof ParagraphError && error.code === 'invalid_response') {
-      return unavailable(fallback, 'Paragraph 公开内容返回了与原回执不一致的结果', 'invalid');
+      return unavailable(fallback, 'Paragraph 公开内容返回了与原记录不一致的结果', 'invalid');
     }
-    return unavailable(fallback, 'Paragraph 公开 API 或匿名页面暂时无法核验');
+    return unavailable(fallback, 'Paragraph 公开 API 或匿名页面暂时无法检查');
   }
 }
 
@@ -770,7 +770,7 @@ export async function runParagraphTask(
   if (context.channel.id !== 'paragraph' || context.channel.automation !== 'api' || context.task.channelId !== 'paragraph'
     || context.channel.kind !== 'article' || !context.channel.articleRequired || !context.channel.accountRequired
     || context.channel.contentFormat === 'social') {
-    return { status: 'needs_input', message: '当前渠道规格不支持 Paragraph 本人原创全文 API 发布' };
+    return { status: 'needs_input', message: '当前平台规格不支持 Paragraph 本人原创全文 API 发布' };
   }
   const account = context.getAccount();
   if (!account || context.task.accountId !== account.id || account.channelId !== 'paragraph') {
@@ -778,7 +778,7 @@ export async function runParagraphTask(
   }
   if (account.credentialKind !== 'api_token' || account.status !== 'registered' || !account.hasPassword
     || !validRemoteId(account.username)) {
-    return { status: 'needs_input', message: 'Paragraph API 身份不可用，请重新连接原出版物' };
+    return { status: 'needs_input', message: 'Paragraph API 发布账号不可用，请重新连接原出版物' };
   }
   const bound = paragraphSite(context.site).paragraph;
   if (!bound || !validRemoteId(bound.publicationId) || bound.publicationId !== account.username) {
@@ -797,7 +797,7 @@ export async function runParagraphTask(
   if (!prior && (context.task.submittedAt || context.task.publicUrl || context.task.firstLiveAt || remoteCheckpoint)) {
     return {
       status: 'needs_input',
-      message: '已有 Paragraph 写入或公开网址但缺少确定性 slug/哈希回执，不会创建替代帖子',
+      message: '已有 Paragraph 写入或公开网址但缺少确定性 slug/校验值记录，不会创建替代帖子',
       checkpoint: context.task.checkpoint,
       submittedAt: context.task.submittedAt,
       publicUrl: context.task.publicUrl,
@@ -807,7 +807,7 @@ export async function runParagraphTask(
     || prior.contentHash !== article.contentHash || prior.slug !== article.slug)) {
     return {
       status: 'needs_input',
-      message: 'Paragraph 回执与当前出版物、确定性 slug 或已核对正文哈希不一致；保留原记录并停止写入',
+      message: 'Paragraph 记录与当前出版物、确定性 slug 或已检查正文校验值不一致；保留原记录并停止写入',
       checkpoint: context.task.checkpoint,
       submittedAt: context.task.submittedAt,
       publicUrl: context.task.publicUrl,
@@ -833,23 +833,23 @@ export async function runParagraphTask(
     try { remote = await getOwnPost(state.postId, access.credential.apiKey, { ...dependencies, signal: context.signal }); }
     catch (error) { return { status: 'needs_input', message: failureMessage(error, true) }; }
     if (!exactPost(remote, article, access.publication, state.postId)) {
-      return { status: 'needs_input', message: '已保存的 Paragraph postId 与已核对原文、作者或 slug 不一致，不会覆盖或新建' };
+      return { status: 'needs_input', message: '已保存的 Paragraph postId 与已检查原文、作者或 slug 不一致，不会覆盖或新建' };
     }
     if (remote.status === 'published' && remote.publishOnline === true) {
       const publishedState = stateFor(state.publicationId, state.slug, state.contentHash, 'published', state.postId);
       try {
         const verified = await readPublicPost(publishedState, article, access.publication, { ...dependencies, signal: context.signal });
         taskCheckpoint(context, { paragraph: publishedState, checkpoint: 'paragraph_published', submittedAt, publicUrl: verified.url } as Partial<ParagraphTask>);
-        return { status: 'review', message: 'Paragraph 原文、出版物作者和公开页目标 href 已核验', paragraph: publishedState, publicUrl: verified.url, checkpoint: 'paragraph_published', submittedAt };
+        return { status: 'review', message: 'Paragraph 原文、出版物作者和公开页目标 href 已检查', paragraph: publishedState, publicUrl: verified.url, checkpoint: 'paragraph_published', submittedAt };
       } catch {
-        return { status: 'review', message: 'Paragraph 已读回为公开发布，匿名页面与目标 href 尚待核验' };
+        return { status: 'review', message: 'Paragraph 已读回为公开发布，匿名页面与目标 href 尚待检查' };
       }
     }
     if (['publishing', 'published'].includes(state.stage)) {
-      return { status: 'needs_input', message: 'Paragraph 发布写入已发起，当前读回状态仍未公开；只会继续读取对账，不会再次 PUT' };
+      return { status: 'needs_input', message: 'Paragraph 发布写入已发起，当前读回状态仍未公开；只会继续读取核对，不会再次提交' };
     }
     if (remote.status !== 'draft') {
-      return { status: 'needs_input', message: 'Paragraph 原 postId 不是可发布的已核对草稿，已停止写入' };
+      return { status: 'needs_input', message: 'Paragraph 原 postId 不是可发布的已检查草稿，已停止写入' };
     }
     state = stateFor(state.publicationId, state.slug, state.contentHash, 'draft', state.postId);
     taskCheckpoint(context, { paragraph: state, checkpoint: 'paragraph_draft_created', submittedAt } as Partial<ParagraphTask>);
@@ -857,7 +857,7 @@ export async function runParagraphTask(
     try { remote = await findExactOwnPost(access.credential.apiKey, article, access.publication, { ...dependencies, signal: context.signal }); }
     catch (error) { return { status: 'needs_input', message: failureMessage(error, true) }; }
     if (!remote) {
-      return { status: 'needs_input', message: '未能唯一找回上次 Paragraph 创建结果；即使列表暂未显示也不会再次 POST' };
+      return { status: 'needs_input', message: '未能唯一找回上次 Paragraph 创建结果；即使列表暂未显示也不会重复提交' };
     }
     if (remote.status === 'published' && remote.publishOnline === true) {
       const publishedState = stateFor(state.publicationId, state.slug, state.contentHash, 'published', remote.id);
@@ -865,7 +865,7 @@ export async function runParagraphTask(
         const verified = await readPublicPost(publishedState, article, access.publication, { ...dependencies, signal: context.signal });
         taskCheckpoint(context, { paragraph: publishedState, checkpoint: 'paragraph_published', submittedAt, publicUrl: verified.url } as Partial<ParagraphTask>);
         return { status: 'review', message: '已通过确定性 slug、完整原文与出版物归属找回公开文章', paragraph: publishedState, publicUrl: verified.url, checkpoint: 'paragraph_published', submittedAt };
-      } catch { return { status: 'review', message: '已找回 Paragraph 公开文章，匿名页面与目标 href 尚待核验' }; }
+      } catch { return { status: 'review', message: '已找回 Paragraph 公开文章，匿名页面与目标 href 尚待检查' }; }
     }
     if (remote.status !== 'draft') {
       return { status: 'needs_input', message: '找回的 Paragraph 帖子不是可继续的草稿，已保留并停止写入' };
@@ -884,7 +884,7 @@ export async function runParagraphTask(
         draft: context.task.draft,
       } as Partial<ParagraphTask>);
     } catch {
-      return { status: 'queued', message: 'Paragraph 创建意图未能持久化，未执行 POST' };
+      return { status: 'queued', message: 'Paragraph 创建计划未能保存，未提交' };
     }
     let created: JsonObject;
     try {
@@ -906,7 +906,7 @@ export async function runParagraphTask(
       return { status: 'needs_input', message: failureMessage(error, true) };
     }
     if (!validRemoteId(created.id) || !['draft', 'published'].includes(String(created.status))) {
-      return { status: 'needs_input', message: 'Paragraph 创建响应缺少有效 postId 或状态；保留创建意图且不会重发' };
+      return { status: 'needs_input', message: 'Paragraph 创建响应缺少有效 postId 或状态；保留创建计划且不会重发' };
     }
     state = stateFor(access.publication.id, article.slug, article.contentHash, created.status === 'draft' ? 'draft' : 'publishing', created.id);
     try {
@@ -918,32 +918,32 @@ export async function runParagraphTask(
     } catch {
       return {
         status: 'review',
-        message: 'Paragraph 已返回原 postId；保留回执且不会重发',
+        message: 'Paragraph 已返回原 postId；保留记录且不会重发',
         paragraph: state,
         checkpoint: created.status === 'draft' ? 'paragraph_draft_created' : 'paragraph_publish_submitting',
         submittedAt,
       };
     }
     if (created.status !== 'draft') {
-      return { status: 'review', message: 'Paragraph 未按请求返回草稿；已保留 postId 并且只读对账', paragraph: state };
+      return { status: 'review', message: 'Paragraph 未按请求返回草稿；已保留 postId 并且检查原记录', paragraph: state };
     }
   }
 
   if (!state?.postId || state.stage !== 'draft') {
-    return { status: 'needs_input', message: 'Paragraph 写入状态无法安全确认，已保留原回执' };
+    return { status: 'needs_input', message: 'Paragraph 写入状态无法安全确认，已保留原记录' };
   }
   try { remote = await getOwnPost(state.postId, access.credential.apiKey, { ...dependencies, signal: context.signal }); }
   catch (error) { return { status: 'needs_input', message: failureMessage(error, true) }; }
   if (!exactPost(remote, article, access.publication, state.postId) || remote.status !== 'draft') {
-    return { status: 'needs_input', message: 'Paragraph 远端草稿未通过 postId、全文、作者、slug 和 draft 状态核验，未执行发布 PUT' };
+    return { status: 'needs_input', message: 'Paragraph 远端草稿未通过 postId、全文、作者、slug 和 draft 状态检查，未执行发布请求' };
   }
   if (context.signal.aborted) {
-    return { status: 'queued', message: 'Paragraph 已核验草稿并保存 postId，恢复后只发布同一帖子', paragraph: state, checkpoint: 'paragraph_draft_created', submittedAt };
+    return { status: 'queued', message: 'Paragraph 已检查草稿并保存 postId，恢复后只发布同一帖子', paragraph: state, checkpoint: 'paragraph_draft_created', submittedAt };
   }
   state = stateFor(state.publicationId, state.slug, state.contentHash, 'publishing', state.postId);
   taskCheckpoint(context, { paragraph: state, checkpoint: 'paragraph_publish_submitting', submittedAt } as Partial<ParagraphTask>);
   const publishingPostId = state.postId;
-  if (!publishingPostId) return { status: 'needs_input', message: 'Paragraph 发布回执缺少 postId，未执行 PUT' };
+  if (!publishingPostId) return { status: 'needs_input', message: 'Paragraph 发布记录缺少 postId，未执行 PUT' };
   try {
     const updated = await apiRequest(`/v1/posts/${encodeURIComponent(publishingPostId)}`, {
       token: access.credential.apiKey,
@@ -957,10 +957,10 @@ export async function runParagraphTask(
   }
   try { remote = await getOwnPost(publishingPostId, access.credential.apiKey, { ...dependencies, signal: context.signal }); }
   catch {
-    return { status: 'review', message: 'Paragraph 已接受发布 PUT，正文与公开页回读尚待确认；不会再次 PUT' };
+    return { status: 'review', message: 'Paragraph 已接受发布请求，正文与公开页回读尚待确认；不会再次提交' };
   }
   if (!exactPost(remote, article, access.publication, state.postId) || remote.status !== 'published' || remote.publishOnline !== true) {
-    return { status: 'review', message: 'Paragraph 已接受发布 PUT，但全文、作者或公开状态尚未完整读回；不会再次 PUT' };
+    return { status: 'review', message: 'Paragraph 已接受发布请求，但全文、作者或公开状态尚未完整读回；不会再次提交' };
   }
   const publishedState = stateFor(state.publicationId, state.slug, state.contentHash, 'published', state.postId);
   try {
@@ -973,18 +973,18 @@ export async function runParagraphTask(
         publicUrl: verified.url,
       } as Partial<ParagraphTask>);
     } catch {
-      return { status: 'review', message: 'Paragraph 已匿名核验公开原文与目标 href，保留发布回执', paragraph: publishedState, publicUrl: verified.url, checkpoint: 'paragraph_published', submittedAt };
+      return { status: 'review', message: 'Paragraph 已匿名检查公开原文与目标 href，保留发布记录', paragraph: publishedState, publicUrl: verified.url, checkpoint: 'paragraph_published', submittedAt };
     }
     return {
       status: 'review',
-      message: 'Paragraph 已发布，并通过匿名 API 与公开页面核验原文、作者和目标 href',
+      message: 'Paragraph 已发布，并通过匿名 API 与公开页面检查原文、作者和目标 href',
       paragraph: publishedState,
       publicUrl: verified.url,
       checkpoint: 'paragraph_published',
       submittedAt,
     };
   } catch {
-    return { status: 'review', message: 'Paragraph 已读回为公开发布，匿名页面或目标 href 尚待核验；不会重复写入' };
+    return { status: 'review', message: 'Paragraph 已读回为公开发布，匿名页面或目标 href 尚待检查；不会重复写入' };
   }
 }
 

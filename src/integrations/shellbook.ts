@@ -139,7 +139,7 @@ export function parseShellbookPostList(value:unknown):ShellbookPost[]|undefined 
 }
 
 export function shellbookRegistrationRequest(name:string,description:string){
-  if(!SHELLBOOK_NAME.test(name)||!clean(description,1,1000))throw Error('Shellbook 身份资料无效');
+  if(!SHELLBOOK_NAME.test(name)||!clean(description,1,1000))throw Error('Shellbook 账号资料无效');
   const body=JSON.stringify({name,description});
   return {body,requestHash:shellbookHash(`POST\n${SHELLBOOK_REGISTER}\ncontent-type:application/json\n\n${body}`)};
 }

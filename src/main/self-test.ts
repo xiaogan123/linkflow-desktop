@@ -13,7 +13,7 @@ export function prepareSelfTest():boolean {
   app.setPath('userData',mkdtempSync(join(tmpdir(),'linkflow-packaged-test-')));
   return true;
 }
-export async function runPackagedSelfTest(win:BrowserWindow, controller:Controller):Promise<void>{
+export async function runPackagedSelfTest(win:BrowserWindow, controller:Controller,waitForRendererReady:()=>Promise<void>):Promise<void>{
   const checks:string[]=[];
   const check=(label:string,value:unknown)=>{assert(value,label);checks.push(label)};
   const deadline=setTimeout(()=>{console.error('PACKAGED_SELF_TEST_TIMEOUT');app.exit(1)},45000);
@@ -22,12 +22,8 @@ export async function runPackagedSelfTest(win:BrowserWindow, controller:Controll
       win.webContents.once('did-finish-load',()=>resolve());
       win.webContents.once('did-fail-load',()=>reject(Error('packaged page failed to load')));
     });
-    let ready=false;
-    for(let i=0;i<80;i++){
-      ready=await win.webContents.executeJavaScript('!!window.linkflow && !!document.querySelector("h1")').catch(()=>false);
-      if(ready)break;
-      await new Promise(r=>setTimeout(r,100));
-    }
+    await waitForRendererReady();
+    const ready=true;
     check('executable is packaged',app.isPackaged);
     check('packaged window and bridge render',ready);
     check('renderer Node integration remains disabled',await win.webContents.executeJavaScript('typeof require === "undefined" && typeof process === "undefined"'));

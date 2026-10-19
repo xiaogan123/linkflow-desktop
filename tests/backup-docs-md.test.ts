@@ -247,7 +247,8 @@ test('published Docs MD active, missing, unreachable, and pending verification s
     assert.equal(restored.docsMd?.stage, 'published');
     assert.equal(restored.checkpoint, 'docs_md_published');
     assert.equal(restored.publicUrl, PUBLIC_URL);
-    assert.equal(restored.linkRel, 'nofollow ugc noopener noreferrer');
+    assert.equal(restored.linkRel, 'nofollow');
+    assert.doesNotThrow(()=>validateBackup({state:validateBackup({state:value,secrets:{}}).state,secrets:{}}));
     assert.equal(restored.reconcileAttempts, 1);
   }
 
@@ -264,10 +265,10 @@ test('published Docs MD active, missing, unreachable, and pending verification s
   lostThenUnreachable.tasks[0].health = 'unknown';
   lostThenUnreachable.tasks[0].linkCheck = 'unreachable';
   const historical = validateBackup({ state: lostThenUnreachable, secrets: {} }).state.tasks[0];
-  assert.equal(historical.status, 'needs_input');
+  assert.equal(historical.status, 'live');
   assert.equal(historical.health, 'unknown');
   assert.equal(historical.lostAt, NOW);
-  assert.equal(historical.reviewKind, 'lost_link');
+  assert.equal(historical.reviewKind, undefined);
   assert.equal(historical.consecutiveMissing, 1);
 });
 
@@ -291,7 +292,7 @@ test('published Docs MD backups reject fabricated acceptance and inconsistent li
     task => { delete task.lastCheckedAt; },
     task => { delete task.nextCheckAt; },
     task => { task.nextCheckAt = NOW; },
-    task => { task.linkRel = 'nofollow ugc noopener'; },
+    task => { task.linkRel = 'follow'; },
     task => { task.linkCheck = 'absent'; },
     task => { task.health = 'pending'; },
     task => { task.status = 'review'; },
@@ -459,9 +460,9 @@ test('Docs MD tasks reject accounts, bindings, and receipts under another channe
 
   const wrongChannel = state('api_receipt');
   wrongChannel.tasks[0].channelId = 'other';
-  assert.throws(() => validateBackup({ state: wrongChannel, secrets: {} }), /Docs MD 回执/);
+  assert.throws(() => validateBackup({ state: wrongChannel, secrets: {} }), /Docs MD 返回记录与原稿或任务标识不一致/);
 
   const wrongDomain = state('api_receipt');
   wrongDomain.tasks[0].sourceDomain = 'other.example';
-  assert.throws(() => validateBackup({ state: wrongDomain, secrets: {} }), /Docs MD 回执/);
+  assert.throws(() => validateBackup({ state: wrongDomain, secrets: {} }), /Docs MD 返回记录与原稿或任务标识不一致/);
 });
