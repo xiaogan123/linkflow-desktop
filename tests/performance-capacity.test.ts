@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {CHANNELS,matchChannels} from '../src/integrations/catalog';
-import {availableNetworkPlatforms,capacityFor,capacitySnapshotIndex} from '../src/main/planner';
+import {availableNetworkPlatforms,capacityFor,capacitySnapshotIndex,channelLinkQuality} from '../src/main/planner';
+import {SCHEDULING_DEFAULTS} from '../src/shared/scheduling';
 import {publicationOpportunity} from '../src/shared/publication';
 import {emptyState} from '../src/main/store';
 import type {Site,Task} from '../src/shared/types';
@@ -43,4 +44,13 @@ test('topic choice follows a replaced topic list and a changed site address, nev
   // Same list, but the site moved: its old pages are no longer its own articles.
   const moved={...current,domain:'moved.example.test',url:'https://moved.example.test/'};
   assert.equal(publicationOpportunity(moved,channel,[],now,'UTC').topicUrl,undefined);
+});
+
+test('platform choice leans away from Telegraph and toward lucid.page by how often their pages were found in Google',()=>{
+  const byId=(id:string)=>CHANNELS.find(item=>item.id===id)!;
+  assert.equal(channelLinkQuality(byId('telegraph'),[]),SCHEDULING_DEFAULTS.linkQualityC*.5);
+  const live={channelId:'telegraph',firstLiveAt:stamp,linkRel:'nofollow'} as Task;
+  assert.equal(channelLinkQuality(byId('telegraph'),[live]),SCHEDULING_DEFAULTS.linkQualityNofollow*.5);
+  assert.equal(channelLinkQuality(byId('lucid-page'),[]),SCHEDULING_DEFAULTS.linkQualityNofollow*1.3);
+  assert.equal(channelLinkQuality(byId('supanote'),[]),SCHEDULING_DEFAULTS.linkQualityNofollow);
 });

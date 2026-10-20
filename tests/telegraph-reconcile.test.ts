@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   articleToTelegraphNodes,
   reconcileTelegraphTask,
+  removeTelegraphReferral,
+  stripReferralSentences,
   verifyTelegraphPublication,
   type TelegraphNode,
   type TelegraphTransport,
@@ -316,4 +318,53 @@ test('a page laid out by an earlier release is confirmed by address, title, our 
   assert.equal((await check(earlier,'Someone Else')).found,false);
   const target=JSON.stringify(expectedContent()).match(/"href":"([^"]+)"/)![1];
   assert.equal((await check([...earlier,{tag:'p',children:[{tag:'a',attrs:{href:target},children:['again']}]}],author)).found,false);
+});
+
+const site='https://example.com/',coded=(text:string)=>/BN12345|[?&]ref=/i.test(text);
+const strip=(nodes:unknown)=>stripReferralSentences(nodes,coded,site);
+test('only short whole sentences and other sites\' links carrying a code go; our own link stays exactly as it was',()=>{
+  const result=strip([{tag:'p',children:['Disclosure: this links to the site. The site code is BN12345; terms apply. Read the guide.']},
+    {tag:'p',children:['See ',{tag:'a',attrs:{href:site},children:['the guide']},' and ',{tag:'a',attrs:{href:'https://x.example/join?ref=abc'},children:['join']},'.']},
+    {tag:'p',children:['Visit https://x.example/join?ref=BN12345 to sign up. Then read on.']}]);
+  assert.ok('nodes' in result);
+  assert.deepEqual(result.nodes,[{tag:'p',children:['Disclosure: this links to the site. Read the guide.']},{tag:'p',children:['See ',{tag:'a',attrs:{href:site},children:['the guide']},' and ','.']},{tag:'p',children:[' Then read on.']}]);
+  assert.equal(result.removed.length,3);
+});
+test('anything riskier than dropping a short sentence is refused',()=>{
+  // A code in our own link's text: removing it would empty or change the backlink.
+  assert.ok('blocked' in strip([{tag:'p',children:['Read ',{tag:'a',attrs:{href:site},children:['the guide with code BN12345']},'.']}]));
+  // A whole run-on paragraph, a heading or a code block.
+  assert.ok('blocked' in strip([{tag:'p',children:['Step one - open the site - enter BN12345 - '+'finish the verification and keep going '.repeat(8)]}]));
+  assert.ok('blocked' in strip([{tag:'h3',children:['Use BN12345 when you join']}]));
+  assert.ok('blocked' in strip([{tag:'pre',children:['code: BN12345']}]));
+  // A label whose code sits in its own bold node would be left saying "邀请码：" with nothing after it.
+  assert.ok('blocked' in strip([{tag:'p',children:['注册时填写邀请码：',{tag:'strong',children:['BN12345']},'。']}]));
+});
+
+test('the page is rewritten only after ownership is confirmed and the original saved; our link is identical afterwards',async()=>{
+  const {context}=fixture({task:{publicUrl:'https://telegra.ph/original-article-09-27',checkpoint:'telegraph_published',status:'live'}});
+  const account={id:'account',channelId:'telegraph'} as Account;
+  const base=expectedContent(),withCode:TelegraphNode[]=[{tag:'p',children:['Promotional note. The site code is BN12345.']},...base];
+  let current=withCode,edits=0,canEdit=true;const archived:unknown[]=[];
+  const transport:TelegraphTransport=async(url,init)=>{
+    const fields=new URLSearchParams(String(init.body));assert.equal(fields.get('access_token'),token);
+    if(url.includes('/editPage/')){edits++;assert.equal(fields.get('title'),title);assert.equal(fields.get('author_name'),author);current=JSON.parse(fields.get('content')!);}
+    return apiJson({...detail('original-article-09-27',current),can_edit:canEdit});
+  };
+  const input=()=>({task:context.task,site:context.site,account,token,signal:new AbortController().signal,archive:async(page:unknown)=>{archived.push(page)}});
+  const cleaned=await removeTelegraphReferral(input(),text=>/BN12345/.test(text),{transport});
+  assert.equal(cleaned.status,'cleaned');assert.equal(edits,1);assert.equal(archived.length,1);assert.equal(JSON.stringify(current).includes('BN12345'),false);
+  assert.deepEqual(current,[{tag:'p',children:['Promotional note.']},...base]);
+  assert.deepEqual(await removeTelegraphReferral(input(),text=>/BN12345/.test(text),{transport}),{status:'unchanged'});
+  // Another account's page, or a task bound to a different account: nothing is read for editing or written.
+  current=withCode;canEdit=false;
+  assert.equal((await removeTelegraphReferral(input(),text=>/BN12345/.test(text),{transport})).status,'blocked');
+  canEdit=true;
+  assert.equal((await removeTelegraphReferral({...input(),account:{...account,id:'other'}},text=>/BN12345/.test(text),{transport})).status,'blocked');
+  // When the original cannot be saved first, the page is left alone.
+  assert.equal((await removeTelegraphReferral({...input(),archive:async()=>{throw Error('disk')}},text=>/BN12345/.test(text),{transport})).status,'blocked');
+  assert.equal(edits,1);
+  // A write whose outcome is unknown is reported as such, never as done.
+  const lost:TelegraphTransport=async(url,init)=>url.includes('/editPage/')?Promise.reject(new Error('network')):transport(url,init);
+  assert.equal((await removeTelegraphReferral(input(),text=>/BN12345/.test(text),{transport:lost})).status,'uncertain');
 });

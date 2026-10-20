@@ -196,11 +196,18 @@ export function scheduleEvents(tasks:Task[],state?:State):ScheduleEvent[]{
   });
 }
 
-function channelLinkQuality(channel:Channel,tasks:Task[]):number{
+/**
+ * How often a platform's pages actually reach Google, from spot checks of published pages (2026-10-20):
+ * Telegraph 0 of 3 indexed after up to 23 days, among heavy spam; lucid.page 2 of 2 indexed within 4 days, listed in its sitemap.
+ * Unmeasured platforms stay neutral.
+ */
+const SEARCH_VISIBILITY:Readonly<Record<string,number>>={telegraph:.5,'lucid-page':1.3};
+export function channelLinkQuality(channel:Channel,tasks:Task[]):number{
   const links=tasks.filter(task=>task.channelId===channel.id&&task.firstLiveAt),follow=links.some(task=>task.linkRel!==undefined&&!/nofollow|ugc|sponsored/i.test(task.linkRel));
-  if(follow||channel.linkRel==='follow')return SCHEDULING_DEFAULTS.linkQualityFollow;
-  if(['nofollow','ugc','sponsored'].includes(channel.linkRel??'')||links.some(task=>/nofollow|ugc|sponsored/i.test(task.linkRel??'')))return SCHEDULING_DEFAULTS.linkQualityNofollow;
-  return channel.quality==='A'?SCHEDULING_DEFAULTS.linkQualityA:channel.quality==='C'?SCHEDULING_DEFAULTS.linkQualityC:SCHEDULING_DEFAULTS.linkQualityUnknown;
+  const base=follow||channel.linkRel==='follow'?SCHEDULING_DEFAULTS.linkQualityFollow
+    :['nofollow','ugc','sponsored'].includes(channel.linkRel??'')||links.some(task=>/nofollow|ugc|sponsored/i.test(task.linkRel??''))?SCHEDULING_DEFAULTS.linkQualityNofollow
+    :channel.quality==='A'?SCHEDULING_DEFAULTS.linkQualityA:channel.quality==='C'?SCHEDULING_DEFAULTS.linkQualityC:SCHEDULING_DEFAULTS.linkQualityUnknown;
+  return base*(SEARCH_VISIBILITY[channel.id]??1);
 }
 /** A missing account never invents a shared public author for independent anonymous pages. */
 function publicIdentityFor(state:State,siteId:string,channelId:string,accountId?:string,receipt?:Task):string{

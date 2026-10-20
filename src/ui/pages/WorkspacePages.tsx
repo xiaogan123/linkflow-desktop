@@ -144,8 +144,10 @@ export function OverviewPage({
 <p>{site.error ?? '网站分析没有完成。'}</p>
 <Button disabled={disabled} onClick={() => void onAction('site:analyze', {id: site.id}, '已开始重新分析。')}>重新分析</Button></div>)}
 {shownReferrals.map(item => {const task = data.tasks.find(value => value.id === item.taskId);return <div className="attention-item" key={`referral:${item.taskId}`}><strong>{data.sites.find(site => site.id === item.siteId)?.domain}</strong>
-<p>{task ? `${platformName(task.channelId)} 上的这篇外链里发现了邀请码，软件不会继续发布，请到平台上删除或修改。` : item.message}</p>
-<Button disabled={disabled} onClick={() => void onAction('external:open', {url: item.publicUrl})}>打开页面</Button></div>})}
+<p>{!task ? item.message : task.channelId === 'telegraph' ? `${platformName(task.channelId)} 上的这篇外链里有邀请码。软件可以只删掉带码的句子，指向本站的链接不变；删不了时会说明原因。` : `${platformName(task.channelId)} 上的这篇外链里有邀请码。软件不能修改这个平台上已发布的文章；能在平台上处理就删掉，处理不了可以不再提醒，不影响其他发布。`}</p>
+<div className="row-actions">{task?.channelId === 'telegraph' && <Button variant="primary" disabled={disabled} onClick={() => void onAction('task:remove-referral', {id: item.taskId}, '已处理这篇外链并重新检查。')}>删掉带码的句子</Button>}
+<Button disabled={disabled} onClick={() => void onAction('external:open', {url: item.publicUrl})}>打开页面</Button>
+{task && <Button variant="text" disabled={disabled} onClick={() => void onAction('task:acknowledge-remote', {id: item.taskId}, '这篇不再提醒。')}>不再提醒</Button>}</div></div>})}
 {shownTodos.map(task => {
             const state = taskDisplayState(taskWithPlatform(task, data), now);
             return <div className="attention-item" key={task.id}><strong>{data.sites.find(s => s.id === task.siteId)?.domain}</strong>

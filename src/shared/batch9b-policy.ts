@@ -39,7 +39,8 @@ export function remoteContentTodos(tasks:readonly Task[]){
   return tasks.flatMap(task=>{
     const scan=task.remoteContentScan;if(!scan||!task.publicUrl)return [];
     const base={taskId:task.id,siteId:task.siteId,publicUrl:task.publicUrl};
-    return [...(scan.referral?[{...base,kind:'referral' as const,message:REFERRAL_MESSAGES.remoteHold}]:[]),
+    // "Stop reminding me" is given on the referral card, so it quiets only that finding.
+    return [...(scan.referral&&!scan.acknowledgedAt?[{...base,kind:'referral' as const,message:REFERRAL_MESSAGES.remoteHold}]:[]),
       ...(scan.legacyMarkers.length?[{...base,kind:'legacy_marker' as const,markers:scan.legacyMarkers,message:BATCH9B_MESSAGES.legacyMarker}]:[])];
   });
 }

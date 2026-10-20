@@ -1,3 +1,5 @@
+import {mkdir as mkdirAsync,writeFile as writeFileAsync} from 'node:fs/promises';
+import {join as joinPath} from 'node:path';
 import {publicIdentitySlug} from '../integrations/public-identity';
 import {formatRepairDecision} from './task-recovery';
 import {scanLegacyPublicMarkers} from '../shared/legacy-public-markers';
@@ -86,7 +88,7 @@ import {reconcileWordPressTask,verifyWordPressPublication,wordpressPostSlug} fro
 import {reconcileLeafletTask,verifyLeafletPublication} from '../integrations/leaflet';
 import {raindropReceiptMatchesTask,reconcileRaindropTask,verifyRaindropTask} from '../integrations/raindrop';
 import {reconcileBloggerTask,verifyBloggerPublication} from '../integrations/blogger';
-import {reconcileTelegraphTask,verifyTelegraphPublication} from '../integrations/telegraph';
+import {reconcileTelegraphTask,removeTelegraphReferral,verifyTelegraphPublication} from '../integrations/telegraph';
 import {notebinTaskApproval,notebinTaskIdentity,notebinTaskReceipt,publisherFor,reconcileNotebinTask,verifyNotebinPublication,withAgentsWikiPersistence} from '../integrations/publishers';
 import {reconcileOpenAgentChatTask,validOpenAgentChatAccount,verifyOpenAgentChatPublication} from '../integrations/openagentchat-publisher';
 import {reconcileShellbookTask,shellbookTaskIdentity,shellbookVerificationMessage,shellbookVerificationPhase,validShellbookAccount,verifyShellbookPublication} from '../integrations/shellbook-publisher';
@@ -241,7 +243,7 @@ import {HUMAN_AUTHORED_ONLY_NOTICE,isHumanAuthoredOnlyChannel} from '../shared/h
 import {raindropDraftError} from '../shared/raindrop-content';
 import {consumeOneReviewRetry,grantOneReviewRetry,invalidateOneReviewRetry,ONE_REVIEW_RETRY_PURPOSE,oneReviewRetryEligibility,oneReviewRetryBinding,type OneReviewRetryContext} from './one-review-retry';
 
-export interface ControllerServices {prepareChannelTerms?:typeof prepareChannelTerms;channelCatalog?:Channel[];analyzeWebsite?:typeof analyzeWebsite;aiFactory?:typeof createAi;verifyLink?:typeof verifyLink;recheckLink?:typeof recheckLink;verifyTelegraph?:typeof verifyTelegraphPublication;verifyGist?:typeof verifyGistPublication;verifyBlogger?:typeof verifyBloggerPublication;discoverTopics?:typeof discoverTopics;discoverTechnicalMaterial?:typeof discoverTechnicalMaterial;readTopicEvidence?:typeof readTopicEvidence;collectArticleEvidence?:typeof collectArticleEvidence;reconcileTelegraph?:typeof reconcileTelegraphTask;reconcileBlogger?:typeof reconcileBloggerTask;reconcileWordPress?:typeof reconcileWordPressTask;reconcileLeaflet?:typeof reconcileLeafletTask;reconcileBluesky?:typeof reconcileBlueskyTask;reconcileParagraph?:typeof reconcileParagraphTask;reconcileNostr?:typeof reconcileNostrTask;reconcilePaper?:typeof reconcilePaperTask;reconcileHive?:typeof reconcileHiveTask;reconcileMataroa?:typeof reconcileMataroaTask;reconcileVerbose?:typeof reconcileVerboseTask;reconcileProse?:typeof reconcileProseTask;reconcileRentry?:typeof reconcileRentryTask;reconcileLucid?:typeof reconcileLucidTask;reconcileBetterThanHtml?:typeof reconcileBetterThanHtmlTask;reconcileSupanote?:typeof reconcileSupanoteTask;reconcileDocsMd?:typeof reconcileDocsMdTask;reconcileHtmlApp?:typeof reconcileHtmlAppTask;reconcileDeedPage?:typeof reconcileDeedPageTask;reconcileMarkdrop?:typeof reconcileMarkdropTask;reconcileKatbin?:typeof reconcileKatbinTask;reconcileDraftmark?:typeof reconcileDraftmarkTask;verifyWordPress?:typeof verifyWordPressPublication;verifyLeaflet?:typeof verifyLeafletPublication;verifyNostr?:typeof verifyNostrPublication;verifyPaper?:typeof verifyPaperPublication;verifyHive?:typeof verifyHivePublication;verifyMataroa?:typeof verifyMataroaPublication;verifyVerbose?:typeof verifyVerbosePublication;verifyProse?:typeof verifyProsePublication;verifyRentry?:typeof verifyRentryPublication;verifyLucid?:typeof verifyLucidPublication;verifyBetterThanHtml?:typeof verifyBetterThanHtml;verifySupanote?:typeof verifySupanotePublication;verifyDocsMd?:typeof verifyDocsMdPublication;verifyHtmlApp?:typeof verifyHtmlAppPublication;verifyDeedPage?:typeof verifyDeedPagePublication;verifyMarkdrop?:typeof verifyMarkdropPublication;verifyKatbin?:typeof verifyKatbinPublication;verifyDraftmark?:typeof verifyDraftmarkPublication;supanoteDependencies?:SupanoteDependencies;docsMdDependencies?:DocsMdDependencies;htmlAppDependencies?:HtmlAppDependencies;deedPageDependencies?:DeedPageDependencies;markdropDependencies?:MarkdropDependencies;katbinDependencies?:KatbinDependencies;draftmarkDependencies?:DraftmarkDependencies;shareYourHtmlDependencies?:ShareYourHtmlDependencies;shareYourHtmlVerificationDependencies?:ShareYourHtmlVerificationDependencies;reviewArticle?:typeof reviewArticleDraft;prepareTask?:(context:ExecutionContext)=>Promise<ExecutionResult|undefined>;executeTask?:(context:ExecutionContext)=>Promise<ExecutionResult>}
+export interface ControllerServices {removeTelegraphReferral?:typeof removeTelegraphReferral;prepareChannelTerms?:typeof prepareChannelTerms;channelCatalog?:Channel[];analyzeWebsite?:typeof analyzeWebsite;aiFactory?:typeof createAi;verifyLink?:typeof verifyLink;recheckLink?:typeof recheckLink;verifyTelegraph?:typeof verifyTelegraphPublication;verifyGist?:typeof verifyGistPublication;verifyBlogger?:typeof verifyBloggerPublication;discoverTopics?:typeof discoverTopics;discoverTechnicalMaterial?:typeof discoverTechnicalMaterial;readTopicEvidence?:typeof readTopicEvidence;collectArticleEvidence?:typeof collectArticleEvidence;reconcileTelegraph?:typeof reconcileTelegraphTask;reconcileBlogger?:typeof reconcileBloggerTask;reconcileWordPress?:typeof reconcileWordPressTask;reconcileLeaflet?:typeof reconcileLeafletTask;reconcileBluesky?:typeof reconcileBlueskyTask;reconcileParagraph?:typeof reconcileParagraphTask;reconcileNostr?:typeof reconcileNostrTask;reconcilePaper?:typeof reconcilePaperTask;reconcileHive?:typeof reconcileHiveTask;reconcileMataroa?:typeof reconcileMataroaTask;reconcileVerbose?:typeof reconcileVerboseTask;reconcileProse?:typeof reconcileProseTask;reconcileRentry?:typeof reconcileRentryTask;reconcileLucid?:typeof reconcileLucidTask;reconcileBetterThanHtml?:typeof reconcileBetterThanHtmlTask;reconcileSupanote?:typeof reconcileSupanoteTask;reconcileDocsMd?:typeof reconcileDocsMdTask;reconcileHtmlApp?:typeof reconcileHtmlAppTask;reconcileDeedPage?:typeof reconcileDeedPageTask;reconcileMarkdrop?:typeof reconcileMarkdropTask;reconcileKatbin?:typeof reconcileKatbinTask;reconcileDraftmark?:typeof reconcileDraftmarkTask;verifyWordPress?:typeof verifyWordPressPublication;verifyLeaflet?:typeof verifyLeafletPublication;verifyNostr?:typeof verifyNostrPublication;verifyPaper?:typeof verifyPaperPublication;verifyHive?:typeof verifyHivePublication;verifyMataroa?:typeof verifyMataroaPublication;verifyVerbose?:typeof verifyVerbosePublication;verifyProse?:typeof verifyProsePublication;verifyRentry?:typeof verifyRentryPublication;verifyLucid?:typeof verifyLucidPublication;verifyBetterThanHtml?:typeof verifyBetterThanHtml;verifySupanote?:typeof verifySupanotePublication;verifyDocsMd?:typeof verifyDocsMdPublication;verifyHtmlApp?:typeof verifyHtmlAppPublication;verifyDeedPage?:typeof verifyDeedPagePublication;verifyMarkdrop?:typeof verifyMarkdropPublication;verifyKatbin?:typeof verifyKatbinPublication;verifyDraftmark?:typeof verifyDraftmarkPublication;supanoteDependencies?:SupanoteDependencies;docsMdDependencies?:DocsMdDependencies;htmlAppDependencies?:HtmlAppDependencies;deedPageDependencies?:DeedPageDependencies;markdropDependencies?:MarkdropDependencies;katbinDependencies?:KatbinDependencies;draftmarkDependencies?:DraftmarkDependencies;shareYourHtmlDependencies?:ShareYourHtmlDependencies;shareYourHtmlVerificationDependencies?:ShareYourHtmlVerificationDependencies;reviewArticle?:typeof reviewArticleDraft;prepareTask?:(context:ExecutionContext)=>Promise<ExecutionResult|undefined>;executeTask?:(context:ExecutionContext)=>Promise<ExecutionResult>}
 export interface ControllerServices {reconcileMDShare?:typeof reconcileMDShareTask;verifyMDShare?:typeof verifyMDSharePublication;mdshareDependencies?:MDShareDependencies}
 export interface ControllerServices {reconcileTantive?:typeof reconcileTantiveTask;verifyTantive?:typeof verifyTantivePublication;tantiveDependencies?:TantiveDependencies}
 export interface ControllerServices {reconcileRaindrop?:typeof reconcileRaindropTask;verifyRaindrop?:typeof verifyRaindropTask}
@@ -2376,6 +2378,35 @@ export class Controller {
     const next=trialVerificationNextCheck(task,now);
     if(next)task.nextCheckAt=next;
   }
+  /** Removes the referral sentences from one of our own Telegraph pages (original saved first), then checks the page again. */
+  async removePublicReferral(id:string):Promise<{ok:boolean;message:string}>{
+    const s=this.store.read(),task=s.tasks.find(item=>item.id===id),site=task&&s.sites.find(item=>item.id===task.siteId);
+    if(!task||!site||!task.publicUrl)throw Error('外链不存在');
+    if(task.channelId!=='telegraph')return {ok:false,message:'软件不能修改这个平台上已发布的文章。'};
+    const account=s.accounts.find(item=>item.id===task.accountId);
+    if(!account)return {ok:false,message:'这篇没有记录发布它的 Telegraph 账号，无法确认归属，未修改。'};
+    const token=await this.vault.get(`account:${account.id}`);
+    if(!token)return {ok:false,message:'本机保险箱中没有这个 Telegraph 账号的令牌，未修改。'};
+    if(this.verifying.has(id))return {ok:false,message:'这篇外链正在检查，请稍后再试。'};
+    const codes=siteReferralCodes(site,task.evidenceSnapshot),host=new URL(site.url).hostname.replace(/^www\./,'');
+    // Held like a check, so no scheduled recheck reads the page halfway through the edit.
+    this.verifying.add(id);
+    let result:Awaited<ReturnType<typeof removeTelegraphReferral>>;
+    try{
+      result=await (this.services.removeTelegraphReferral??removeTelegraphReferral)({task,site,account,token,signal:new AbortController().signal,archive:async page=>{
+        const directory=joinPath(this.runtime.dataPath,'public-page-edits');await mkdirAsync(directory,{recursive:true,mode:0o700});
+        await writeFileAsync(joinPath(directory,`${id}-${Date.now()}.json`),JSON.stringify({taskId:id,publicUrl:task.publicUrl,savedAt:new Date().toISOString(),...page}),{mode:0o600,flag:'wx'});
+      }},text=>containsReferralInformation(text,codes,host));
+    }finally{this.verifying.delete(id)}
+    if(result.status==='blocked')return {ok:false,message:result.message};
+    await this.verify(id);
+    if(result.status==='uncertain')return {ok:false,message:result.message};
+    return {ok:true,message:result.status==='cleaned'?`已删掉 ${result.removed.length} 处推荐信息，指向本站的链接保持不变。`:'页面上已经没有推荐信息，已重新检查。'};
+  }
+  /** Stops reminding about a published page's findings the software cannot change itself. */
+  acknowledgeRemoteContent(id:string){
+    this.store.update(state=>{const task=state.tasks.find(item=>item.id===id);if(task?.remoteContentScan)task.remoteContentScan.acknowledgedAt=new Date().toISOString()});
+  }
   async verify(id:string,options:{manualRecovery?:boolean}={}){
     try{return await this.verifyPublication(id,options)}
     finally{if(this.store.read().settings.hasAhrefsKey)void this.ahrefs.refreshTask(id)}
@@ -2410,7 +2441,10 @@ export class Controller {
           applyLinkResult(current,{...checked,url:publicUrl},new Date());
           if('publicContent' in checked&&checked.publicContent){
             const content=checked.publicContent;
+            const previousScan=current.remoteContentScan;
             current.remoteContentScan={version:1,checkedAt:new Date().toISOString(),referral:containsReferralInformation(content.articleText??content.text,siteReferralCodes(currentSite,current.evidenceSnapshot),new URL(siteUrl).hostname)||containsReferralInformation(content.articleHtml??content.html,siteReferralCodes(currentSite,current.evidenceSnapshot),new URL(siteUrl).hostname),legacyMarkers:scanLegacyPublicMarkers({...content,url:publicUrl},current.channelId)};
+            // The owner's "stop reminding me" holds while the page still shows the same findings.
+            if(previousScan?.acknowledgedAt&&previousScan.referral===current.remoteContentScan.referral&&previousScan.legacyMarkers.join()===current.remoteContentScan.legacyMarkers.join())current.remoteContentScan.acknowledgedAt=previousScan.acknowledgedAt;
           }
           current.linkCheckFinalUrl=checked.url;
           current.linkObservation={version:1,checkedAt:current.lastCheckedAt!,publicUrl};

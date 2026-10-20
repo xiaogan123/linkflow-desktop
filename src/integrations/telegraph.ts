@@ -5,7 +5,7 @@ import {fetchPublicText,type PublicFetchDependencies} from './web';
 import {inspectRenderedArticle} from './article-rendering';
 import {applyDeclaredArticleVisibility,elementConcealed} from './article-visibility';
 import {TELEGRAPH_FALLBACK_MESSAGES} from './telegraph-messages';
-import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, Task,LinkResult } from '../shared/types';
+import type { Account, AccountDiagnostic, ExecutionContext, ExecutionResult, Site, Task,LinkResult } from '../shared/types';
 
 const API_ORIGIN = 'https://api.telegra.ph';
 const PUBLIC_ORIGIN = 'https://telegra.ph';
@@ -80,7 +80,7 @@ async function readBoundedJson(response: Response): Promise<ApiResponse> {
 }
 
 async function apiCall(
-  method: 'createAccount' | 'getAccountInfo' | 'createPage' | 'getPage' | 'getPageList',
+  method: 'createAccount' | 'getAccountInfo' | 'createPage' | 'editPage' | 'getPage' | 'getPageList',
   fields: Record<string, string>,
   context: ExecutionContext,
   transport: TelegraphTransport,
@@ -721,3 +721,124 @@ export async function runTelegraphTask(context: ExecutionContext): Promise<Execu
 }
 
 export const telegraphTesting = { runWithTransport, countTargetLinks, pageIdentity };
+
+type CleanNode = string | { tag: string; attrs?: Record<string, string>; children?: CleanNode[] };
+const textOf = (value: unknown): string => typeof value === 'string' ? value : Array.isArray(value) ? value.map(textOf).join('') : value && typeof value === 'object' ? textOf((value as { children?: unknown }).children) : '';
+const LEFT_LABEL = /(?:邀请码|推荐码|优惠码|邀請碼|推薦碼|invite code|referral code|promo code)\s*(?:[:：为是]\s*)?(?=$|[，,。；;\n])/imu;
+/** The live page's nodes with only the attributes the API accepts; anything unexpected is refused, not guessed. */
+function plainNodes(value: unknown): CleanNode[] | undefined {
+  const visit = (node: unknown): CleanNode => {
+    if (typeof node === 'string') return node;
+    if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('invalid_node');
+    const raw = node as { tag?: unknown; attrs?: Record<string, unknown>; children?: unknown };
+    if (typeof raw.tag !== 'string') throw new Error('invalid_node');
+    const attrs = Object.fromEntries(Object.entries(raw.attrs ?? {}).filter((entry): entry is [string, string] => ['href', 'src'].includes(entry[0]) && typeof entry[1] === 'string'));
+    return { tag: raw.tag, ...(Object.keys(attrs).length ? { attrs } : {}), ...(Array.isArray(raw.children) ? { children: raw.children.map(visit) } : {}) };
+  };
+  try { return Array.isArray(value) ? value.map(visit) : undefined; } catch { return undefined; }
+}
+const siteAnchors = (nodes: unknown, target: string): string[] => {
+  const found: string[] = [];
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== 'object') return;
+    const raw = node as { tag?: unknown; attrs?: { href?: unknown }; children?: unknown };
+    if (raw.tag === 'a' && typeof raw.attrs?.href === 'string' && sameTargetSite(raw.attrs.href, target)) found.push(JSON.stringify([raw.attrs.href, textOf(raw.children).trim()]));
+    walk(raw.children);
+  };
+  walk(nodes);
+  return found;
+};
+
+/**
+ * Drops only short, whole sentences (and other sites' links) that carry referral information.
+ * Anything riskier is refused: a code in our own site link, a heading, a code block or a figure, a very long
+ * matching sentence, or a label like "邀请码：" left behind.
+ */
+export function stripReferralSentences(nodes: unknown, isReferral: (text: string) => boolean, target: string): { nodes: CleanNode[]; removed: string[] } | { blocked: string } {
+  const plain = plainNodes(nodes);
+  if (!plain) return { blocked: '页面内容的结构无法安全识别，未修改。' };
+  const removed: string[] = [];
+  let blocked: string | undefined;
+  const visit = (node: CleanNode): CleanNode | undefined => {
+    if (blocked) return node;
+    if (typeof node === 'string') {
+      // ASCII ? and ! end a sentence only before a space, so a URL's query string is never cut apart.
+      const sentences = node.split(/(?<=[。！？])|(?<=[.!?])(?=\s)|(?<=\n)/u);
+      const kept = sentences.filter(sentence => {
+        if (!isReferral(sentence)) return true;
+        if (sentence.trim().length > 240) blocked = '带推荐信息的这段话太长，自动删除会删掉过多内容，未修改。';
+        removed.push(sentence.trim());
+        return false;
+      });
+      return kept.join('');
+    }
+    if (node.tag === 'a') {
+      const href = node.attrs?.href ?? '';
+      if (sameTargetSite(href, target)) {
+        if (isReferral(href) || isReferral(textOf(node.children))) blocked = '指向本站的链接本身带有推荐信息，自动修改会改动外链，未修改。';
+        return node;
+      }
+      if (isReferral(href) || isReferral(textOf(node.children))) { removed.push(textOf(node.children).trim() || href); return undefined; }
+      return node;
+    }
+    if (['h3', 'h4', 'pre', 'figure', 'figcaption', 'iframe', 'video'].includes(node.tag) && isReferral(textOf(node.children) + JSON.stringify(node.attrs ?? {}))) {
+      blocked = '推荐信息在标题、代码块或图片区域里，未修改。';
+      return node;
+    }
+    if (!node.children) return node;
+    const before = textOf(node.children);
+    const children = node.children.map(visit).filter((child): child is CleanNode => child !== undefined && child !== '');
+    const after = textOf(children);
+    if (before !== after && LEFT_LABEL.test(after)) blocked = '删除后会留下没有内容的“邀请码”说明，未修改。';
+    const keepsMedia = children.some(child => typeof child !== 'string' && ['img', 'br', 'a', 'hr'].includes(child.tag));
+    if (before.trim() && !after.trim() && !keepsMedia) return undefined;
+    return { ...node, children };
+  };
+  const list = plain.map(visit).filter((node): node is CleanNode => node !== undefined && node !== '');
+  return blocked ? { blocked } : { nodes: list, removed };
+}
+
+export type TelegraphCleanResult =
+  | { status: 'cleaned'; removed: string[] }
+  | { status: 'unchanged' }
+  | { status: 'blocked'; message: string }
+  | { status: 'uncertain'; message: string };
+export interface TelegraphCleanInput { task: Task; site: Site; account: Account; token: string; signal: AbortSignal; archive: (page: { title: string; authorName: string; authorUrl?: string; content: unknown }) => Promise<void> }
+/** Rewrites one of this account's own published pages without its referral sentences; the one link to the site stays exactly as it was. */
+export async function removeTelegraphReferral(input: TelegraphCleanInput, isReferral: (text: string) => boolean, dependencies: { transport?: TelegraphTransport } = {}): Promise<TelegraphCleanResult> {
+  const transport = dependencies.transport ?? ((url: string, init: RequestInit) => fetch(url, init));
+  const { task, site, account, token } = input;
+  if (task.channelId !== 'telegraph' || account.channelId !== 'telegraph' || task.accountId !== account.id || !task.publicUrl) return { status: 'blocked', message: '这篇没有记录发布它的 Telegraph 账号，无法确认归属，未修改。' };
+  const call = { signal: input.signal } as unknown as ExecutionContext;
+  let path: string;
+  try { path = decodeURIComponent(new URL(task.publicUrl).pathname.slice(1)); } catch { return { status: 'blocked', message: '公开地址无效，未修改。' }; }
+  const target = sourceUrl(site.url), sameUrl = (value: string | undefined) => { try { return !!value && decodeURI(value) === decodeURI(task.publicUrl!); } catch { return false; } };
+  let page: ApiSuccess;
+  try { page = await apiCall('getPage', { access_token: token, return_content: 'true' }, call, transport, path); }
+  catch { return { status: 'blocked', message: 'Telegraph 暂时无法读取这篇文章，未修改。' }; }
+  if (!sameUrl(pageIdentity(page)?.url) || page.can_edit !== true) return { status: 'blocked', message: '这篇文章不属于记录中的 Telegraph 账号，未修改。' };
+  const title = String(page.title ?? ''), authorName = String(page.author_name ?? ''), authorUrl = typeof page.author_url === 'string' ? page.author_url : undefined;
+  if (isReferral(`${title}\n${authorName}\n${authorUrl ?? ''}`)) return { status: 'blocked', message: '推荐信息在标题或作者信息里，软件不改这些，未修改。' };
+  const linksBefore = siteAnchors(page.content, target);
+  if (!isReferral(textOf(page.content)) && !JSON.stringify(page.content ?? '').match(/[?&](?:ref|referral|invite|aff)/i)) return { status: 'unchanged' };
+  if (linksBefore.length !== 1) return { status: 'blocked', message: '这篇文章里指向本站的链接不是唯一一条，未修改。' };
+  const cleaned = stripReferralSentences(page.content, isReferral, target);
+  if ('blocked' in cleaned) return { status: 'blocked', message: cleaned.blocked };
+  if (!cleaned.removed.length || isReferral(textOf(cleaned.nodes)) || JSON.stringify(siteAnchors(cleaned.nodes, target)) !== JSON.stringify(linksBefore))
+    return { status: 'blocked', message: '无法只删掉带推荐信息的句子而不影响其他内容，未修改。' };
+  try { await input.archive({ title, authorName, authorUrl, content: page.content }); }
+  catch { return { status: 'blocked', message: '无法先保存原文副本，未修改。' }; }
+  try {
+    await apiCall('editPage', { access_token: token, title, author_name: authorName, ...(authorUrl ? { author_url: authorUrl } : {}), content: JSON.stringify(cleaned.nodes), return_content: 'false' }, call, transport, path);
+  } catch (error) {
+    if (error instanceof TelegraphApiRejection) return { status: 'blocked', message: `Telegraph 拒绝了修改（${error.code}），页面没有改动。` };
+    return { status: 'uncertain', message: '修改请求的结果不确定，请打开页面确认。' };
+  }
+  try {
+    const after = await apiCall('getPage', { access_token: token, return_content: 'true' }, call, transport, path);
+    if (isReferral(textOf(after.content)) || JSON.stringify(siteAnchors(after.content, target)) !== JSON.stringify(linksBefore))
+      return { status: 'uncertain', message: 'Telegraph 已接受修改，但读回的页面与预期不同，请打开页面确认。' };
+  } catch { return { status: 'uncertain', message: '已提交修改，但暂时读不回页面，请打开页面确认。' }; }
+  return { status: 'cleaned', removed: cleaned.removed };
+}
