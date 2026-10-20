@@ -280,8 +280,10 @@ test('managed Telegraph verification accepts exact current and historical pairs 
       if(variant==='target-on-paragraph'){const paragraph=remoteNodes.find(node=>typeof node!=='string'&&node.tag==='p');if(paragraph&&typeof paragraph!=='string')paragraph.attrs={target:'_blank'};}
       return apiJson({...detail('original-article-09-27',nodes,{authorName:variant==='mixed-author'?(historical?author:'Example Product site owner'):label}),content:variant==='changed-api'?[...remoteNodes,{tag:'p',children:['changed']}]:remoteNodes});
     },publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html','x-robots-tag':variant==='noindex'?'noindex':''},body:Buffer.from(page)})}});
-    const accepted=variant==='valid'||variant==='platform-target';
+    // Another of our own author names on a page whose API and visible text agree is still our page in an earlier layout.
+    const accepted=variant==='valid'||variant==='platform-target'||variant==='mixed-author';
     assert.equal(result.found,accepted,`${historical}/${variant}: ${result.reason}`);if(!accepted)assert.equal(result.outcome,'invalid');
+    if(variant==='mixed-author')assert.match(result.reason,/旧版排版/);
   }
   assert.deepEqual(mutations,{checkpoints:0,accountWrites:0,secretWrites:0});
 });
@@ -299,4 +301,19 @@ test('Telegraph recovery and public verification rebuild the captured site field
   const page=`<article class="tl_article_content"><h1>${title}</h1><address>${author}</address>${html(expectedContent())}</article>`;
   const result=await verifyTelegraphPublication(context,{transport,publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from(page)})}});
   assert.equal(result.found,true,result.reason);assert.equal(context.task.draft.title,'Changed draft title');assert.deepEqual(mutations,{checkpoints:0,accountWrites:0,secretWrites:0});
+});
+
+test('a page laid out by an earlier release is confirmed by address, title, our author name and its one site link',async()=>{
+  const {context}=fixture();context.task.publicUrl='https://telegra.ph/original-article-09-27';context.task.checkpoint='telegraph_published';
+  const html=(nodes:TelegraphNode[]):string=>nodes.map(node=>typeof node==='string'?node.replaceAll('&','&amp;').replaceAll('<','&lt;'):`<${node.tag}${node.attrs?` href="${node.attrs.href}"`:''}>${html(node.children??[])}</${node.tag}>`).join('');
+  const check=async(nodes:TelegraphNode[],authorName:string)=>verifyTelegraphPublication(context,{
+    transport:async()=>apiJson({...detail('original-article-09-27',nodes,{authorName}),content:nodes}),
+    publicFetch:{resolve:async()=>[{address:'8.8.8.8',family:4}],request:async()=>({status:200,headers:{'content-type':'text/html'},body:Buffer.from(`<article class="tl_article_content"><h1>${title}</h1><address>${authorName}</address>${html(nodes.map(node=>typeof node!=='string'&&node.tag==='h3'?{tag:'h3',children:node.children}:node))}</article>`)})}});
+  // An extra paragraph an earlier release wrote: no current or historical rendering reproduces it.
+  // Telegraph also gives headings an anchor id in its API answer; the page itself shows the same heading.
+  const earlier:TelegraphNode[]=[{tag:'p',children:['Written by the site operator from earlier notes.']},{tag:'h3',attrs:{id:'Earlier-notes'},children:['Earlier notes']} as unknown as TelegraphNode,...expectedContent()];
+  const found=await check(earlier,author);assert.equal(found.found,true,found.reason);assert.match(found.reason,/旧版排版/);
+  assert.equal((await check(earlier,'Someone Else')).found,false);
+  const target=JSON.stringify(expectedContent()).match(/"href":"([^"]+)"/)![1];
+  assert.equal((await check([...earlier,{tag:'p',children:[{tag:'a',attrs:{href:target},children:['again']}]}],author)).found,false);
 });

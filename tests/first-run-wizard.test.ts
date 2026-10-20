@@ -14,6 +14,7 @@ test('the first-run guide starts with AI when it is not connected, and skips str
   const fresh=renderToStaticMarkup(createElement(FirstRunWizard,props(snapshot(false))));
   assert.match(fresh,/外链助手用 AI 写稿和复核。/);
   assert.match(fresh,/用本机 Codex/);
+  assert.match(fresh,/用本机 Claude/);
   assert.match(fresh,/其他 AI 服务/);
   for(const title of ['连接 AI','添加网站','选择发布方式','值得连一次的平台'])assert.match(fresh,new RegExp(title));
   const ready=renderToStaticMarkup(createElement(FirstRunWizard,props(snapshot(true))));

@@ -135,13 +135,14 @@ function canonicalTelegraphContent(value: unknown): string | undefined {
       if (!raw.attrs || typeof raw.attrs !== 'object' || Array.isArray(raw.attrs)) throw new Error('invalid_node');
       const attrs = raw.attrs as Record<string, unknown>;
       const keys = Object.keys(attrs).sort();
-      if (keys.some(key => !['href', 'src'].includes(key)
+      const headingAnchor = (key: string) => key === 'id' && /^h[1-6]$/.test(raw.tag as string);
+      if (keys.some(key => !['href', 'src'].includes(key) && !headingAnchor(key)
         && !(key === 'target' && raw.tag === 'a' && attrs.target === '_blank'))) throw new Error('invalid_node');
       const clean: Record<string, string> = {};
       for (const key of keys) {
         if (typeof attrs[key] !== 'string') throw new Error('invalid_node');
-        // Telegraph adds this presentation-only attribute to published links.
-        if (key === 'target') continue;
+        // Telegraph adds these presentation-only attributes: a new-window target on links and an anchor id on headings.
+        if (key === 'target' || headingAnchor(key)) continue;
         clean[key] = attrs[key].normalize('NFC');
       }
       if (Object.keys(clean).length) normalized.attrs = clean;
@@ -518,7 +519,7 @@ export async function verifyTelegraphPublication(context:ExecutionContext,depend
   context=publicationReadContext(context);
   const fallback=context.task.publicUrl??PUBLIC_ORIGIN;
   const fail=(outcome:LinkResult['outcome'],reason:string):LinkResult=>({found:false,outcome,url:fallback,rel:'unknown',reason});
-  let identity:{path:string;url:string},title:string,target:string,fingerprints:Array<{author:string;content:string}>;
+  let identity:{path:string;url:string},title:string,target:string,fingerprints:Array<{author:string;content:string}>,authors:Set<string>;
   try{
     const url=new URL(fallback),parsed=pageIdentity({path:decodeURIComponent(url.pathname.slice(1)),url:fallback});
     if(context.task.channelId!=='telegraph'||context.task.sourceDomain!=='telegra.ph'||!context.task.draft||!parsed)throw Error();
@@ -527,11 +528,18 @@ export async function verifyTelegraphPublication(context:ExecutionContext,depend
     const prior=priorTelegraphFingerprint(context.task.draft.body,context.site.name,target,context.site.language);
     if(!content||title.length<4)throw Error();
     fingerprints=[{author:plainInline(context.site.name||context.site.domain).slice(0,128).normalize('NFC'),content},...prior];
+    // Every author name a release has used for this site, whether or not its old layout can still be rebuilt.
+    authors=new Set([...fingerprints.map(value=>value.author),promotionalAuthorName(context.site.language).normalize('NFC'),`${plainInline(context.site.name).slice(0,108)} site owner`.slice(0,128).normalize('NFC')]);
   }catch{return fail('invalid','Telegraph 原稿或公开地址无效，保留原记录且不会重发');}
   try{
     const remote=await apiCall('getPage',{return_content:'true'},context,dependencies.transport??fetch,identity.path);
     const remoteIdentity=pageIdentity(remote),content=canonicalTelegraphContent(remote.content);
-    const matched=fingerprints.find(value=>value.content===content&&value.author===remote.author_name);
+    let matched=fingerprints.find(value=>value.content===content&&value.author===remote.author_name),earlierLayout=false;
+    // Only this account can edit the page, so the same address, title and one of our author names with exactly one
+    // link to the site identify it even when an earlier release laid the body out differently than today's renderer.
+    if(!matched&&remoteIdentity?.url===identity.url&&remote.title===title&&content&&typeof remote.author_name==='string'&&authors.has(remote.author_name.normalize('NFC'))&&countTargetLinks(remote.content,target)===1){
+      matched={author:String(remote.author_name),content};earlierLayout=true;
+    }
     if(!remoteIdentity||remoteIdentity.url!==identity.url||remote.title!==title||!matched)return fail('invalid','Telegraph API 的完整正文、作者标记或标题与原稿不一致');
     const page=await fetchPublicText(identity.url,context.signal,dependencies.publicFetch,{allowRedirect:(_from,to)=>to.href===identity.url});
     const $=load(page.text);applyDeclaredArticleVisibility($);
@@ -544,7 +552,7 @@ export async function verifyTelegraphPublication(context:ExecutionContext,depend
     if(!linkedPage||countTargetLinks(expectedNodes,target)!==1)return fail('invalid','Telegraph 原稿中的本站链接不唯一');
     const rendered=inspectRenderedArticle($.html(),nodesHtml(expectedNodes),linkedPage,'article.tl_article_content',{pageUrl:page.url,robotsHeader:page.robotsHeader});
     if(!rendered.found)return fail('invalid','Telegraph 可见全文、全部链接或索引规则不一致；原投稿仍保留');
-    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:'Telegraph API 与原稿及公开可见全文、全部链接一致；不代表搜索收录'};
+    return {found:true,outcome:'found',url:page.url,rel:rendered.rel,reason:earlierLayout?'Telegraph 页面由本账号发布（旧版排版），API 与公开可见全文、全部链接一致；不代表搜索收录':'Telegraph API 与原稿及公开可见全文、全部链接一致；不代表搜索收录'};
   }catch{return fail('unreachable','Telegraph 原公开文章暂时无法完整检查；不会重发');}
 }
 

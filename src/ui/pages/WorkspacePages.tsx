@@ -7,7 +7,8 @@ import { getArticleReviewMode } from '../../shared/article-review-mode';
 import { publicationCounts } from '../../shared/publication';
 import { Button, Empty, Field } from '../components';
 import { taskDisplayState } from '../presentation';
-import { activeSites, dateTime, nextTask, overviewNumbers, passesWeight, siteState, taskWithPlatform, todoTasks, uiCopy, uniquePublications, platformShortage } from '../dashboard-model';
+import { siteMonthTarget } from '../../shared/scheduling';
+import { activeSites, dateTime, monthGoal, nextTask, overviewNumbers, passesWeight, siteState, taskWithPlatform, todoTasks, uiCopy, uniquePublications, platformShortage } from '../dashboard-model';
 import { buildTrackingRows, pageLinkLabel } from '../search-tracking';
 type Action = <T = unknown>(command: string, payload?: unknown, success?: string) => Promise<T | undefined>;
 type Shared = {
@@ -99,7 +100,7 @@ export function OverviewPage({
   const failedSites = sites.filter(site => site.status === 'attention');
   const notices = pauses.length + referrals.length + failedSites.length;
   const shortage = sites.filter(s => platformShortage(s, data, now));
-  const available = sites.reduce((n, s) => n + (s.planStatus?.effectiveTarget ?? data.capacity?.find(c => c.siteId === s.id)?.automaticPages ?? s.monthlyTarget), 0);
+  const available = sites.reduce((n, s) => n + (s.planStatus?.effectiveTarget ?? data.capacity?.find(c => c.siteId === s.id)?.automaticPages ?? siteMonthTarget(s, now, data.settings.timezone)), 0);
   const banners: {
     text: string;
     button?: string;
@@ -135,7 +136,7 @@ export function OverviewPage({
 {i === 0 && <progress aria-label={label} value={numbers.monthly} max={Math.max(numbers.target, numbers.monthly, 1)} />}</section>)}</div>
     <div className="dashboard-columns"><section className="panel table-scroll"><table className="work-table"><thead><tr>{[['site', '网站'], ['month', '本月'], ['next', '下一条'], ['status', '状态']].map(([key, label]) => table.heading(key, label))}</tr></thead>
 <tbody>{table.rows(sites, (s, key) => key === 'site' ? s.domain : key === 'month' ? publicationCounts(s.id, data.tasks, now, data.settings.timezone).monthlyPages : key === 'next' ? nextTask(data.tasks, now, s.id)?.scheduledAt ?? '' : siteState(s, data, now)).map(s => <tr key={s.id} onClick={() => onSite(s.id)}><td><button className="inline-link" onClick={() => onSite(s.id)}>{s.domain}</button></td>
-<td>{publicationCounts(s.id, data.tasks, now, data.settings.timezone).monthlyPages}/{s.monthlyTarget} 条</td>
+<td>{publicationCounts(s.id, data.tasks, now, data.settings.timezone).monthlyPages}/{monthGoal(s, data, now)}</td>
 <td>{dateTime(nextTask(data.tasks, now, s.id)?.scheduledAt)}</td>
 <td>{siteState(s, data, now)}</td></tr>)}</tbody></table></section>
     <section className="panel attention-panel"><div className="panel-head"><h2>要你处理</h2></div>
@@ -233,7 +234,7 @@ export function WebsitesPage({
 <td><button className="inline-link" onClick={() => onSite(s.id)}>{s.domain}</button></td>
 <td>{getArticleReviewMode(s, data.settings) === 'ai' ? '全自动' : '每篇我先看'}</td>
 <td>{s.monthlyTarget} 条</td>
-<td>{publicationCounts(s.id, data.tasks, now, data.settings.timezone).monthlyPages}/{s.monthlyTarget} 条</td>
+<td>{publicationCounts(s.id, data.tasks, now, data.settings.timezone).monthlyPages}/{monthGoal(s, data, now)}</td>
 <td>{uniquePublications(data.tasks.filter(t => t.siteId === s.id)).length} 条</td>
 <td>{dateTime(nextTask(data.tasks, now, s.id)?.scheduledAt)}</td>
 <td>{siteState(s, data, now)}</td></tr>)}</tbody></table></div>}
@@ -279,7 +280,7 @@ export function SiteDetailPage({
   const future = tasks.filter(t => Date.parse(t.scheduledAt) >= now.getTime() && Date.parse(t.scheduledAt) <= now.getTime() + 30 * 86400000 && !t.firstLiveAt && !['failed', 'skipped', 'expired'].includes(t.status));
   const profile = site.writingProfile;
   return <div className="page"><Button variant="text" onClick={onBack}>返回网站</Button>
-<PageHeading title={site.domain} summary={`本月 ${counts.monthlyPages}/${site.monthlyTarget} 条 · 下一条 ${dateTime(nextTask(tasks, now)?.scheduledAt)}`} />
+<PageHeading title={site.domain} summary={`本月 ${counts.monthlyPages}/${monthGoal(site, data, now)} · 下一条 ${dateTime(nextTask(tasks, now)?.scheduledAt)}`} />
 {site.status === 'attention' && <div className="banner warning" role="status"><span>{site.error ?? '网站分析没有完成。'}</span><Button disabled={disabled} onClick={() => void onAction('site:analyze', {id: site.id}, '已开始重新分析。')}>重新分析</Button></div>}
 <div className="filter-tabs workspace-tabs" role="group" aria-label="网站详情">{[['links', '外链'], ['schedule', '排期'], ['style', '写作风格'], ['content', '推广内容'], ['settings', '设置']].map(([id, label]) => <button key={id} aria-pressed={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
  {tab === 'links' && <section className="panel table-scroll">{links.length ? <table className="work-table"><thead><tr>{[['platform', '平台'], ['title', '文章'], ['date', '发布日期'], ['link', '链接'], ['rel', '属性'], ['google', 'Google 报告'], ['checked', '上次检查']].map(([key, label]) => table.heading(key, label))}</tr></thead>

@@ -30,7 +30,7 @@ import {verifyShiplyCode,validShiplyAccount} from './shiply-management';
 import {collectHumanActionNotifications,createHumanAction,HUMAN_ACTION_MESSAGES,humanActionReason} from '../shared/human-action';
 import {REGISTRATION_MESSAGES as REGISTRATION} from '../shared/registration-messages';
 import type {SignupEmailRequest,SignupExecutionHooks} from '../shared/signup';
-import {estimateDailyAiLimit,schedulingMonthInfo} from '../shared/scheduling';
+import {estimateDailyAiLimit,schedulingMonthInfo,siteMonthTarget} from '../shared/scheduling';
 import {draftCorpus,scanStoredDraft} from './draft-corpus';
 import {scanDraftDiversity,reframeDraftWithoutAi,diversityRecovery,titleOnlyCollision,LOCAL_DIVERSITY_REWRITE_INSTRUCTION} from './draft-diversity';
 import {mergeDiscoveredSiteTopics,reservesTopic} from './site-service';
@@ -38,7 +38,7 @@ import {containsForbiddenSiteTerm} from '../shared/site-content';
 import {SITE_ACTION_MESSAGES} from '../shared/site-action-messages';
 import {FACT_DRAFT_SCHEMA,profileDraftInstruction,decorateManagedDraft,managedPublicationSite,usesWritingEnvelope} from './draft-contract';
 import {conflictingManagedSentences,shouldGenerateWritingVariants,ensureWritingProfile,parseWritingVariants,WRITING_VARIANTS_ANALYSIS_INSTRUCTION,WRITING_VARIANTS_SCHEMA,buildProfileDraftInstruction,selectWritingGenre,writingGenreAvailable,createWritingEnvelope,decorateProfileDraft,stripWritingEnvelope,type WritingVariants} from '../shared/writing-profile';
-import {pricePredictionSentence,buildArticleEvidenceSnapshot,normalizeEvidenceQuote,snapshotEvidenceRows,validEvidenceSnapshot,validateFactManifest,applyEvidencePatches,articleDraftPreflight,ARTICLE_PREFLIGHT_MESSAGES,reserveArticleReviewBudget,type ArticleFact} from './article-evidence';
+import {pricePredictionSentence,processLeakSentence,buildArticleEvidenceSnapshot,normalizeEvidenceQuote,snapshotEvidenceRows,validEvidenceSnapshot,validateFactManifest,applyEvidencePatches,articleDraftPreflight,ARTICLE_PREFLIGHT_MESSAGES,reserveArticleReviewBudget,type ArticleFact} from './article-evidence';
 import {AhrefsService,taskNeedsAhrefsRefresh,type AhrefsServiceOptions} from './ahrefs-service';
 import {saveSettingsAtomic} from './settings-service';
 import {AhrefsApiKey} from './validation';
@@ -908,9 +908,10 @@ export class Controller {
   private readonly contentRepairs=new WeakSet<object>();
   private readonly termsReviewFailures=new Map<string,string>();
   private contentPreflightError(preflight:keyof typeof ARTICLE_PREFLIGHT_MESSAGES,otherwise:TaskReasonCode,draft?:Task['draft']):TaskReasonError{
-    const content=preflight==='price_prediction'||preflight==='return_promise';
+    const content=preflight==='price_prediction'||preflight==='return_promise'||preflight==='process_leak';
     // Name the sentence, so the one rewrite knows exactly what to change.
-    const sentence=preflight==='price_prediction'&&draft?pricePredictionSentence([draft.title,draft.description,draft.body].join('\n')):undefined;
+    const text=draft?[draft.title,draft.description,draft.body].join('\n'):'';
+    const sentence=!draft?undefined:preflight==='price_prediction'?pricePredictionSentence(text):preflight==='process_leak'?processLeakSentence(text):undefined;
     const error=new TaskReasonError(content?'content_rejected':otherwise,ARTICLE_PREFLIGHT_MESSAGES[preflight]+(sentence?`：“${sentence.slice(0,160)}”`:''));
     if(content)this.contentRepairs.add(error);
     return error;
@@ -1009,7 +1010,8 @@ export class Controller {
     const channels=this.channelsFor(s),now=new Date(),capacityIndex=capacitySnapshotIndex(s,now,s.settings.timezone);
     const matchesBySite=new Map(s.sites.map(site=>[site.id,matchChannels(site,channels)]));
     const acceptedChannelIds=new Set(s.tasks.filter(task=>task.firstLiveAt&&task.linkCheck==='found'&&task.linkIndexable===true).map(task=>task.channelId));
-    const capacity=s.sites.map(site=>capacityFor(site,s.tasks,matchesBySite.get(site.id)!,channels,now,s.settings.timezone,s,capacityIndex));
+    const network=availableNetworkPlatforms(s,channels,now);
+    const capacity=s.sites.map(site=>capacityFor(site,s.tasks,matchesBySite.get(site.id)!,channels,now,s.settings.timezone,s,capacityIndex,network));
     const humanActionCapabilities=Object.fromEntries(s.tasks.filter(task=>task.humanAction).map(task=>{
       const mode=this.humanCompletionMode(task,s,channels);
       return [task.id,{canDone:mode!=='unsupported',mode}];
@@ -1314,8 +1316,9 @@ export class Controller {
         if(site.status!=='ready')continue;
         makePlan(s,site,matchChannels(site,channels),now,networkPlatforms);
         const pending=s.tasks.filter(t=>t.siteId===site.id&&reservesMonthlySlot(t,now,s.settings.timezone)).length;
-        const gap=Math.max(0,site.monthlyTarget-liveThisMonth(site.id,s.tasks,now,s.settings.timezone)-pending);
-        site.error=gap?(capacityFor(site,s.tasks,matchChannels(site,channels),channels,now,s.settings.timezone,s).reason??`本月还差 ${gap} 个页面；其他可执行任务会继续。`):undefined;
+        // The same month target the scheduler plans for: a site's first month starts small.
+        const gap=Math.max(0,siteMonthTarget(site,now,s.settings.timezone)-liveThisMonth(site.id,s.tasks,now,s.settings.timezone)-pending);
+        site.error=gap?(capacityFor(site,s.tasks,matchChannels(site,channels),channels,now,s.settings.timezone,s,undefined,networkPlatforms).reason??`本月还差 ${gap} 个页面；其他可执行任务会继续。`):undefined;
       }
     });
     if(reminders.length&&this.store.read().settings.notify&&this.onNotice){
@@ -2203,7 +2206,7 @@ export class Controller {
         site:{url:site.url,name:site.name,description:site.description,category:site.category,language:site.language,linkTargets:site.linkTargets,forbiddenTerms:site.forbiddenTerms},
         channel:{id:c.id,name:c.name,kind:c.kind,articleRequired:c.articleRequired,writingLanguage:c.languages.includes('*')?site.language:c.languages[0]},
         evidenceSnapshot:snapshot,writingProfile:site.writingProfile,writingGenre,
-        ...(repair?{repair:{reason:repair.reason,draft:repair.draft,rawOutput:repair.rawOutput,instruction:repair.kind==='content'?'保留原稿的事实、选题和段落，只删除或改写校验指出的句子：不得预测价格走势，不得承诺收益；不得整篇重写或添加新事实。':'保留原稿的事实、选题和段落，仅按校验错误修正格式；不得整篇重写或添加新事实。'}}:{})},FACT_DRAFT_SCHEMA,signal,{maxCompletionTokens:6000});
+        ...(repair?{repair:{reason:repair.reason,draft:repair.draft,rawOutput:repair.rawOutput,instruction:repair.kind==='content'?'保留原稿的事实、选题和段落，只删除或改写校验指出的句子：不得预测价格走势，不得承诺收益，不得提及提供的材料、资料快照、选题页、本稿等写稿过程，资料没写到的内容直接不写；不得整篇重写或添加新事实。':'保留原稿的事实、选题和段落，仅按校验错误修正格式；不得整篇重写或添加新事实。'}}:{})},FACT_DRAFT_SCHEMA,signal,{maxCompletionTokens:6000});
     if(signal?.aborted)throw Error('任务已暂停');
     if(result&&typeof result==='object')repairCandidate={title:typeof result.title==='string'?result.title.slice(0,64000):'',description:typeof result.description==='string'?result.description.slice(0,64000):'',body:typeof result.body==='string'?result.body.slice(0,64000):''};
     if(!result||typeof result.title!=='string'||typeof result.description!=='string'||typeof result.body!=='string'||result.body.length>30000)throw new TaskReasonError('format_invalid','AI 返回材料格式不正确，请重试');

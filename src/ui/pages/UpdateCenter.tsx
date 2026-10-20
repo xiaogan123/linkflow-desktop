@@ -9,7 +9,7 @@ type Props={demo:boolean;platform?:string;currentVersion?:string;taskBusy:boolea
 
 const activePhases=new Set<UpdatePhase>(['checking','downloading','installing']);
 const phaseCopy:Record<UpdatePhase,{label:string;title:string;body:string;tone:string}>={
-  idle:{label:'尚未检查',title:'在外链助手内完成更新',body:'外链助手启动后会检查官方更新，运行期间每 12 小时再检查；由你决定何时下载和安装。',tone:'muted'},
+  idle:{label:'尚未检查',title:'在外链助手内完成更新',body:'外链助手启动后会检查官方更新，运行期间每 2 小时、以及切回窗口时再检查；由你决定何时下载和安装。',tone:'muted'},
   checking:{label:'正在检查',title:'正在检查新版本',body:'正在读取官方更新信息，请稍候。',tone:'blue'},
   available:{label:'有可用更新',title:'新版本可以下载',body:'查看版本说明后，可直接在这里下载。',tone:'blue'},
   downloading:{label:'正在下载',title:'正在下载更新',body:'可以继续查看页面，也可以取消本次下载。',tone:'blue'},

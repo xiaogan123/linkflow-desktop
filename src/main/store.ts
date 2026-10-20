@@ -57,7 +57,7 @@ function reconcileEmailWaits(state:State):void{
     if(!activeEmailWait(task))task.emailWait=undefined;
   }
 }
-export function defaultSettings():Settings{return {appearance:'system',provider:'codex',codexPath:'codex',model:'',reasoningEffort:undefined,articleReviewMode:'ai',dailyAnalysisAiLimit:10,preferredBrowser:'system',apiBase:'https://api.openai.com/v1',hasApiKey:false,hasAhrefsKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},channelTrials:{},mail:{host:'imap.gmail.com',port:993,user:'',secure:true,hasPassword:false}}}
+export function defaultSettings():Settings{return {appearance:'system',provider:'codex',codexPath:'codex',claudePath:'claude',model:'',reasoningEffort:undefined,articleReviewMode:'ai',dailyAnalysisAiLimit:10,preferredBrowser:'system',apiBase:'https://api.openai.com/v1',hasApiKey:false,hasAhrefsKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},channelTrials:{},mail:{host:'imap.gmail.com',port:993,user:'',secure:true,hasPassword:false}}}
 export function emptyState():State{
   const state:State={schemaVersion:3,reviewDefaultsVersion:1,analysisUsage:{},channelTermsCache:{},sites:[],tasks:[],accounts:[],mailboxes:[],accountBindings:[],settings:defaultSettings(),events:[],usage:{},customChannels:[],channelMetrics:{},siteOriginMigrations:[]};
   // New stores are already migrated, including channels with no historical task.

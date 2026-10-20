@@ -235,7 +235,7 @@ export function applyEvidencePatchResult(draft:NonNullable<Task['draft']>,facts:
   return {draft:patched,factManifest};
 }
 
-export const ARTICLE_PREFLIGHT_MESSAGES={site_forbidden_term:SITE_ACTION_MESSAGES.forbiddenTerm,site_target_not_allowed:SITE_ACTION_MESSAGES.targetNotAllowed,fact_manifest_invalid:'事实清单格式无效',fact_number_unsupported:'数字缺少原文依据',evidence_invalid:'引用未出现在资料快照',disclosure_missing:'缺少商业披露',link_count_invalid:'正文链接数量不符',language_invalid:'正文语种不符',length_invalid:'正文篇幅不符',format_invalid:'正文格式不符',return_promise:'内容包含收益承诺',price_prediction:'内容包含价格预测',referral_content:'内容包含推荐码或推荐链接'} as const;
+export const ARTICLE_PREFLIGHT_MESSAGES={site_forbidden_term:SITE_ACTION_MESSAGES.forbiddenTerm,site_target_not_allowed:SITE_ACTION_MESSAGES.targetNotAllowed,fact_manifest_invalid:'事实清单格式无效',fact_number_unsupported:'数字缺少原文依据',evidence_invalid:'引用未出现在资料快照',disclosure_missing:'缺少商业披露',link_count_invalid:'正文链接数量不符',language_invalid:'正文语种不符',length_invalid:'正文篇幅不符',format_invalid:'正文格式不符',return_promise:'内容包含收益承诺',process_leak:'正文提到了写稿过程（如“提供的材料”“选题页”）',price_prediction:'内容包含价格预测',referral_content:'内容包含推荐码或推荐链接'} as const;
 export function articleBodyUrls(body:string){
   const urls:string[]=[];
   const withoutMarkdown=body.replace(/\[[^\]]*\]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/g,(_whole,url:string)=>{urls.push(url);return ''});
@@ -332,6 +332,18 @@ function forecastIn(clause:string,pattern:RegExp,check:(match:RegExpExecArray)=>
   }
   return false;
 }
+/** Phrases that tell the reader how the article was produced: "the provided material", the topic page, the draft itself. */
+const PROCESS_LEAK=[
+  /资料快照|证据快照|选题(?:材料|资料|页面|页|来源)|指定(?:选题|材料|资料)|本稿|推广内容发布者/u,
+  /(?:^|[\s，。；：、！？“"（(]|根据|依据|按照?|仅凭|只凭|仅依据|只依据|由于|但|而|且|因|据)所?提供的(?:材料|资料|公开资料|公开材料|规则说明|说明|页面|信息|内容|来源)/u,
+  /(?:提供的|所给的?|上述|现有)(?:材料|资料)(?:中|里)?(?:没有|未|不含|并未)/u,
+  /\b(?:the |this |these )?provided (?:materials?|sources?|evidence|snapshot|pages?|documents?)\b|\b(?:evidence|source) snapshot\b|\b(?:assigned|designated) topic\b|\bmaterials? (?:provided|supplied)\b/i,
+];
+/** The first sentence that exposes the writing process, so the one rewrite can name it. */
+export function processLeakSentence(value:string):string|undefined{
+  for(const sentence of value.normalize('NFKC').split(/(?<=[。！？!?\n])|(?<=\.)\s+/u)){const text=sentence.trim();if(text&&PROCESS_LEAK.some(pattern=>pattern.test(text)))return text}
+  return undefined;
+}
 export function hasPricePrediction(value:string,now=new Date()):boolean{return pricePredictionSentence(value,now)!==undefined}
 /** The first sentence that states a price forecast, so a rewrite request can name it. */
 export function pricePredictionSentence(value:string,now=new Date()):string|undefined{
@@ -405,6 +417,8 @@ export function articleDraftPreflight(task:EvidenceTask,site:Site,channel:Channe
   if(containsReferralInformation(all,siteReferralCodes(site,task.evidenceSnapshot),new URL(site.url).hostname))return 'referral_content';
   if(hasPricePrediction(all))return 'price_prediction';
   if(hasReturnPromise(all))return 'return_promise';
+  // Only the written prose: the disclosure, risk note and signature the program adds are not the writer's words.
+  if(processLeakSentence([draft.title,draft.description,task.writingEnvelope?stripWritingEnvelope(body,task.writingEnvelope):body].join('\n')))return 'process_leak';
   if(task.writingEnvelope){
     if(!body.includes(task.writingEnvelope.disclosure))return 'disclosure_missing';
     const prose=stripWritingEnvelope(body,task.writingEnvelope),language=channel.languages.includes('*')?site.language:channel.languages[0]??site.language;

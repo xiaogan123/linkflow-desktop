@@ -1,6 +1,7 @@
 import type { Site, Snapshot, Task } from '../shared/types';
 import {displayParts} from './display-time';
-import { canonicalPublicPageUrl, publicationCounts } from '../shared/publication';
+import { canonicalPublicPageUrl, publicationCounts, reservesMonthlySlot } from '../shared/publication';
+import { SCHEDULING_DEFAULTS, siteMonthTarget } from '../shared/scheduling';
 import { taskDisplayState, compareHumanActionTasks } from './presentation';
 import { buildTrackingRows } from './search-tracking';
 export const uiCopy = {
@@ -49,7 +50,11 @@ export const uiCopy = {
   }
 } as const;
 export function nextTask(tasks: Task[], now: Date, siteId?: string): Task | undefined {
-  return tasks.filter(t => (!siteId || t.siteId === siteId) && !t.firstLiveAt && ['scheduled', 'in_progress'].includes(taskDisplayState(t, now).state)).sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))[0];
+  // The next publication is upcoming work: a skipped, failed or expired task (even one still waiting on an old submission's
+  // result) never counts as "下一条". A queued task just past its time is still next until the scheduler moves it on.
+  return tasks.filter(t => (!siteId || t.siteId === siteId) && !t.firstLiveAt && !['failed', 'skipped', 'expired', 'live'].includes(t.status)
+    && (t.status === 'running' || Date.parse(t.scheduledAt) >= now.getTime() - (t.status === 'queued' ? SCHEDULING_DEFAULTS.overdueAfterMs : 0))
+    && ['scheduled', 'in_progress'].includes(taskDisplayState(t, now).state)).sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))[0];
 }
 export function dateTime(value?: string): string {
   if (!value || !Number.isFinite(Date.parse(value))) return uiCopy.noNext;
@@ -77,14 +82,28 @@ export function siteState(site: Site, data: Snapshot, now: Date): string {
   if (site.status === 'analyzing') return '分析中';
   if (data.tasks.some(t => t.siteId === site.id && taskDisplayState(t, now).state === 'action_required')) return '要你处理';
   if (platformShortage(site, data, now)) return '平台不够';
+  // A newly added site waits for its articles to be read before anything can be planned.
+  // A failed read retries the next day by itself; say so rather than look like a normal start.
+  if (data.capacity?.find(c => c.siteId === site.id)?.blockingReason === 'topics_unknown') return site.topicsError ? '读不到文章' : '准备中';
   return '正常';
 }
 /** The platforms the scheduler can use cannot cover this month's target, whatever else the site is waiting for. */
+/** This month's goal as the scheduler plans it: a site's first month starts with one page. */
+export function monthGoal(site: Site, data: Snapshot, now: Date): string {
+  const goal = siteMonthTarget(site, now, data.settings.timezone);
+  return `${goal} 条${goal < site.monthlyTarget ? '（首月）' : ''}`;
+}
 export function platformShortage(site: Site, data: Snapshot, now: Date): boolean {
   // A paused, analyzing or unreadable site has its own state and notice; its capacity is not known yet.
   if (site.status !== 'ready') return false;
-  const capacity = data.capacity?.find(c => c.siteId === site.id);
-  return site.planStatus?.reasonCode === 'platform_capacity' || !!capacity && capacity.automaticPages !== undefined && capacity.automaticPages < Math.max(0, site.monthlyTarget - publicationCounts(site.id, data.tasks, now, data.settings.timezone).monthlyPages);
+  if (site.planStatus?.reasonCode === 'platform_capacity') return true;
+  // Same gap as the scheduler: this month's target minus what is published and what is already booked to publish.
+  const capacity = data.capacity?.find(c => c.siteId === site.id), timeZone = data.settings.timezone;
+  const booked = data.tasks.filter(task => task.siteId === site.id && reservesMonthlySlot(task, now, timeZone)).length;
+  const gap = Math.max(0, siteMonthTarget(site, now, timeZone) - publicationCounts(site.id, data.tasks, now, timeZone).monthlyPages - booked);
+  // Only a platform shortfall counts: unread or used-up articles, the AI allowance and waiting periods have their own states.
+  if (capacity?.blockingReason && !['no_automatic_channel', 'account_required'].includes(capacity.blockingReason)) return false;
+  return !!capacity && capacity.automaticPages !== undefined && capacity.automaticPages < gap;
 }
 export function uniquePublications(tasks: Task[]): Task[] {
   const result = new Map<string, Task>();
@@ -106,7 +125,7 @@ export function overviewNumbers(data: Snapshot, now: Date) {
   const links = linksSummary(linkRows(data));
   return {
     monthly: counts.reduce((a, c) => a + c.monthlyPages, 0),
-    target: sites.reduce((a, s) => a + s.monthlyTarget, 0),
+    target: sites.reduce((a, s) => a + siteMonthTarget(s, now, data.settings.timezone), 0),
     current: links.active,
     weight: links.weight,
     google: buildTrackingRows(data.sites, data.tasks).reduce((n, r) => n + r.gscMatches, 0)

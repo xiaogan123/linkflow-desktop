@@ -293,6 +293,7 @@ export function buildProfileDraftInstruction(profile: WritingProfile, genre: Wri
     '只写 title、description、body 和 facts。AI 只写正文；披露句、风险提示、品牌署名和指向本站的链接由程序插入，正文不自行添加这些内容。',
     'facts 为事实清单，每条含 claim、quote 和 url；quote 必须逐字摘录资料快照，claim 的数字和单位必须能在摘录中找到。未被资料支持的事实直接省略。',
     '不得编造数据、身份、体验、人名、案例、合作、收款或背书，不写假设案例或面向假想身份的选择建议。不作收益承诺、价格预测、交易推荐或排名承诺。',
+    '正文以作者口吻直接写给读者：引用时写出处名称（如某平台的帮助页或规则页），不得提及资料快照、提供的材料、选题页、本稿等写稿过程；资料没写到的内容直接不写，也不交代资料缺了什么。',
     '不得写邀请码、推荐码，禁止带 ref、referral、affiliate、invite 等推荐参数的链接。正文不得添加任何网址或链接；必要引用用 facts 的 url 指明资料来源。',
     options.articleRequired === false ? '非文章渠道只生成事实型 title 和 description，body 为空，facts 仍列出描述的依据。' : '',
     options.additionalRules ?? '', '严格返回 JSON，不使用引号中的示例句，不照抄其他稿件。',

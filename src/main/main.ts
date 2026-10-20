@@ -7,9 +7,11 @@ import {taskRetryHasExternalAttempt} from './task-retry';
 import {HUMAN_ACTION_IPC_COMMANDS} from '../shared/human-action';
 import {assertHumanWaitOpen} from './task-state';
 import { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu, Tray, nativeImage, safeStorage, systemPreferences, powerMonitor, clipboard } from 'electron';
+import { claudeLoggedIn } from '../integrations/claude-process';
+import type { UpdateState } from '../shared/update-types';
 import { basename, dirname, join } from 'node:path';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -131,6 +133,21 @@ let renderURL=devUrl||pathToFileURL(file).href;
 const MailboxPayload=z.object({id:z.string().uuid().optional(),label:z.string().min(1).max(100),host:z.string().max(253),port:z.number().int().min(1).max(65535),user:z.email().max(254),secure:z.literal(true),password:z.string().max(1024).optional(),aliases:z.array(z.email().max(254)).max(1000).optional(),siteIds:z.array(z.string().uuid()).max(1000).optional()}).strict();
 
 // Bursts of writes (a tick touching many tasks) reach the renderer as one refresh about every 300 ms.
+// A new version is announced once per version as a system notification too, so a window hidden in the tray still learns of it.
+// The version is remembered across restarts; a window in front already shows the in-app reminder, and "notify me" off means no notice.
+let versionNotice:Notification|undefined;
+const announcedVersionFile=()=>join(app.getPath('userData'),'update-announced.json');
+function notifyNewVersion(state:UpdateState){
+  if(state.phase!=='available'||!state.targetVersion)return;
+  let announced:string|undefined;try{announced=(JSON.parse(readFileSync(announcedVersionFile(),'utf8')) as {version?:string}).version}catch{/* none yet */}
+  if(announced===state.targetVersion)return;
+  try{writeFileSync(announcedVersionFile(),JSON.stringify({version:state.targetVersion}),{mode:0o600})}catch{/* still announce this run */}
+  if(win&&!win.isDestroyed()&&win.isVisible()&&win.isFocused())return;
+  if(controller&&!controller.store.read().settings.notify||!Notification.isSupported())return;
+  versionNotice=new Notification({title:`外链助手有新版本 ${state.targetVersion}`,body:'打开“设置 → 更新”即可下载并安装，网站和稿件都会保留。'});
+  versionNotice.on('click',()=>{if(win&&!win.isDestroyed()){win.show();win.focus()}});
+  versionNotice.show();
+}
 let broadcastTimer:ReturnType<typeof setTimeout>|undefined;
 function broadcast(){
   if(broadcastTimer)return;
@@ -143,6 +160,8 @@ function createWindow(){
   win.webContents.session.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
   win.webContents.on('will-attach-webview',event=>event.preventDefault());
   win.on('close',event=>{if(!quitting&&tray){event.preventDefault();win?.hide()}});
+  // Coming back to the window is a natural moment to look for a new version (still at most once every two hours).
+  win.on('focus',()=>{if(runtimeStarted&&!updating&&!quitting&&updater)void updater.checkIfDue().catch(()=>{})});
   win.on('closed',()=>{win=null});
   const created=win;
   rendererReadiness.reset();
@@ -161,6 +180,7 @@ function ensureRestoreIdle(){if(controller.store.read().settings.autoRun||contro
 async function detectAi(){
   const s=controller.store.read().settings;
   if(s.provider==='api'){controller.runtime.aiReady=s.hasApiKey&&!!s.model;broadcast();return;}
+  if(s.provider==='claude'){controller.runtime.aiReady=await claudeLoggedIn(s);broadcast();return;}
   // Read only auth status. No inference call or key-file reading on startup.
   try{const launch=resolveCodexLaunch(s.codexPath);const ok=await new Promise<boolean>(resolve=>{let output='';const p=spawn(launch.command,[...launch.prefixArgs,'login','status'],{stdio:['ignore','pipe','pipe'],shell:false,env:codexEnvironment(process.env,launch.envAdditions)});const timeout=setTimeout(()=>{p.kill();resolve(false)},10000);p.stdout.on('data',d=>{output+=d.toString().slice(0,2000)});p.stderr.on('data',d=>{output+=d.toString().slice(0,2000)});p.on('error',()=>{clearTimeout(timeout);resolve(false)});p.on('close',code=>{clearTimeout(timeout);resolve(code===0&&!/not logged in/i.test(output))})});controller.runtime.aiReady=ok;}catch{controller.runtime.aiReady=false}broadcast();
 }
@@ -492,7 +512,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'settings:test-ai':{const result=await testAi(store.read().settings,vault);controller.runtime.aiReady=result.ok;broadcast();return result;}
     case 'settings:test-mail':{const result=await testMail(store.read().settings,vault);controller.runtime.mailReady=result.ok;broadcast();return result;}
     case 'settings:discover-models':{
-      const input=z.object({provider:z.enum(['codex','api']).optional(),apiBase:z.url().max(1024).optional(),apiKey:z.string().max(1024).optional(),codexPath:z.string().max(1024).optional(),model:z.string().max(120).optional()}).parse(p??{});
+      const input=z.object({provider:z.enum(['codex','api','claude']).optional(),apiBase:z.url().max(1024).optional(),apiKey:z.string().max(1024).optional(),codexPath:z.string().max(1024).optional(),claudePath:z.string().max(1024).optional(),model:z.string().max(120).optional()}).parse(p??{});
       const saved=store.read().settings,normalizedBase=input.apiBase?normalizeApiBase(input.apiBase):undefined,settings={...saved,...input,...(normalizedBase?{apiBase:normalizedBase}:{})};if(settings.provider==='api'&&!settings.apiBase)throw Error('请填写 API 地址');
       const secrets=scopedApiSecrets(saved.apiBase,settings.apiBase,input.apiKey,vault);
       const result=await discoverModels(settings,secrets);controller.aiModels=result;broadcast();return result;
@@ -608,7 +628,7 @@ app.whenReady().then(async()=>{
   updater=new UpdateManager({currentVersion:app.getVersion(),platform:process.platform,arch:process.arch,packaged:app.isPackaged&&!selfTest,
     unsupportedReason:process.platform==='darwin'&&app.isPackaged&&!selfTest&&!macTarget?'请先将外链助手移到“应用程序”文件夹，重新打开后再更新':undefined,
     updatesDirectory:join(app.getPath('userData'),'updates'),applicationPath:updateApplicationPath,executablePath:updateExecutablePath,runtimeApplicationPath,runtimeExecutablePath:process.execPath,
-    helperPath:updateHelperPath,publicKey:Buffer.from(UPDATE_PUBLIC_KEY_SPKI_BASE64,'base64'),emit:state=>{if(win&&!win.isDestroyed())win.webContents.send('linkflow:update',state)}});
+    helperPath:updateHelperPath,publicKey:Buffer.from(UPDATE_PUBLIC_KEY_SPKI_BASE64,'base64'),emit:state=>{if(win&&!win.isDestroyed())win.webContents.send('linkflow:update',state);notifyNewVersion(state)}});
   await updater.initialize();
   if(selfTest)store.update(s=>{s.settings.autoRun=false;s.settings.provider='api';s.settings.hasApiKey=false});
   controller.onNotice=(title,body)=>{if(Notification.isSupported())new Notification({title,body}).show()};

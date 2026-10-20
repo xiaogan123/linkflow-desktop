@@ -389,7 +389,7 @@ export async function reviewArticleDraft(task:Task,site:Site,channel:Channel,set
     if(task.evidenceSnapshot&&task.draft){
       task={...task,factManifest:task.factManifest??deriveLiteralFactManifest(task.draft,task.evidenceSnapshot)};
       const snapshotPreflight=articleDraftPreflight(task,site,channel);
-      if(snapshotPreflight)return fail(ARTICLE_PREFLIGHT_MESSAGES[snapshotPreflight],[],snapshotPreflight==='evidence_invalid'||snapshotPreflight==='fact_number_unsupported'?'evidence_invalid':snapshotPreflight==='return_promise'||snapshotPreflight==='price_prediction'||snapshotPreflight==='referral_content'?'content_rejected':'format_invalid');
+      if(snapshotPreflight)return fail(ARTICLE_PREFLIGHT_MESSAGES[snapshotPreflight],[],snapshotPreflight==='evidence_invalid'||snapshotPreflight==='fact_number_unsupported'?'evidence_invalid':snapshotPreflight==='return_promise'||snapshotPreflight==='price_prediction'||snapshotPreflight==='process_leak'||snapshotPreflight==='referral_content'?'content_rejected':'format_invalid');
     }
     stage='ai';
     // A failed terms review is a platform-level unknown, not a draft format failure.

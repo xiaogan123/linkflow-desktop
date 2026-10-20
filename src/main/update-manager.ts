@@ -93,6 +93,9 @@ function parseSmallJson<T>(data:Buffer|string,maximum:number):T{const text=typeo
 async function hashFile(path:string,streamFactory:typeof createReadStream):Promise<string>{const hash=createHash('sha256');for await(const chunk of streamFactory(path))hash.update(chunk as Buffer);return hash.digest('hex')}
 function defaultLaunch(executable:string,args:string[],environment:NodeJS.ProcessEnv){const child=spawn(executable,args,{cwd:dirname(executable),detached:true,stdio:'ignore',shell:false,windowsHide:true,env:environment});child.unref();return child}
 
+/** Automatic reminder checks read the small signed feed at most this often; a new release is noticed within a couple of hours. */
+export const AUTOMATIC_CHECK_INTERVAL_MS=2*60*60*1000;
+
 export class UpdateManager {
   private readonly files:UpdateFilePorts;
   private readonly recoveryPorts:MacRecoveryPorts;
@@ -292,7 +295,7 @@ export class UpdateManager {
     const now=(this.options.now?.()??new Date()).getTime();
     const checked=Date.parse(this.current.checkedAt??'');
     const previous=Math.max(this.lastAutomaticCheckAt??-Infinity,Number.isFinite(checked)?checked:-Infinity);
-    if(!Number.isFinite(now)||now-previous<12*60*60*1000)return this.status();
+    if(!Number.isFinite(now)||now-previous<AUTOMATIC_CHECK_INTERVAL_MS)return this.status();
     this.lastAutomaticCheckAt=now;
     return this.check();
   }

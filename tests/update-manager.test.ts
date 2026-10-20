@@ -7,7 +7,7 @@ import {cp,lstat,mkdir,mkdtemp,readFile,readdir,realpath,rename,rm,writeFile} fr
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {promisify} from 'node:util';
-import {UpdateManager,recoveryCommandFailure} from '../src/main/update-manager';
+import {AUTOMATIC_CHECK_INTERVAL_MS,UpdateManager,recoveryCommandFailure} from '../src/main/update-manager';
 import type {UpdateHelperJob} from '../src/main/update-install';
 import {UPDATE_MANIFEST_URL,UPDATE_SIGNATURE_URL} from '../src/main/update-network';
 import {hashUpdateTree} from '../src/main/update-tree';
@@ -281,7 +281,7 @@ test('background reminder check uses signed metadata only, coalesces concurrent 
  const directory=await mkdtemp(join(tmpdir(),'linkflow-reminder-')),data=fixture('1.1.0',Buffer.from('installer'));let now=Date.parse('2026-10-15T00:00:00Z'),requests:string[]=[];const phases:string[]=[];
  try{const manager=new UpdateManager({...options(directory,data),now:()=>new Date(now),emit:s=>phases.push(s.phase),request:(async(i,init)=>{requests.push(String(i));return data.request(i,init)}) as typeof fetch});
  await Promise.all([manager.checkIfDue(),manager.checkIfDue()]);assert.equal(requests.length,2);assert.deepEqual(new Set(requests),new Set([UPDATE_MANIFEST_URL,UPDATE_SIGNATURE_URL]));assert.equal(manager.status().phase,'up-to-date');assert.deepEqual(phases,['checking','up-to-date']);
- now+=12*60*60*1000-1;await manager.checkIfDue();assert.equal(requests.length,2);now++;await manager.checkIfDue();assert.equal(requests.length,4);
+ now+=AUTOMATIC_CHECK_INTERVAL_MS-1;await manager.checkIfDue();assert.equal(requests.length,2);now++;await manager.checkIfDue();assert.equal(requests.length,4);
  await manager.check();assert.equal(requests.length,6);await manager.checkIfDue();assert.equal(requests.length,6);
  }finally{await rm(directory,{recursive:true,force:true})}
 });

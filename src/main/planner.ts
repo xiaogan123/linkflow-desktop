@@ -220,12 +220,12 @@ function taskPublicIdentity(state:State,task:Task):string{
   // Preserve a known old author only when its local account has since been removed.
   return saved&&!saved.includes(':site:')&&resolved.includes(':site:')?saved:resolved;
 }
-function schedulingPlatforms(channels:Channel[],state?:State,now=new Date()):SchedulePlatform[]{
+function schedulingPlatforms(channels:Channel[],state?:State,now=new Date(),usable=(site:Site,channel:Channel)=>usableSitePlatform(state!,site,channel,now)):SchedulePlatform[]{
   return channels.map(channel=>{
     const trial=state?channelIsTrial(channel,state.settings):channel.trial;
     const activeTask=trial&&state?state.tasks.find(task=>task.id===state.settings.channelTrials?.[channel.id]?.activeTaskId&&task.channelId===channel.id):undefined;
     const ownerReady=activeTask&&state?.sites.some(site=>site.id===activeTask.siteId&&site.status==='ready');
-    const eligibleSiteIds=activeTask?(ownerReady?[activeTask.siteId]:[]):state?.sites.filter(site=>site.status==='ready'&&usableSitePlatform(state,site,channel,now)).map(site=>site.id);
+    const eligibleSiteIds=activeTask?(ownerReady?[activeTask.siteId]:[]):state?.sites.filter(site=>site.status==='ready'&&usable(site,channel)).map(site=>site.id);
     return {id:channel.id,dailySites:platformDailyLimit(channel.id),...(trial?{monthlyLimit:1}:{}),...(state?{eligibleSiteIds}:{})};
   });
 }
@@ -251,10 +251,13 @@ function usableSitePlatform(state:State,site:Site,channel:Channel,now=new Date()
 }
 export function availableNetworkPlatforms(state:State,channels:Channel[],now=new Date()):SchedulePlatform[]{
   const ready=state.sites.filter(site=>site.status==='ready');
+  // Each site and platform pair is checked once: the filter below and the eligible site lists ask the same question.
+  const checked=new Map<string,boolean>();
+  const usable=(site:Site,channel:Channel)=>{const key=`${site.id}\n${channel.id}`;let value=checked.get(key);if(value===undefined){value=usableSitePlatform(state,site,channel,now);checked.set(key,value)}return value};
   // Unpromoted trials contribute one monthly planning slot across the network.
   return schedulingPlatforms(channels.filter(channel=>channel.retentionDays===undefined&&channel.enabled&&channel.free!=='paid'&&channel.free!=='unknown'&&state.settings.channelOverrides[channel.id]!==false&&['api','browser'].includes(channel.automation)&&(
-    ready.some(site=>usableSitePlatform(state,site,channel,now))||channelIsTrial(channel,state.settings)&&ready.some(site=>state.tasks.some(task=>task.id===state.settings.channelTrials?.[channel.id]?.activeTaskId&&task.siteId===site.id))
-  )),state,now);
+    ready.some(site=>usable(site,channel))||channelIsTrial(channel,state.settings)&&ready.some(site=>state.tasks.some(task=>task.id===state.settings.channelTrials?.[channel.id]?.activeTaskId&&task.siteId===site.id))
+  )),state,now,usable);
 }
 export interface QueuedScheduleChange {id:string;scheduledAt:string}
 /** Wake-up recovery changes a missed task at most twice; submitted work is never moved. */
@@ -546,13 +549,14 @@ function fittingSchedule(site:Site,candidates:CapacityCandidate[],predicate:(can
   return {scheduled:reservations.slice(0,count).map(slot=>slot.at)};
 }
 
-export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Channel[],now=new Date(),timeZone='UTC',state?:State,index?:CapacitySnapshotIndex):SiteCapacity{
+/** `network` is availableNetworkPlatforms for the same state, computed once by a caller that asks for many sites. */
+export function capacityFor(site:Site,tasks:Task[],matches:Match[],channels:Channel[],now=new Date(),timeZone='UTC',state?:State,index?:CapacitySnapshotIndex,network?:SchedulePlatform[]):SiteCapacity{
   const related=index?.tasksBySite.get(site.id)??tasks.filter(task=>task.siteId===site.id);
   const remaining=unusedSources(site.id,related,matches.map(item=>item.channel));
   const automaticUnused=remaining.automatic,manualUnused=remaining.manual;
   const monthsAtTarget=site.monthlyTarget>0?Math.floor(remaining.total/site.monthlyTarget):null;
-  const counts=publicationCounts(site.id,related,now,timeZone),pending=related.filter(task=>reservesMonthlySlot(task,now,timeZone)).length,gap=Math.max(0,site.monthlyTarget-counts.monthlyPages-pending);
-  const networkPlatforms=state?availableNetworkPlatforms(state,channels):undefined;
+  const counts=publicationCounts(site.id,related,now,timeZone),pending=related.filter(task=>reservesMonthlySlot(task,now,timeZone)).length,gap=Math.max(0,siteMonthTarget(site,now,timeZone)-counts.monthlyPages-pending);
+  const networkPlatforms=network??(state?availableNetworkPlatforms(state,channels):undefined);
   const ordered=state?rankedMatches(state,site,matches,related,now,timeZone,index?.sourceSites):matches.map((match,index)=>({match,index,readiness:fallbackReadiness(match.channel),usedThisMonth:false,lastUsed:Number.NEGATIVE_INFINITY}));
   const seen=new Set<string>(),candidates:CapacityCandidate[]=[];
   for(const {match:{channel},readiness} of ordered){

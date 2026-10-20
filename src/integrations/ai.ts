@@ -6,6 +6,7 @@ import type { AiModelDiscovery, AiModelOption, AiPort, SecretStore, Settings } f
 import {TaskReasonError} from '../shared/task-reasons';
 import {AI_REVIEW_MESSAGES} from '../shared/ai-review-messages';
 import { codexEnvironment, resolveCodexLaunch } from './codex-process';
+import { claudeJson, discoverClaudeModels } from './claude-process';
 import {discoverLocalCodexModels} from './codex-models';
 
 /**
@@ -106,7 +107,7 @@ export async function discoverApiModels(settings:Settings,secrets:SecretStore,tr
 
 export async function discoverCodexModels(settings:Settings,reader?:()=>Promise<AiModelOption[]>):Promise<AiModelDiscovery>{return discoverLocalCodexModels(settings,reader)}
 
-export async function discoverModels(settings:Settings,secrets:SecretStore):Promise<AiModelDiscovery>{return settings.provider==='api'?discoverApiModels(settings,secrets):discoverCodexModels(settings)}
+export async function discoverModels(settings:Settings,secrets:SecretStore):Promise<AiModelDiscovery>{return settings.provider==='api'?discoverApiModels(settings,secrets):settings.provider==='claude'?discoverClaudeModels(settings):discoverCodexModels(settings)}
 
 interface AiUsage {inputTokens?:number;outputTokens?:number;amount?:number;currency?:string}
 export interface AiRequestOptions {maxCompletionTokens?:number}
@@ -187,12 +188,18 @@ async function codexJson<T>(settings: Settings, prompt: string, schema: Record<s
   } finally { timeout.clear(); await rm(directory, { recursive: true, force: true }); }
 }
 
+async function localClaudeJson<T>(settings: Settings, prompt: string, schema: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  const timeout = withTimeout(signal, ['xhigh','max'].includes(settings.reasoningEffort??'')?HIGH_REASONING_CODEX_TIMEOUT_MS:TIMEOUT_MS);
+  try { return await claudeJson<T>(settings, prompt, schema, timeout.signal, text => parseAiJson<T>(text)); } finally { timeout.clear(); }
+}
+
 export function createAi(settings: Settings, secrets: SecretStore, onCall?: () => void,onUsage?:(usage:AiUsage)=>void): AiPort {
   return { async json<T>(instruction: string, data: unknown, schema: Record<string, unknown> = DEFAULT_SCHEMA, signal?: AbortSignal,options?:AiRequestOptions): Promise<T> {
     if (signal?.aborted) throw new TaskReasonError('temporary_failure','AI 请求已取消');
     const maxCompletionTokens=completionTokenLimit(options);
     const prompt = boundedPrompt(instruction, data);
     onCall?.();
+    if (settings.provider === 'claude') return localClaudeJson<T>(settings, prompt, schema, signal);
     return settings.provider === 'api' ? apiJson<T>(settings, secrets, prompt, schema, signal,onUsage,maxCompletionTokens) : codexJson<T>(settings, prompt, schema, signal);
   } };
 }

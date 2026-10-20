@@ -257,6 +257,21 @@ function hasRetainedEvidenceDraft(task:Task):boolean{
   return task.reasonCode==='evidence_truncated'&&!!task.draft&&!task.firstLiveAt&&!hasUnresolvedExternalAttempt(task);
 }
 
+interface ClassifiedTopic {url:string;index:number;canonical?:string;article:boolean;updated:number;language:number}
+const classifiedTopicCache=new WeakMap<SiteTopic[],{url:string;domain:string;language:string;rows:ClassifiedTopic[]}>();
+/** Which of a site's topics are article pages depends only on the topic list and the site's address and language.
+ * Topic lists are replaced, never edited in place, so the list itself is the cache key; tasks are never cached. */
+function classifiedTopics(site:Site):ClassifiedTopic[]{
+  const topics=site.topics??[],cached=classifiedTopicCache.get(topics);
+  if(cached&&cached.url===site.url&&cached.domain===site.domain&&cached.language===site.language)return cached.rows;
+  const rows=topics.map((topic,index)=>{
+    const canonical=canonicalPublicPageUrl(topic.url);
+    return {url:topic.url,index,canonical,article:!!canonical&&isArticleTopicUrl(canonical,site),updated:validDate(topic.lastModified)?.getTime()??validDate(topic.discoveredAt)?.getTime()??0,language:articleTopicLanguageScore(topic,site.language)};
+  });
+  classifiedTopicCache.set(topics,{url:site.url,domain:site.domain,language:site.language,rows});
+  return rows;
+}
+
 function topicCandidates(site:Site,tasks:Task[],topicKey=canonicalPublicPageUrl):{known:boolean;available:string[];invalid:boolean;retained:boolean}{
   const known=Array.isArray(site.topics);
   if(!known)return {known:false,available:[],invalid:false,retained:false};
@@ -270,10 +285,10 @@ function topicCandidates(site:Site,tasks:Task[],topicKey=canonicalPublicPageUrl)
   let retained=false;
   const unique=new Map<string,{url:string;updated:number;index:number;language:number}>();
   let valid=0;
-  for(const [index,topic] of (site.topics??[]).entries()){
-    const canonical=canonicalPublicPageUrl(topic.url),key=topicKey(topic.url);
-    const modified=validDate(topic.lastModified)?.getTime()??validDate(topic.discoveredAt)?.getTime()??0;
-    if(canonical&&key&&isArticleTopicUrl(canonical,site)){valid++;if(retainedDraftTopics.has(key)){retained=true;continue}if(!used.has(key)&&!unique.has(key))unique.set(key,{url:canonical,updated:modified,index,language:articleTopicLanguageScore(topic,site.language)})}
+  for(const {url,index,canonical,article,updated,language} of classifiedTopics(site)){
+    if(!canonical||!article)continue;
+    const key=topicKey(url);
+    if(key){valid++;if(retainedDraftTopics.has(key)){retained=true;continue}if(!used.has(key)&&!unique.has(key))unique.set(key,{url:canonical,updated,index,language})}
   }
   return {known:true,available:[...unique.values()].sort((a,b)=>b.language-a.language||b.updated-a.updated||a.index-b.index).map(topic=>topic.url),invalid:(site.topics?.length??0)>0&&valid===0,retained};
 }

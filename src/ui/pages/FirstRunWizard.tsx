@@ -22,12 +22,14 @@ export function FirstRunWizard({data,disabled,onAction,onClose,onSettings,onConn
   const [busy,setBusy]=useState(false);
   const titles=['连接 AI','添加网站','选择发布方式','值得连一次的平台'];
 
-  const connectCodex=async()=>{
+  const connectLocal=async(provider:'codex'|'claude')=>{
+    const name=provider==='codex'?'本机 Codex':'本机 Claude';
     setBusy(true);setAiMessage('');
     try{
-      await onAction('settings:save',{provider:'codex'});
+      // A model fixed for another provider means nothing here; use the account's default.
+      await onAction('settings:save',data.settings.provider===provider?{provider}:{provider,model:'',reasoningEffort:undefined});
       const result=await onAction<{ok:boolean;message:string}>('settings:test-ai');
-      setAiMessage(result?.ok?'AI 已连接。':result?.message??'没有连上本机 Codex，可以到设置里换一种方式。');
+      setAiMessage(result?.ok?'AI 已连接。':result?.message??`没有连上${name}，可以到设置里换一种方式。`);
     }finally{setBusy(false)}
   };
   const applyMode=async()=>{
@@ -56,7 +58,8 @@ export function FirstRunWizard({data,disabled,onAction,onClose,onSettings,onConn
     {step===1&&<section>
       <p>外链助手用 AI 写稿和复核。</p>
       {data.runtime.aiReady?<p className="inline-status">AI 已连接。</p>:<div className="toolbar-actions">
-        <Button variant="primary" disabled={disabled||busy} onClick={()=>void connectCodex()}>{busy?'正在连接…':'用本机 Codex'}</Button>
+        <Button variant="primary" disabled={disabled||busy} onClick={()=>void connectLocal('codex')}>{busy?'正在连接…':'用本机 Codex'}</Button>
+        <Button disabled={disabled||busy} onClick={()=>void connectLocal('claude')}>用本机 Claude</Button>
         <Button disabled={disabled||busy} onClick={onSettings}>其他 AI 服务</Button></div>}
       {aiMessage&&<p role="status" className="inline-status">{aiMessage}</p>}
       <div className="dialog-actions"><Button variant="primary" onClick={()=>setStep(2)}>{data.runtime.aiReady?'下一步':'先跳过，下一步'}</Button></div>
