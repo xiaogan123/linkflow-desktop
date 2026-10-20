@@ -23,3 +23,16 @@ test('a Telegraph page offers to remove the coded sentence; an anonymous page of
   assert.equal((html.match(/>不再提醒<\/button>/g)??[]).length,2);
   assert.match(html,/软件不能修改这个平台上已发布的文章/);
 });
+
+import {migrateState,emptyState} from '../src/main/store';
+test('Telegraph referral reminders dismissed while ownership could not be confirmed come back once',()=>{
+  const state=emptyState();delete (state as {telegraphReminderReset?:1}).telegraphReminderReset;
+  const scan=(acknowledgedAt?:string)=>({version:1 as const,checkedAt:'2026-10-20T00:00:00.000Z',referral:true,legacyMarkers:[],...(acknowledgedAt?{acknowledgedAt}:{})});
+  state.tasks=[live('tg','telegraph',{remoteContentScan:scan('2026-10-20T05:40:00.000Z')}),live('sn','supanote',{remoteContentScan:scan('2026-10-20T05:41:00.000Z')})];
+  const migrated=migrateState(state);
+  assert.equal(migrated.tasks.find(task=>task.id==='tg')!.remoteContentScan!.acknowledgedAt,undefined);
+  assert.equal(migrated.tasks.find(task=>task.id==='sn')!.remoteContentScan!.acknowledgedAt,'2026-10-20T05:41:00.000Z');
+  // Later dismissals stay dismissed.
+  migrated.tasks.find(task=>task.id==='tg')!.remoteContentScan!.acknowledgedAt='2026-10-21T00:00:00.000Z';
+  assert.equal(migrateState(migrated).tasks.find(task=>task.id==='tg')!.remoteContentScan!.acknowledgedAt,'2026-10-21T00:00:00.000Z');
+});

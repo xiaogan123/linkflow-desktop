@@ -124,7 +124,10 @@ test('reconciliation returns the sole full account-owned fingerprint match', asy
     status: 'found', publicUrl: 'https://telegra.ph/Expected-10-04',
   });
   assert.deepEqual(calls.map(call => new URL(call.url).pathname), ['/getPageList', '/getPage/Expected-10-04']);
-  assert.ok(calls.every(call => !call.url.includes(token) && call.fields.get('access_token') === token));
+  // Only the account's own page list takes the token; getPage ignores it, so it is never sent there.
+  assert.ok(calls.every(call => !call.url.includes(token)));
+  assert.equal(calls[0].fields.get('access_token'), token);
+  assert.equal(calls[1].fields.has('access_token'), false);
   assert.equal(calls[0].fields.get('offset'), '0');
   assert.equal(calls[0].fields.get('limit'), '50');
   assert.equal(calls[1].fields.get('return_content'), 'true');
@@ -347,9 +350,12 @@ test('the page is rewritten only after ownership is confirmed and the original s
   const base=expectedContent(),withCode:TelegraphNode[]=[{tag:'p',children:['Promotional note. The site code is BN12345.']},...base];
   let current=withCode,edits=0,canEdit=true;const archived:unknown[]=[];
   const transport:TelegraphTransport=async(url,init)=>{
-    const fields=new URLSearchParams(String(init.body));assert.equal(fields.get('access_token'),token);
-    if(url.includes('/editPage/')){edits++;assert.equal(fields.get('title'),title);assert.equal(fields.get('author_name'),author);current=JSON.parse(fields.get('content')!);}
-    return apiJson({...detail('original-article-09-27',current),can_edit:canEdit});
+    const fields=new URLSearchParams(String(init.body));
+    // Ownership is only visible in the account's own page list; getPage carries no token.
+    if(url.endsWith('/getPageList')){assert.equal(fields.get('access_token'),token);return apiJson({total_count:canEdit?1:0,pages:canEdit?[summary('original-article-09-27')]:[]});}
+    if(url.includes('/editPage/')){edits++;assert.equal(fields.get('access_token'),token);assert.equal(fields.get('title'),title);assert.equal(fields.get('author_name'),author);current=JSON.parse(fields.get('content')!);}
+    else assert.equal(fields.has('access_token'),false);
+    return apiJson(detail('original-article-09-27',current));
   };
   const input=()=>({task:context.task,site:context.site,account,token,signal:new AbortController().signal,archive:async(page:unknown)=>{archived.push(page)}});
   const cleaned=await removeTelegraphReferral(input(),text=>/BN12345/.test(text),{transport});

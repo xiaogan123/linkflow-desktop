@@ -41,7 +41,7 @@ import {migrateTaskReasons} from './task-reason-migration';
 import {HUMAN_ACTION_MESSAGES, safeHumanActionUrl} from '../shared/human-action';
 import type {ChannelTermsCache} from './article-evidence';
 
-export interface State {reviewDefaultsVersion?:1;analysisUsage?:Record<string,number>;emailConsumptions?:Array<{channelId:string;recipient:string;messageIds:string[]}>;channelTermsCache?:Record<string,ChannelTermsCache>;schemaVersion?:number;sites:Site[];tasks:Task[];accounts:Account[];mailboxes:Mailbox[];accountBindings:SiteAccountBinding[];settings:Settings;events:Event[];usage:Record<string,number>;customChannels?:Channel[];channelMetrics?:Record<string,{metrics?:ChannelMetric[];authority?:Channel['authority'];traffic?:Channel['traffic']} >;siteOriginMigrations?:SiteOriginMigration[]}
+export interface State {reviewDefaultsVersion?:1;/** 1.2.40 brought back Telegraph referral reminders dismissed while their ownership check was broken. */telegraphReminderReset?:1;analysisUsage?:Record<string,number>;emailConsumptions?:Array<{channelId:string;recipient:string;messageIds:string[]}>;channelTermsCache?:Record<string,ChannelTermsCache>;schemaVersion?:number;sites:Site[];tasks:Task[];accounts:Account[];mailboxes:Mailbox[];accountBindings:SiteAccountBinding[];settings:Settings;events:Event[];usage:Record<string,number>;customChannels?:Channel[];channelMetrics?:Record<string,{metrics?:ChannelMetric[];authority?:Channel['authority'];traffic?:Channel['traffic']} >;siteOriginMigrations?:SiteOriginMigration[]}
 /** Keep mail receipts before retiring stale waits, including direct planner writes. */
 function reconcileEmailWaits(state:State):void{
   for(const task of state.tasks){
@@ -59,7 +59,7 @@ function reconcileEmailWaits(state:State):void{
 }
 export function defaultSettings():Settings{return {appearance:'system',provider:'codex',codexPath:'codex',claudePath:'claude',model:'',reasoningEffort:undefined,articleReviewMode:'ai',dailyAnalysisAiLimit:10,preferredBrowser:'system',apiBase:'https://api.openai.com/v1',hasApiKey:false,hasAhrefsKey:false,autoRun:true,launchAtLogin:false,notify:true,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,maxAttempts:3,maxSteps:18,dailyAiLimit:40,channelOverrides:{},channelTrials:{},mail:{host:'imap.gmail.com',port:993,user:'',secure:true,hasPassword:false}}}
 export function emptyState():State{
-  const state:State={schemaVersion:3,reviewDefaultsVersion:1,analysisUsage:{},channelTermsCache:{},sites:[],tasks:[],accounts:[],mailboxes:[],accountBindings:[],settings:defaultSettings(),events:[],usage:{},customChannels:[],channelMetrics:{},siteOriginMigrations:[]};
+  const state:State={schemaVersion:3,reviewDefaultsVersion:1,telegraphReminderReset:1,analysisUsage:{},channelTermsCache:{},sites:[],tasks:[],accounts:[],mailboxes:[],accountBindings:[],settings:defaultSettings(),events:[],usage:{},customChannels:[],channelMetrics:{},siteOriginMigrations:[]};
   // New stores are already migrated, including channels with no historical task.
   // Reopening or restoring them must not add a different set of trial markers.
   migrateChannelTrials(state,CHANNELS);
@@ -849,6 +849,11 @@ export function migrateState(input:State):State{
     if(saved.metrics===undefined&&saved.authority)saved.metrics=legacyAuthorityMetrics(saved.authority,{domain:channel?.domain,linkScope:channelMetricLinkScope(channelId)});
   }
   state.siteOriginMigrations=Array.isArray(state.siteOriginMigrations)?state.siteOriginMigrations:[];
+  if(state.telegraphReminderReset!==1){
+    // 1.2.39 could not confirm who owned a Telegraph page, so "stop reminding me" was the only choice offered; now it can be fixed.
+    for(const task of state.tasks??[])if(task.channelId==='telegraph'&&task.remoteContentScan?.referral&&task.remoteContentScan.acknowledgedAt)delete task.remoteContentScan.acknowledgedAt;
+    state.telegraphReminderReset=1;
+  }
   if(state.reviewDefaultsVersion!==1){
     const inherited=state.settings?.articleReviewMode==='ai'?'ai':'manual';
     for(const site of state.sites)if(site.articleReviewMode===undefined)site.articleReviewMode=inherited;

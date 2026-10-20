@@ -630,13 +630,13 @@ export async function reconcileTelegraphTask(
   const matches: string[] = [];
   try {
     for (const candidate of candidates) {
+      // The candidate came from this account's own page list; getPage itself ignores the token.
       const result = await apiCall('getPage', {
-        access_token: token,
         return_content: 'true',
       }, context, transport, candidate.path);
       const identity = pageIdentity(result);
       if (!identity || identity.path !== candidate.path || identity.url !== candidate.url
-        || result.can_edit !== true || typeof result.title !== 'string'
+        || typeof result.title !== 'string'
         || result.title.normalize('NFC') !== candidate.title) return unknown;
       const content = canonicalTelegraphContent(result.content);
       if (!content) return unknown;
@@ -799,6 +799,17 @@ export function stripReferralSentences(nodes: unknown, isReferral: (text: string
   return blocked ? { blocked } : { nodes: list, removed };
 }
 
+/** Whether the account behind this token published the page: Telegraph only says so in the account's own page list. */
+async function accountOwnsPage(token: string, path: string, context: ExecutionContext, transport: TelegraphTransport): Promise<boolean> {
+  for (let offset = 0; offset < 1000; offset += 200) {
+    const list = await apiCall('getPageList', { access_token: token, offset: String(offset), limit: '200' }, context, transport);
+    const pages = Array.isArray(list.pages) ? list.pages as Array<{ path?: unknown }> : [];
+    if (pages.some(item => item.path === path)) return true;
+    if (pages.length < 200 || !Number.isSafeInteger(list.total_count) || offset + 200 >= (list.total_count as number)) return false;
+  }
+  return false;
+}
+
 export type TelegraphCleanResult =
   | { status: 'cleaned'; removed: string[] }
   | { status: 'unchanged' }
@@ -815,9 +826,12 @@ export async function removeTelegraphReferral(input: TelegraphCleanInput, isRefe
   try { path = decodeURIComponent(new URL(task.publicUrl).pathname.slice(1)); } catch { return { status: 'blocked', message: '公开地址无效，未修改。' }; }
   const target = sourceUrl(site.url), sameUrl = (value: string | undefined) => { try { return !!value && decodeURI(value) === decodeURI(task.publicUrl!); } catch { return false; } };
   let page: ApiSuccess;
-  try { page = await apiCall('getPage', { access_token: token, return_content: 'true' }, call, transport, path); }
-  catch { return { status: 'blocked', message: 'Telegraph 暂时无法读取这篇文章，未修改。' }; }
-  if (!sameUrl(pageIdentity(page)?.url) || page.can_edit !== true) return { status: 'blocked', message: '这篇文章不属于记录中的 Telegraph 账号，未修改。' };
+  try {
+    // getPage ignores the token, so ownership comes from the account's own page list.
+    if (!await accountOwnsPage(token, path, call, transport)) return { status: 'blocked', message: '这篇文章不在记录中这个 Telegraph 账号发布的页面里，未修改。' };
+    page = await apiCall('getPage', { return_content: 'true' }, call, transport, path);
+  } catch { return { status: 'blocked', message: 'Telegraph 暂时无法读取这篇文章，未修改。' }; }
+  if (!sameUrl(pageIdentity(page)?.url)) return { status: 'blocked', message: 'Telegraph 返回的页面与这篇外链不一致，未修改。' };
   const title = String(page.title ?? ''), authorName = String(page.author_name ?? ''), authorUrl = typeof page.author_url === 'string' ? page.author_url : undefined;
   if (isReferral(`${title}\n${authorName}\n${authorUrl ?? ''}`)) return { status: 'blocked', message: '推荐信息在标题或作者信息里，软件不改这些，未修改。' };
   const linksBefore = siteAnchors(page.content, target);
@@ -836,7 +850,7 @@ export async function removeTelegraphReferral(input: TelegraphCleanInput, isRefe
     return { status: 'uncertain', message: '修改请求的结果不确定，请打开页面确认。' };
   }
   try {
-    const after = await apiCall('getPage', { access_token: token, return_content: 'true' }, call, transport, path);
+    const after = await apiCall('getPage', { return_content: 'true' }, call, transport, path);
     if (isReferral(textOf(after.content)) || JSON.stringify(siteAnchors(after.content, target)) !== JSON.stringify(linksBefore))
       return { status: 'uncertain', message: 'Telegraph 已接受修改，但读回的页面与预期不同，请打开页面确认。' };
   } catch { return { status: 'uncertain', message: '已提交修改，但暂时读不回页面，请打开页面确认。' }; }
