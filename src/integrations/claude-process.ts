@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, extname, isAbsolute, join, resolve, win32 } from 'node:path';
+import { join, posix, resolve, win32 } from 'node:path';
 import { TaskReasonError } from '../shared/task-reasons';
 import type { AiModelDiscovery, AiModelOption, Settings } from '../shared/types';
 
@@ -12,13 +12,15 @@ export interface ClaudeResolveOptions { platform?: NodeJS.Platform; pathEnv?: st
 /** Where the official installers put the CLI when a desktop app does not inherit the shell's PATH. */
 function knownLocations(platform: NodeJS.Platform, home: string): string[] {
   return platform === 'win32'
-    ? [join(home, '.local', 'bin', 'claude.exe'), join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd')]
-    : [join(home, '.local', 'bin', 'claude'), join(home, '.claude', 'local', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude'];
+    ? [win32.join(home, '.local', 'bin', 'claude.exe'), win32.join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd')]
+    : [posix.join(home, '.local', 'bin', 'claude'), posix.join(home, '.claude', 'local', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude'];
 }
 
 /** Find the official Claude Code CLI without a shell: an absolute path, a PATH entry, or the installers' default places. */
 export function resolveClaudeLaunch(configuredPath: string, options: ClaudeResolveOptions = {}): ClaudeLaunch {
   const platform = options.platform ?? process.platform, exists = options.exists ?? existsSync, home = options.home ?? homedir();
+  // Paths follow the target system's rules, not the machine running this code.
+  const { dirname, extname, isAbsolute, join } = platform === 'win32' ? win32 : posix;
   const pathEnv = options.pathEnv ?? process.env.PATH ?? process.env.Path ?? '';
   const requested = configuredPath.trim() || 'claude';
   const direct = isAbsolute(requested) || requested.includes('/') || requested.includes('\\');
@@ -41,7 +43,7 @@ export function resolveClaudeLaunch(configuredPath: string, options: ClaudeResol
   if (!exists(script)) throw new TaskReasonError('temporary_failure', '找不到 Claude Code 的 npm 入口；请重新安装 Claude Code');
   const sibling = join(dirname(located), 'node.exe');
   // Empty PATH segments would name a relative node.exe in the working directory; only real directories count.
-  const node = exists(sibling) ? sibling : pathEnv.split(';').map(part => part.trim().replace(/^"|"$/g, '')).filter(part => part && win32.isAbsolute(part)).map(part => join(part, 'node.exe')).find(exists);
+  const node = exists(sibling) ? sibling : pathEnv.split(';').map(part => part.trim().replace(/^"|"$/g, '')).filter(part => part && isAbsolute(part)).map(part => join(part, 'node.exe')).find(exists);
   if (!node) throw new TaskReasonError('temporary_failure', '未找到运行 Claude Code 所需的 Node.js');
   return { command: node, prefixArgs: [script] };
 }
@@ -63,7 +65,7 @@ export function claudeEnvironment(base: NodeJS.ProcessEnv = process.env, platfor
   // Inside a running Claude Code session these belong to that session, not to the user's own sign-in.
   if (!base.CLAUDECODE) for (const [key, value] of Object.entries(base)) if (LOGIN_VARIABLE.test(key) && value) env[key] = value;
   Object.assign(env, settingsVariables(base));
-  env.PATH = platform === 'win32' ? (base.PATH || base.Path || '') : [join(base.HOME ?? homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', base.PATH || '/usr/bin:/bin'].join(':');
+  env.PATH = platform === 'win32' ? (base.PATH || base.Path || '') : [posix.join(base.HOME ?? homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin', base.PATH || '/usr/bin:/bin'].join(':');
   return env;
 }
 
