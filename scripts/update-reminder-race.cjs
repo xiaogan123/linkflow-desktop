@@ -21,6 +21,8 @@ if(!process.versions.electron){
  ipcMain.handle('fixture',async(_e,name)=>{calls.push(name);if(name==='snapshot')return evaluate('window.fixtureSnapshot()');if(name==='app:ready')return true;if(name==='app:update-status'){if(holdNext){holdNext=false;const old={...state};return new Promise(resolve=>{pendingStatus=()=>resolve(old)})}return state;}throw Error('Unexpected fixture mutation '+name)});
  app.whenReady().then(async()=>{try{
  win=new BrowserWindow({width:1100,height:820,show:false,webPreferences:{preload:join(dir,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});await win.loadFile(join(dir,'index.html'));await delay(250);
+ // Slow CI runners may not have issued the first status read or ready acknowledgement yet; wait for both, up to 5 s.
+ for(let waited=0;waited<50&&!(calls.includes('app:update-status')&&calls.includes('app:ready'));waited++)await delay(100);
  check('initial render reads local status without issuing update mutations',calls.includes('app:update-status')&&!mutations().length&&calls.filter(n=>n==='app:ready').length===1);
  await emit({phase:'available',targetVersion:'1.2.30'});check('new version appears in the sidebar notice',await evaluate(`${noticeText}.includes("1.2.30")`));
  const output=join(process.cwd(),'.evidence/update-reminder-race');mkdirSync(output,{recursive:true});writeFileSync(join(output,'available.png'),(await win.webContents.capturePage()).toPNG());

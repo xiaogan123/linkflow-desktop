@@ -99,6 +99,8 @@ if(!process.versions.electron){
     win=new BrowserWindow({width:1050,height:720,useContentSize:true,show:false,webPreferences:{preload:join(dir,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
     await win.loadFile(join(dir,'index.html'));
     await waitFor('document.body.innerText.includes("manual.example")');
+    // Slow CI runners can paint before the ready acknowledgement lands; wait for it, then a moment more to catch a duplicate.
+    for(let waited=0;waited<50&&!actions.some(item=>item.name==='app:ready');waited++)await delay(100);await delay(300);
     check('renderer acknowledges startup once after the first snapshot',actions.filter(item=>item.name==='app:ready').length===1);
     check('first-run guide stays closed when sites already exist',!(await evaluate('!!document.querySelector("[role=dialog]")')));
 
