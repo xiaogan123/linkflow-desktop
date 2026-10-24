@@ -22,6 +22,8 @@ if(!process.versions.electron){
  ipcMain.handle('fixture',async(_e,name)=>{calls.push(name);if(name==='snapshot')return evaluate('window.fixtureSnapshot()');if(name==='app:update-status')return state;if(name==='app:ready')return true;throw Error('Unexpected fixture mutation '+name)});
  app.whenReady().then(async()=>{try{
  win=new BrowserWindow({width:1100,height:820,show:false,webPreferences:{preload:join(dir,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});await win.loadFile(join(dir,'index.html'));await delay(250);
+ // Slow CI runners may not have issued the first status read 250 ms after load; wait for it, up to 5 s.
+ for(let waited=0;waited<50&&!calls.includes('app:update-status');waited++)await delay(100);
  check('initial render reads local status without issuing update mutations',calls.includes('app:update-status')&&onlyReads()&&!await evaluate(`!!${notice}`));
  await emit({phase:'available',targetVersion:'1.2.30'});check('new version appears in the persistent sidebar notice with a way to open it',await evaluate(`${noticeText}.includes("1.2.30")&&[...${notice}.querySelectorAll("button")].some(b=>b.innerText.trim()==="查看")`));
  const output=join(process.cwd(),'.evidence/update-reminder');mkdirSync(output,{recursive:true});writeFileSync(join(output,'available.png'),(await win.webContents.capturePage()).toPNG());

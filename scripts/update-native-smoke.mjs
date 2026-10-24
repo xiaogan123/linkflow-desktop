@@ -1,7 +1,7 @@
 import {build} from 'esbuild';
 import {extractFile,uncache} from '@electron/asar';
 import {createWriteStream} from 'node:fs';
-import {copyFile,mkdtemp,mkdir,readFile,stat,writeFile} from 'node:fs/promises';
+import {copyFile,mkdtemp,mkdir,readFile,rm,stat,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {execFile,spawn} from 'node:child_process';
@@ -137,6 +137,8 @@ await writeFile(resultPath,JSON.stringify(report,null,2));
 await mkdir(plan.evidenceDirectory,{recursive:true});await copyFile(resultPath,join(plan.evidenceDirectory,`native-update-${process.platform}.json`));
 console.log('NATIVE_UPDATE_RESULT '+JSON.stringify(report));
 if(process.platform==='win32')await run(join(application,'Uninstall 外链助手.exe'),['/S']);
+// The report is already saved as evidence; each run downloads and installs a full app (about 1 GB), so a passing run removes its scratch copy.
+if(process.env.LINKFLOW_KEEP_NATIVE_SMOKE!=='1')await rm(directory,{recursive:true,force:true}).catch(error=>console.warn(`NATIVE_UPDATE_CLEANUP_SKIPPED ${error.message}`));
 }
 
 const invocation=invocationFor(process.argv.slice(2));
