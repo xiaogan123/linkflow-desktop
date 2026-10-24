@@ -10,6 +10,7 @@ import {AccountConnectionGuide} from '../src/ui/pages/AccountConnectionGuide';
 import {AccountsPage} from '../src/ui/pages/AccountsPage';
 import {ArticleConnection} from '../src/ui/pages/ArticleConnection';
 import {HereNowConnection} from '../src/ui/pages/HereNowConnection';
+import {ShiplyConnection} from '../src/ui/pages/ShiplyConnection';
 
 const stamp='2026-10-10T00:00:00.000Z';
 function snapshot(accounts:Account[]=[],sites:Snapshot['sites']=[]):Snapshot{
@@ -97,6 +98,26 @@ test('a saved here.now identity has explicit management actions and summary rout
   const markup=renderToStaticMarkup(createElement(AccountsPage,{data,disabled:false,onImport:()=>{},onEdit:()=>{},onDelete:()=>{},onAction:noop,onSetup:()=>{}}));
   assert.match(markup,/管理 here\.now 页面与网站关联/);assert.match(markup,/使用已保存 key 重新验证 here\.now/);
   const drawer=renderToStaticMarkup(createElement(HereNowConnection,{data,disabled:false,account:saved,onClose:()=>{},onAction:noop}));assert.match(drawer,/用已保存 key 验证并更新/);assert.doesNotMatch(drawer,/disabled=""[^>]*>用已保存 key 验证并更新/);
+});
+
+test('email connection drawers retain the original pending identity and unknown requests cannot resend',()=>{
+  for(const stage of ['code_sent','request_unknown','verify_unknown'] as const){
+    const original=account('here-now',{status:'needs_verification',hasPassword:false,hereNowEmail:{version:1,emailHash:'a'.repeat(64),requestedAt:stamp,keyName:'site-publishing',stage}});
+    const markup=renderToStaticMarkup(createElement(HereNowConnection,{data:snapshot([original]),disabled:false,account:original,onClose:()=>{},onAction:noop}));
+    assert.doesNotMatch(markup,/>请求一次验证码</);
+    assert.match(markup,/<input(?=[^>]*aria-label="here.now 收件邮箱")(?=[^>]*disabled="")(?=[^>]*value="owner@example.test")[^>]*>/);
+    if(stage==='code_sent'){
+      assert.equal(accountNextStep(original,0,true),'验证码已发送 · 等待原邮箱验证');
+      assert.match(markup,/本机本轮等待已结束/);
+      assert.match(markup,/为原账号重新取码/);
+    }else {
+      assert.equal(accountNextStep(original,0,true),'原连接待核对 · 不会重复请求验证码');
+      assert.doesNotMatch(markup,/为原账号重新取码/);
+    }
+  }
+  const shiply=renderToStaticMarkup(createElement(ShiplyConnection,{data:snapshot(),disabled:false,onClose:()=>{},onAction:noop}));
+  assert.doesNotMatch(shiply,/当前平台停用/);
+  assert.match(shiply,/收信邮箱通过测试/);
 });
 
 test('a saved Plopino identity exposes account-row management and email-password revalidation',()=>{

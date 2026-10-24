@@ -1,13 +1,13 @@
 import type {Account} from '../shared/types';
-import {isCarcinusExistingConnectionAccount,isDenoReadAccessAccount,isHereNowConnectionAccount,isMarkestReadAccessAccount,isRaindropConnectionAccount,type ConnectionChannelId,type ConnectionOverviewRow} from './channel-connections';
+import {isBeaconConnectionAccount,isCarcinusExistingConnectionAccount,isDenoReadAccessAccount,isHereNowConnectionAccount,isMarkestReadAccessAccount,isRaindropConnectionAccount,isValTownConnectionAccount,type ConnectionChannelId,type ConnectionOverviewRow} from './channel-connections';
 
 export type ConnectionGroup='attention'|'connectable'|'connected'|'automatic'|'secondary';
 export type ConnectionAction={kind:'connect'|'locate'|'none';label?:string};
 export type AccountReadiness={needsAttention:boolean;reusable:boolean};
 
 const secondaryIds=new Set<ConnectionChannelId>(['deno','markest']);
-const dedicatedIds=new Set<ConnectionChannelId>(['carcinus','synthfolk','openagentchat','agentnotepad','colony','large-language','agentswiki','here-now','shiply','plopino','mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
-const bindingIds=new Set<string>(['synthfolk','openagentchat','agentnotepad','colony','large-language','agentswiki','here-now','shiply','hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
+const dedicatedIds=new Set<ConnectionChannelId>(['carcinus','synthfolk','openagentchat','agentnotepad','colony','large-language','agentswiki','here-now','shiply','plopino','mataroa','paper-wf','hive','prose','markest','deno','github-gist','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop','valtown']);
+const bindingIds=new Set<string>(['beacon','valtown','synthfolk','openagentchat','agentnotepad','colony','large-language','agentswiki','here-now','shiply','hive','prose','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop']);
 
 const actionLabels:Partial<Record<ConnectionChannelId,string>>={
   synthfolk:'连接 Synthfolk',
@@ -18,6 +18,7 @@ const actionLabels:Partial<Record<ConnectionChannelId,string>>={
   'large-language':'连接 LargeLanguage',
   agentswiki:'连接 Agents Wiki',
   'here-now':'连接 here.now',
+  valtown:'连接 Val Town',
   'shiply':'连接 Shiply.now',
   plopino:'连接 Plopino',
   mataroa:'连接 Mataroa',
@@ -73,7 +74,7 @@ export function activateGuideSelection(row:ConnectionOverviewRow,callbacks:{clos
 function accountFacts(account:Account,boundSiteCount:number,channelEnabled:boolean){
   const readOnlyChannel=account.channelId==='deno'||account.channelId==='markest';
   const validReadOnly=isDenoReadAccessAccount(account)||isMarkestReadAccessAccount(account)||isCarcinusExistingConnectionAccount(account);
-  const needsRepair=['credentials_invalid','restricted'].includes(account.status)||!!account.diagnostic||(account.channelId==='raindrop'&&!isRaindropConnectionAccount(account))||(account.channelId==='here-now'&&!isHereNowConnectionAccount(account));
+  const needsRepair=['credentials_invalid','restricted'].includes(account.status)||!!account.diagnostic||(account.channelId==='raindrop'&&!isRaindropConnectionAccount(account))||(account.channelId==='here-now'&&!isHereNowConnectionAccount(account))||(account.channelId==='beacon'&&!isBeaconConnectionAccount(account))||(account.channelId==='valtown'&&!isValTownConnectionAccount(account));
   const missingSecret=!account.hasPassword;
   const incomplete=account.status!=='registered';
   const missingBinding=channelEnabled&&bindingIds.has(account.channelId)&&boundSiteCount===0;
@@ -98,6 +99,10 @@ export function accountNextStep(account:Account,boundSiteCount:number,channelEna
     if(incomplete)return '状态待确认 · 平台当前未启用';
     return '连接已保存 · 平台当前未启用';
   }
+  const emailStage=account.channelId==='shiply'?account.shiply?.stage:account.channelId==='here-now'?account.hereNowEmail?.stage:account.channelId==='beacon'?account.beaconEmail?.stage:undefined;
+  if(emailStage==='requesting'||emailStage==='verifying'||emailStage==='send_intent'||emailStage==='verify_intent')return '正在连接原邮箱账号 · 请勿重复注册';
+  if(emailStage==='code_sent')return '验证码已发送 · 等待原邮箱验证';
+  if(emailStage==='request_unknown'||emailStage==='verify_unknown'||emailStage==='verify_opaque'||emailStage==='send_unknown'||emailStage==='send_opaque')return '原连接待核对 · 不会重复请求验证码';
   if(account.channelId==='prose'&&account.status==='needs_verification')return '下一步：确认邀请与真实发布资格';
   if(['mataroa','paper-wf'].includes(account.channelId)&&account.source==='generated'&&account.status==='needs_verification')return '下一步：完成原账号首次验证';
   if(needsRepair)return '下一步：处理原连接或平台限制';

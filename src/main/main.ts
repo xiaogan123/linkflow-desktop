@@ -1,8 +1,12 @@
+import {requestHereNowCode,resendHereNowCode,verifyHereNowCode,recoverHereNowVerifiedResponse} from './here-now-email';
 import {transferIdentityOwner} from './account-retirement';
 import {BATCH9B_MESSAGES} from '../shared/batch9b-messages';
 import {RendererReadiness} from './renderer-readiness';
 const rendererReadiness=new RendererReadiness();
 import {connectHackMd} from './hackmd-management';
+import {connectGitBookAccount} from './gitbook-connection';
+import {connectValTownAccount} from './valtown-connection';
+import {connectBitbucketAccount} from './bitbucket-connection';
 import {taskRetryHasExternalAttempt} from './task-retry';
 import {HUMAN_ACTION_IPC_COMMANDS} from '../shared/human-action';
 import {assertHumanWaitOpen} from './task-state';
@@ -42,7 +46,7 @@ import { validateBackup,validateLocalBackup } from './backup-validation';
 import { recoverInterrupted, earliestPublicationAt, monthKey } from './planner';
 import {publicationOpportunity,hasRecoverablePublisherDraftReceipt,hasUnresolvedExternalAttempt} from '../shared/publication';
 import {resumeDeferredTask} from './task-recovery';
-import { HERE_NOW_IPC_COMMANDS, IPC_COMMANDS, PLOPINO_IPC_COMMANDS, SHIPLY_IPC_COMMANDS, type Site, type Account, type BloggerConnectionResult } from '../shared/types';
+import { BITBUCKET_IPC_COMMANDS, HERE_NOW_IPC_COMMANDS, IPC_COMMANDS, PLOPINO_IPC_COMMANDS, SHIPLY_IPC_COMMANDS, VALTOWN_IPC_COMMANDS, type Site, type Account, type BloggerConnectionResult } from '../shared/types';
 import {CHANNELS} from '../integrations/catalog';
 import {belongsToSource} from '../integrations/web';
 import {eligibilityFor} from '../integrations/eligibility';
@@ -305,6 +309,9 @@ async function command(name:string,p:unknown):Promise<unknown>{
     }
     case 'account:connect-paragraph':{const d=z.object({apiKey:z.string().trim().min(8).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectParagraph(store,vault,d.apiKey,d.siteIds,d.accountId));}
     case 'account:connect-hackmd':{const d=z.object({token:z.string().min(16).max(8192),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).length(1)}).strict().parse(p);return controller.manageIdentity(()=>connectHackMd(store,vault,d));}
+    case 'account:connect-gitbook':{const d=z.object({token:z.string().trim().min(16).max(4096),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).min(1).max(1000),organizationId:z.string().regex(/^[A-Za-z0-9_-]{1,255}$/).optional(),siteId:z.string().regex(/^[A-Za-z0-9_-]{1,255}$/).optional(),spaceId:z.string().regex(/^[A-Za-z0-9_-]{1,255}$/).optional()}).strict().parse(p);return controller.manageIdentity(()=>connectGitBookAccount(store,vault,d));}
+    case 'account:connect-valtown':{const d=z.object({token:z.string().trim().min(16).max(4096),siteIds:z.array(z.string().uuid()).min(1).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectValTownAccount(store,vault,d));}
+    case 'account:connect-bitbucket':{const evidence=z.object({version:z.literal(1),workspaceId:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),plan:z.literal('Free'),users:z.number().int().min(1).max(5),paymentAdded:z.literal(false),paidTrialSelected:z.literal(false),checkedAt:z.string().datetime(),stateSha256:z.string().regex(/^[a-f0-9]{64}$/),screenshotSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict();const d=z.object({token:z.string().trim().min(16).max(4096),workspaceSlug:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),projectUuid:z.string().regex(/^\{[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\}$/i),freePlanEvidence:evidence,siteIds:z.array(z.string().uuid()).length(1),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectBitbucketAccount(store,vault,d));}
     case 'account:connect-leaflet':{const d=z.object({handle:z.string().trim().min(3).max(253),appPassword:z.string().min(1).max(128),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).max(1000)}).strict().parse(p);return controller.manageIdentity(()=>connectLeaflet(store,vault,d));}
     case 'account:raindrop-collections':{
       const d=z.object({token:z.string().min(16).max(8192)}).strict().parse(p);if(raindropConnect)throw Error('Raindrop 连接正在进行');const abort=new AbortController();raindropConnect=abort;
@@ -323,6 +330,26 @@ async function command(name:string,p:unknown):Promise<unknown>{
       finally{if(hereNowConnect===abort)hereNowConnect=undefined}
     }
     case 'account:cancel-here-now':z.object({}).strict().parse(p??{});hereNowConnect?.abort();return {cancelled:!!hereNowConnect};
+    case 'account:request-here-now-code':{
+      const d=z.object({email:z.string().trim().email().max(254),siteId:z.string().uuid().optional()}).strict().parse(p);if(hereNowConnect)throw Error('here.now 邮箱连接正在进行');const abort=new AbortController();hereNowConnect=abort;
+      try{return await controller.manageIdentity(()=>requestHereNowCode(store,d.email,{signal:abort.signal,siteId:d.siteId}))}
+      finally{if(hereNowConnect===abort)hereNowConnect=undefined}
+    }
+    case 'account:resend-here-now-code':{
+      const d=z.object({accountId:z.string().uuid()}).strict().parse(p);if(hereNowConnect)throw Error('here.now 邮箱连接正在进行');const abort=new AbortController();hereNowConnect=abort;
+      try{return await controller.manageIdentity(()=>resendHereNowCode(store,d.accountId,{signal:abort.signal}))}
+      finally{if(hereNowConnect===abort)hereNowConnect=undefined}
+    }
+    case 'account:verify-here-now-code':{
+      const d=z.object({accountId:z.string().uuid(),code:z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),siteIds:z.array(z.string().uuid()).max(1000)}).strict().parse(p);if(hereNowConnect)throw Error('here.now 邮箱连接正在进行');const abort=new AbortController();hereNowConnect=abort;
+      try{return await controller.manageIdentity(()=>verifyHereNowCode(store,vault,d,{signal:abort.signal}))}
+      finally{if(hereNowConnect===abort)hereNowConnect=undefined}
+    }
+    case 'account:recover-here-now-verify':{
+      const d=z.object({accountId:z.string().uuid(),siteIds:z.array(z.string().uuid()).max(1000)}).strict().parse(p);if(hereNowConnect)throw Error('here.now 邮箱连接正在进行');const abort=new AbortController();hereNowConnect=abort;
+      try{return await controller.manageIdentity(()=>recoverHereNowVerifiedResponse(store,vault,d,{signal:abort.signal}))}
+      finally{if(hereNowConnect===abort)hereNowConnect=undefined}
+    }
     case 'account:request-shiply-code':{
       const d=z.object({email:z.string().trim().email().max(254),siteId:z.string().uuid().optional()}).strict().parse(p);if(shiplyConnect)throw Error('Shiply 邮箱账号连接正在进行');const abort=new AbortController();shiplyConnect=abort;
       try{return await controller.manageIdentity(()=>requestShiplyCode(store,d.email,{signal:abort.signal,siteId:d.siteId}))}
@@ -564,8 +591,10 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'account:delete':{
       await controller.waitForIdle({accountIds:[payloadId(p)]});
       const id=getId(p),state=store.read(),account=state.accounts.find(a=>a.id===id);
-      if(account&&['colony','notebin','agenthow','rentry','verbose','paper-wf','mataroa','berrry','swarmmemo','openagentchat','agentriot','shellbook','agentnotepad','large-language','agentswiki','synthfolk','agentboard'].includes(account.channelId)){
+      if(account&&['colony','notebin','agenthow','rentry','verbose','paper-wf','mataroa','berrry','swarmmemo','openagentchat','agentriot','shellbook','agentnotepad','large-language','agentswiki','synthfolk','agentboard','valtown','bitbucket'].includes(account.channelId)){
         if(!identityRegistrationSettled(state,account))throw Error(ACCOUNT_IDENTITY_MESSAGES.registrationPending);
+        if(account.channelId==='valtown'&&state.tasks.some(task=>task.accountId===account.id&&task.channelId==='valtown'&&!task.firstLiveAt&&!['skipped','expired'].includes(task.status)&&(!!task.submittedAt||!!task.valtown)))throw Error('Val Town 原发布仍待只读恢复或验收，处理完成前不能退役连接。');
+        if(account.channelId==='bitbucket'&&state.tasks.some(task=>task.accountId===account.id&&task.channelId==='bitbucket'&&!task.firstLiveAt&&!['skipped','expired'].includes(task.status)&&(!!task.submittedAt||!!task.bitbucket)))throw Error('Bitbucket 原私有仓库或 root 提交仍待只读恢复/验收，处理完成前不能退役连接。');
         store.update(draft=>retireAccount(draft,id));
         break;
       }
@@ -638,7 +667,7 @@ app.whenReady().then(async()=>{
   const iconPath=join(root,'assets/tray.png');if(existsSync(iconPath)){const icon=nativeImage.createFromPath(iconPath).resize({width:18,height:18});tray=new Tray(icon);tray.setToolTip('外链助手');tray.setContextMenu(Menu.buildFromTemplate([{label:'显示外链助手',click:()=>{if(!win)createWindow();win?.show()}},{label:'暂停自动执行',click:()=>controller.pause()},{type:'separator'},{label:'退出',click:()=>{quitting=true;app.quit()}}]));tray.on('click',()=>win?.show());}
   ipcMain.handle('linkflow:command',async(event,name,payload)=>{
     const operation=Symbol();let tracked=false;
-    try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||![...IPC_COMMANDS,...HERE_NOW_IPC_COMMANDS,...PLOPINO_IPC_COMMANDS,...SHIPLY_IPC_COMMANDS,...HUMAN_ACTION_IPC_COMMANDS].includes(name as never)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
+    try{if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||![...IPC_COMMANDS,...HERE_NOW_IPC_COMMANDS,...PLOPINO_IPC_COMMANDS,...SHIPLY_IPC_COMMANDS,...VALTOWN_IPC_COMMANDS,...BITBUCKET_IPC_COMMANDS,...HUMAN_ACTION_IPC_COMMANDS].includes(name as never)||event.senderFrame.url!==renderURL)throw Error('无权调用此操作');
       if(JSON.stringify(payload??{}).length>100000)throw Error('输入内容过大');
       if(!['snapshot','app:update-status','app:install-update','app:recover-update'].includes(name)){activeCommands.add(operation);tracked=true}
       return {ok:true,value:await command(name,payload)};
@@ -655,5 +684,5 @@ app.whenReady().then(async()=>{
   createWindow();if(selfTest){void runPackagedSelfTest(win!,controller,()=>rendererReadiness.wait());return;}void updater.checkIfDue().catch(()=>{});await detectAi();runtimeStarted=true;if(!updating&&!quitting)controller.start();maintenanceTimer=setInterval(()=>{if(!updating&&!quitting)void updater.checkIfDue().catch(()=>{});if(!updating&&!controller.hasPendingWork())void localBackups.run().catch(()=>broadcast())},10*60_000);maintenanceTimer.unref();
 });
 app.on('activate',()=>{if(!win)createWindow();else win.show()});
-app.on('before-quit',event=>{quitting=true;bloggerConnect?.abort();proseConnect?.abort();shiplyConnect?.abort();wordpressConnections?.cancel();if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();if(!brewPageQuitDrained){event.preventDefault();brewPageQuitDrain??=drainBrewPageLateResponses(15000).then(()=>undefined).finally(()=>{brewPageQuitDrained=true;updater?.dispose();app.quit()});return}updater?.dispose();if(quitDrainComplete)return;event.preventDefault();if(quitDrainStarted)return;quitDrainStarted=true;void Promise.allSettled([drainMDShareLateResponses(5000),drainMDViewForQuit(),drainTxtSbsForQuit(),drainBerrryPendingOperations(),drainAgentHowPendingOperations(),drainAgentsWikiPendingOperations(),drainSwarmMemoPendingOperations(),drainOpenAgentChatPendingOperations(5000),drainSynthfolkPendingOperations(),drainPastyXForQuit(),drainOpenAgentChatForQuit()]).finally(()=>{quitDrainComplete=true;app.quit()})});
+app.on('before-quit',event=>{quitting=true;bloggerConnect?.abort();proseConnect?.abort();shiplyConnect?.abort();hereNowConnect?.abort();wordpressConnections?.cancel();if(maintenanceTimer)clearInterval(maintenanceTimer);controller?.stop();if(!brewPageQuitDrained){event.preventDefault();brewPageQuitDrain??=drainBrewPageLateResponses(15000).then(()=>undefined).finally(()=>{brewPageQuitDrained=true;updater?.dispose();app.quit()});return}updater?.dispose();if(quitDrainComplete)return;event.preventDefault();if(quitDrainStarted)return;quitDrainStarted=true;void Promise.allSettled([drainMDShareLateResponses(5000),drainMDViewForQuit(),drainTxtSbsForQuit(),drainBerrryPendingOperations(),drainAgentHowPendingOperations(),drainAgentsWikiPendingOperations(),drainSwarmMemoPendingOperations(),drainOpenAgentChatPendingOperations(5000),drainSynthfolkPendingOperations(),drainPastyXForQuit(),drainOpenAgentChatForQuit()]).finally(()=>{quitDrainComplete=true;app.quit()})});
 app.on('window-all-closed',()=>{if(!tray){quitting=true;app.quit()}});

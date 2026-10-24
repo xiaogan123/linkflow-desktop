@@ -17,7 +17,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.ok(channel.allowedHosts.length > 0, channel.id);
     assert.ok(channel.allowedHosts.includes(new URL(channel.submitUrl).hostname), `${channel.id} submit host`);
     assert.match(channel.checkedAt, /^\d{4}-\d{2}-\d{2}$/, channel.id);
-    assert.equal(channel.evidenceStatus, !channel.evidenceSources?.length?'unverified':['thethings','tantive','slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','wordcell','sigle','nuance','prose','tumblr','carcinus'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
+    assert.equal(channel.evidenceStatus, !channel.evidenceSources?.length?'unverified':['hart','thethings','tantive','slugpost','nextgen-slides','yourwebs','totpage','agentdrop','betterthanhtml','supanote','docs-md','katbin','pstrs','brewpage','pastemyst','markdownpaste','markdrop','memorywiki','plopino','vibedrop','wordcell','sigle','nuance','prose','tumblr','carcinus'].includes(channel.id)?'source_checked':'rules_checked',channel.id);
     if(channel.authority){
       const metric=channel.authority;
       assert.equal(metric.name,'Ahrefs DR');assert.equal(metric.provenance,'official_snapshot');
@@ -31,7 +31,7 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
     assert.match(channel.qualityReason, /[\u3400-\u9fff]/, `${channel.id} qualityReason`);
     assert.match(channel.notes, /[\u3400-\u9fff]/, `${channel.id} notes`);
-    if (channel.kind === 'community' && !['agentsgather','bluesky','hive','raindrop','colony','tantive','agentboard'].includes(channel.id)) assert.equal(channel.automation, 'manual');
+    if (channel.kind === 'community' && !['agentsgather','bluesky','hive','raindrop','colony','tantive','agentboard','chatclaw','feddit'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
 });

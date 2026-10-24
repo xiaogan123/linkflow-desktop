@@ -32,6 +32,9 @@ import {validCarcinusAccount} from './carcinus-publication';
 import {validSynthfolkAccount} from '../integrations/synthfolk-publisher';
 import {validAgentsWikiAccount} from '../integrations/agentswiki-publisher';
 import {validAgentboardAccount} from '../integrations/agentboard-publisher';
+import {validBeaconAccount} from './beacon-publication';
+import {validValTownAccount} from './valtown-publication';
+import {validBitbucketAccount} from './bitbucket-publication';
 
 export class AccountBindingError extends Error{
   constructor(readonly code:'pending_publication',message:string){super(message);this.name='AccountBindingError'}
@@ -102,7 +105,7 @@ export function unresolvedIdentityPublication(state:State,siteId:string,channelI
 
 function unresolvedRetiredPublication(state:State,siteId:string,channelId:string,replacementAccountId?:string,now=new Date()):Task|undefined{
   const retiredIds=new Set(state.accounts.filter(account=>!!account.retiredAt).map(account=>account.id));
-  const receiptFields=['paper','hive','mataroa','verbose','rentry','prose','wordpress','leaflet','raindrop','hereNow','shiply','vibedrop','wordcell','notebin','notebinJournal','nostr','paragraph','colony','agentHow','agentsWiki','synthfolk','agentboard'] as const;
+  const receiptFields=['paper','hive','mataroa','verbose','rentry','prose','wordpress','leaflet','raindrop','beacon','valtown','bitbucket','hereNow','shiply','vibedrop','wordcell','notebin','notebinJournal','nostr','paragraph','colony','agentHow','agentsWiki','synthfolk','agentboard'] as const;
   return state.tasks.find(task=>task.siteId===siteId&&task.channelId===channelId&&task.accountId!==replacementAccountId
     &&retiredIds.has(task.accountId??'')&&!task.firstLiveAt&&hasPendingIdentityBudget(task,now)
     &&(reservesSingleProfile(task)||receiptFields.some(field=>!!task[field])||/account_create_pending$/.test(task.checkpoint??'')));
@@ -119,6 +122,9 @@ function candidateAccounts(state:State,siteId:string,channelId:string):Account[]
   if(['wordpress-com','leaflet','raindrop','wordcell','notebin','product-index','swarmmemo','agentboard','agentswiki','synthfolk','carcinus'].includes(channelId))return state.accounts.filter(available);
   if(channelId==='here-now')return state.accounts.filter(available);
   if(channelId==='shiply')return state.accounts.filter(available);
+  if(channelId==='beacon')return state.accounts.filter(available);
+  if(channelId==='valtown')return state.accounts.filter(available);
+  if(channelId==='bitbucket')return state.accounts.filter(available);
   if(['paper-wf','mataroa','verbose','prose','rentry','deed-page','brewpage','shippage'].includes(channelId))return state.accounts.filter(account=>available(account)&&!(channelId==='mataroa'&&account.mataroaExcludedSiteIds?.includes(siteId))&&!(channelId==='verbose'&&account.verboseExcludedSiteIds?.includes(siteId))&&!(channelId==='rentry'&&account.rentryExcludedSiteIds?.includes(siteId)));
   return state.accounts.filter(account=>available(account)&&(channelId==='github-gist'||lower(account.email)===lower(site.publicEmail||site.email)));
 }
@@ -136,6 +142,9 @@ export function accountForSiteChannel(state:State,siteId:string,channelId:string
   if(channelId==='product-index')return candidates.length===1?candidates[0]:undefined;
   if(channelId==='here-now')return candidates.length===1?candidates[0]:undefined;
   if(channelId==='shiply')return candidates.length===1?candidates[0]:undefined;
+  if(channelId==='beacon')return candidates.length===1?candidates[0]:undefined;
+  if(channelId==='valtown')return candidates.length===1?candidates[0]:undefined;
+  if(channelId==='bitbucket')return candidates.length===1?candidates[0]:undefined;
   if(channelId==='swarmmemo')return candidates.length===1?candidates[0]:undefined;
   if(channelId==='carcinus')return candidates.length===1?candidates[0]:undefined;
   if(channelId==='synthfolk')return candidates.length===1?candidates[0]:undefined;
@@ -480,6 +489,21 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
     const account=accountForSiteChannel(state,siteId,'shiply',accountId);
     return {kind:binding&&account&&binding.accountId===account.id&&validShiplyAccount(account)?'ready':'handoff_required',account};
   }
+  if(channel.id==='beacon'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='beacon');
+    const account=accountForSiteChannel(state,siteId,'beacon',accountId);
+    return {kind:binding&&account&&binding.accountId===account.id&&validBeaconAccount(account)?'ready':'handoff_required',account};
+  }
+  if(channel.id==='valtown'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='valtown');
+    const account=accountForSiteChannel(state,siteId,'valtown',accountId);
+    return {kind:binding&&account&&binding.accountId===account.id&&validValTownAccount(account)?'ready':'handoff_required',account};
+  }
+  if(channel.id==='bitbucket'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='bitbucket');
+    const account=accountForSiteChannel(state,siteId,'bitbucket',accountId);
+    return {kind:binding&&account&&binding.accountId===account.id&&validBitbucketAccount(account)?'ready':'handoff_required',account};
+  }
   if(['bluesky','paragraph'].includes(channel.id)){
     const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId===channel.id);
     const account=state.accounts.find(item=>item.id===(accountId??binding?.accountId)&&item.channelId===channel.id);
@@ -547,6 +571,9 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='raindrop'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='raindrop'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.raindrop)&&task.accountId!==accountId))throw new AccountBindingError('pending_publication','该网站有 Raindrop 条目待检查，必须保留原所有者账号和原合集。');
   if(channel.id==='here-now'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='here-now'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.hereNow)&&task.accountId!==accountId))throw Error('该网站有 here.now 版本待检查，必须保留原个人发布账号。');
   if(channel.id==='shiply'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='shiply'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.shiply)&&task.accountId!==accountId))throw Error('该网站有 shiply.now 版本待检查，必须保留原个人发布账号。');
+  if(channel.id==='beacon'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='beacon'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.beacon)&&task.accountId!==accountId))throw Error('该网站有 Beacon 文档待检查，必须保留原邮箱发布账号。');
+  if(channel.id==='valtown'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='valtown'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.valtown)&&task.accountId!==accountId))throw Error('该网站有 Val Town 文档待检查，必须保留原 token 发布账号。');
+  if(channel.id==='bitbucket'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='bitbucket'&&(task.submittedAt||task.publicUrl||task.bitbucket)&&task.accountId!==accountId))throw Error('该 Bitbucket workspace 已有静态站事务或公开 root，不能换账号、覆盖或服务其他网站。');
   if(channel.id==='vibedrop'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='vibedrop'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.vibedrop)&&task.accountId!==accountId))throw Error('该网站有 VibeDrop 发布待检查，必须保留原匿名密钥。');
   if(channel.id==='wordcell'&&state.tasks.some(task=>task.siteId===siteId&&task.channelId==='wordcell'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.wordcell)&&task.accountId!==accountId))throw Error('该网站有 Wordcell 发布待检查，必须保留原固定令牌。');
   if(channel.id==='notebin'&&state.tasks.some(task=>hasPendingIdentityBudget(task,now)&&task.siteId===siteId&&task.channelId==='notebin'&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.notebin||task.notebinJournal)&&task.accountId!==accountId))throw Error('该网站有 Notebin 发布待检查，必须保留原 PoW 发布账号和专用密钥。');
@@ -569,6 +596,9 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   if(channel.id==='brewpage'&&!validBrewPageAccount(account))throw Error('BrewPage 所有者令牌不可用');
   if(channel.id==='here-now'&&!validHereNowAccount(account))throw Error('请先验证 here.now 个人账户与命名 API key');
   if(channel.id==='shiply'&&!validShiplyAccount(account))throw Error('请先验证 shiply.now 邮箱账户与 API key');
+  if(channel.id==='beacon'&&!validBeaconAccount(account))throw Error('请先验证 Beacon 邮箱账户与 API key');
+  if(channel.id==='valtown'&&!validValTownAccount(account))throw Error('请先验证 Val Town Free 个人账号与 token');
+  if(channel.id==='bitbucket'&&!validBitbucketAccount(account))throw Error('请先验证 Bitbucket Free 工作区、私有项目与 token');
   if(channel.id==='vibedrop'&&!validVibeDropAccount(account))throw Error('VibeDrop 匿名密钥不可用');
   if(channel.id==='wordcell'&&!validWordcellAccount(account))throw Error('Wordcell 固定托管令牌不可用');
   if(channel.id==='notebin'&&!validNotebinAccount(account))throw Error('Notebin PoW 发布账号或专用密钥不可用');
@@ -604,6 +634,9 @@ export function unbindAccount(state:State,accountId:string,siteId:string,channel
   if(channelId==='raindrop'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.raindrop)))throw new AccountBindingError('pending_publication','该网站有 Raindrop 条目待检查，必须保留原所有者账号和原合集。');
   if(channelId==='here-now'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.hereNow)))throw Error('该网站有 here.now 版本待检查，必须保留原个人发布账号。');
   if(channelId==='shiply'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.shiply)))throw Error('该网站有 shiply.now 版本待检查，必须保留原个人发布账号。');
+  if(channelId==='beacon'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.beacon)))throw Error('该网站有 Beacon 文档待检查，必须保留原邮箱发布账号。');
+  if(channelId==='valtown'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.valtown)))throw Error('该网站有 Val Town 文档待检查，必须保留原 token 发布账号。');
+  if(channelId==='bitbucket'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&(task.submittedAt||task.publicUrl||task.bitbucket)))throw Error('该网站有 Bitbucket 静态站事务或公开 root，必须保留原 token 账号与绑定。');
   if(channelId==='vibedrop'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.vibedrop)))throw Error('该网站有 VibeDrop 发布待检查，必须保留原匿名密钥。');
   if(channelId==='wordcell'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.wordcell)))throw Error('该网站有 Wordcell 发布待检查，必须保留原固定令牌。');
   if(channelId==='notebin'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.notebin||task.notebinJournal)))throw Error('该网站有 Notebin 发布待检查，必须保留原 PoW 发布账号和专用密钥。');
@@ -626,7 +659,7 @@ export function bindSelectedAccountSites(state:State,accountId:string,siteIds:It
 
 /** The account editor removes bindings through the same guards as an individual unbind. */
 export function setSelectedAccountSites(state:State,accountId:string,selected:Set<string>,channel:Channel,now=new Date()):void{
-  const protectedChannels=['rant','slopit','wordpress-com','leaflet','raindrop','prose','here-now','shiply','vibedrop','notebin','berrry','agenthow','swarmmemo','openagentchat','agentriot','shellbook','agentnotepad','colony','large-language'];
+  const protectedChannels=['rant','slopit','wordpress-com','leaflet','raindrop','prose','beacon','valtown','bitbucket','here-now','shiply','vibedrop','notebin','berrry','agenthow','swarmmemo','openagentchat','agentriot','shellbook','agentnotepad','colony','large-language'];
   if(protectedChannels.includes(channel.id))for(const binding of [...state.accountBindings]){
     if(binding.accountId===accountId&&binding.channelId===channel.id&&!selected.has(binding.siteId))
       unbindAccount(state,accountId,binding.siteId,channel.id);

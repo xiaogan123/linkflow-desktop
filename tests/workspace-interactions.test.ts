@@ -4,7 +4,7 @@ import {build} from 'esbuild';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
 import {AddSitesBatch,SiteContentUpdate} from '../src/main/validation';
-import type {AddSitesBatchResult,Site,Snapshot,Task} from '../src/shared/types';
+import type {AddSitesBatchResult,Mailbox,Site,Snapshot,Task} from '../src/shared/types';
 
 type Node={type:string;props:Record<string,unknown>;children:unknown[]};
 type Component=(props:Record<string,unknown>)=>unknown;
@@ -100,6 +100,34 @@ async function click(node:Node){assert.notEqual(node.props.disabled,true,'disabl
 async function change(node:Node,value:string|boolean){assert.equal(typeof node.props.onChange,'function');await (node.props.onChange as (event:unknown)=>unknown)({target:typeof value==='boolean'?{checked:value}:{value}});await settle()}
 async function submit(fixture:HookFixture){const form=fixture.nodes(node=>node.type==='form')[0];assert.ok(form);let prevented=false;await (form.props.onSubmit as (event:unknown)=>unknown)({preventDefault:()=>{prevented=true}});await settle();assert.equal(prevented,true)}
 const noop=()=>{};
+const mailbox=(id:string,extra:Partial<Mailbox>={}):Mailbox=>({id,label:id,host:'imap.gmail.com',port:993,user:`${id.slice(0,4)}@gmail.com`,secure:true,hasPassword:true,aliases:[],createdAt:stamp,updatedAt:stamp,verifiedAt:stamp,...extra});
+
+test('batch add picks one tested mailbox visibly, allows opting out, and never guesses among multiple',async()=>{
+ const {AddSitesForm}=await components(),calls:Call[]=[];
+ const first=mailbox(ids[0]),second=mailbox(ids[1]);
+ const props={disabled:false,onClose:noop,onAction:async(command:string,payload:unknown)=>{calls.push({command,payload});return undefined}};
+ const single=mount(AddSitesForm,{...props,mailboxes:[first,mailbox(ids[2],{verifiedAt:undefined}),mailbox('44444444-4444-4444-8444-444444444444',{lastError:'failed'})]});
+ try{
+  await change(single.fixture.field('网址'),'new.example.com');
+  assert.equal(single.fixture.field('收信邮箱').props.value,first.id);
+  await submit(single.fixture);
+  assert.equal(AddSitesBatch.parse(calls[0].payload).mailboxId,first.id);
+  await change(single.fixture.field('收信邮箱'),'none');
+  await submit(single.fixture);
+  assert.equal(AddSitesBatch.parse(calls[1].payload).mailboxId,undefined);
+ }finally{single.restore()}
+ calls.length=0;
+ const multiple=mount(AddSitesForm,{...props,mailboxes:[first,second]});
+ try{
+  await change(multiple.fixture.field('网址'),'new.example.com');
+  assert.equal(multiple.fixture.field('收信邮箱').props.value,'');
+  assert.equal(multiple.fixture.button('添加 1 个网站').props.disabled,true);
+  await submit(multiple.fixture);assert.equal(calls.length,0);
+  await change(multiple.fixture.field('收信邮箱'),second.id);
+  await submit(multiple.fixture);
+  assert.equal(AddSitesBatch.parse(calls[0].payload).mailboxId,second.id);
+ }finally{multiple.restore()}
+});
 
 test('promotion content saves existing and added topics through the strict IPC schema',async()=>{
  const {SiteDetailPage}=await components();

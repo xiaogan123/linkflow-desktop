@@ -51,7 +51,7 @@ test('overview distinguishes self-provisioned APIs, first connections and Bluesk
   assert.match(row(data,'product-index').detail,/已有的 GitHub 账号.*不会替你注册 GitHub.*平台审核通过/);
   assert.equal(row(data,'large-language').state,'no_setup');
   assert.match(row(data,'large-language').detail,/资料库记录不是平台推荐/);
-  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['yeetmd','markdownpage','rant','agentsgather','agentboard','swarmmemo','tantive','thethings','agentnotepad','listed-startups','openagentchat','shellbook','agentriot','synthfolk','agenthow','large-language','agentswiki','slugpost','vibedrop','wordcell','carcinus','plopino','mataroa','verbose','lucid-page','betterthanhtml','html-app','deed-page','brewpage','katbin','nextgen-slides','yourwebs','totpage','txtsbs','pastyx','mdshare','shippage','pstrs','pastemyst','markdownpaste','markdrop','draftmark','memorywiki','supanote','docs-md','nostr','telegraph']);
+  assert.deepEqual(rows.filter(item=>item.state==='no_setup').map(item=>item.id),['yeetmd','markdownpage','rant','chatclaw','hart','agentsgather','agentboard','swarmmemo','tantive','thethings','agentnotepad','listed-startups','openagentchat','shellbook','agentriot','synthfolk','agenthow','large-language','agentswiki','slugpost','vibedrop','wordcell','carcinus','plopino','mataroa','verbose','lucid-page','betterthanhtml','html-app','deed-page','brewpage','katbin','nextgen-slides','yourwebs','totpage','txtsbs','pastyx','mdshare','shippage','pstrs','pastemyst','markdownpaste','markdrop','draftmark','memorywiki','supanote','docs-md','nostr','telegraph']);
   assert.equal(row(data,'slopit').state,'unavailable');
   assert.match(row(data,'slopit').detail,/目前停用/);
   assert.equal(row(data,'rentry').state,'unavailable');
@@ -211,12 +211,12 @@ test('connection overview covers APIs plus the read-only Markest connection',()=
 test('every disabled API stays unavailable without erasing connection or historical result counts',()=>{
   for(const channel of CHANNELS.filter(item=>item.automation==='api')){
     const data=snapshot();data.channels=CHANNELS.map(item=>({...item,enabled:item.id===channel.id?false:item.enabled}));
-    data.accounts=[account(channel.id,channel.id==='product-index'?{username:'author',productIndex:{version:1,login:'author',tokenFingerprint:'a'.repeat(64),checkedAt:at,identity:'github_user_readback'}}:channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:channel.id==='here-now'?{source:'imported',username:'55555555-5555-4555-8555-555555555555',hereNow:{version:1,checkedAt:at,accountId:'55555555-5555-4555-8555-555555555555',keyFingerprint:'a'.repeat(64),identity:'verified_personal'}}:channel.id==='shiply'?{email:'owner@example.test',username:'owner@example.test',source:'generated',shiply:{version:1,emailHash:'a'.repeat(64),requestedAt:at,stage:'ready',keyFingerprint:'b'.repeat(64)}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
+    data.accounts=[account(channel.id,channel.id==='beacon'?{email:'owner@example.test',verifiedAt:at,beacon:{version:1,stage:'ready',emailHash:'a'.repeat(64),apiKeyFingerprint:'b'.repeat(64),checkedAt:at}}:channel.id==='product-index'?{username:'author',productIndex:{version:1,login:'author',tokenFingerprint:'a'.repeat(64),checkedAt:at,identity:'github_user_readback'}}:channel.id==='raindrop'?{source:'imported',username:'41',publicationUrl:'https://reading.raindrop.page/resources',raindrop:{version:1,ownerId:'41',collectionId:'73',publicUrl:'https://reading.raindrop.page/resources',tokenFingerprint:'a'.repeat(64),tokenVersion:1,connectedAt:at}}:channel.id==='here-now'?{source:'imported',username:'55555555-5555-4555-8555-555555555555',hereNow:{version:1,checkedAt:at,accountId:'55555555-5555-4555-8555-555555555555',keyFingerprint:'a'.repeat(64),identity:'verified_personal'}}:channel.id==='shiply'?{email:'owner@example.test',username:'owner@example.test',source:'generated',shiply:{version:1,emailHash:'a'.repeat(64),requestedAt:at,stage:'ready',keyFingerprint:'b'.repeat(64)}}:{})];data.tasks=[task(channel.id,{firstLiveAt:at})];
     const found=row(data,channel.id);
     assert.equal(found.state,'unavailable',channel.id);
     assert.equal(found.checkedCount,1,channel.id);
-    if(!['yeetmd','markdownpage','agentsgather','listed-startups','wordpress-com','blogger','docs-md','katbin','pstrs','yourwebs','nextgen-slides','pastemyst','markdownpaste','html-app','totpage','mdview','txtsbs','pastyx','memorywiki','mdshare','agentdrop','shippage','notebin','colony','openagentchat','agentnotepad','agenthow','agentswiki','berrry','large-language','thethings','swarmmemo','agentboard','synthfolk','agentriot','shellbook','carcinus'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
-    else if(['yeetmd','markdownpage','agentsgather','listed-startups','docs-md','katbin','pstrs','yourwebs','nextgen-slides','pastemyst','markdownpaste','html-app','totpage','mdview','txtsbs','pastyx','memorywiki','mdshare','agentdrop','shippage','notebin','colony','openagentchat','agentnotepad','agenthow','agentswiki','berrry','large-language','thethings','swarmmemo','agentboard','synthfolk','agentriot','shellbook','carcinus'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
+    if(!['chatclaw','feddit','hart','yeetmd','markdownpage','agentsgather','listed-startups','wordpress-com','blogger','docs-md','katbin','pstrs','yourwebs','nextgen-slides','pastemyst','markdownpaste','html-app','totpage','mdview','txtsbs','pastyx','memorywiki','mdshare','agentdrop','shippage','notebin','colony','openagentchat','agentnotepad','agenthow','agentswiki','berrry','large-language','thethings','swarmmemo','agentboard','synthfolk','agentriot','shellbook','carcinus','gitbook','valtown','bitbucket'].includes(channel.id))assert.equal(found.connectedCount,1,channel.id);
+    else if(['chatclaw','feddit','hart','yeetmd','markdownpage','agentsgather','listed-startups','docs-md','katbin','pstrs','yourwebs','nextgen-slides','pastemyst','markdownpaste','html-app','totpage','mdview','txtsbs','pastyx','memorywiki','mdshare','agentdrop','shippage','notebin','colony','openagentchat','agentnotepad','agenthow','agentswiki','berrry','large-language','thethings','swarmmemo','agentboard','synthfolk','agentriot','shellbook','carcinus','gitbook','valtown','bitbucket'].includes(channel.id))assert.equal(found.connectedCount,0,channel.id);
   }
 });
 
@@ -276,4 +276,18 @@ test('Listed Startups is an accountless product listing with separate public acc
   assert.equal(found.connectedCount,0);
   assert.equal(found.checkedCount,0);
   assert.match(found.detail,/无需账号或邮箱.*不会重复提交/);
+});
+
+test('task-managed publishers are visible without inventing separate connected accounts',()=>{
+  const data=snapshot();
+  for(const id of ['chatclaw','feddit','hart']){
+    if(id==='feddit')data.channels=data.channels.map(channel=>channel.id===id?{...channel,enabled:true}:channel);
+    data.accounts=[account(id)];
+    data.accountBindings=[{id:'stale',channelId:id,accountId:`${id}-identity`,siteId:'site-1',createdAt:at,updatedAt:at}];
+    const current=row(data,id);
+    assert.equal(current.state,'no_setup',id);assert.equal(current.connectedCount,0,id);assert.equal(current.boundSiteCount,0,id);
+    assert.match(current.detail,/无需邮箱/);assert.match(current.detail,/不会重发|只读对账/);
+    data.channels=data.channels.map(channel=>channel.id===id?{...channel,enabled:false}:channel);
+    assert.equal(row(data,id).state,'unavailable',id);
+  }
 });

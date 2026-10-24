@@ -45,6 +45,12 @@ export function channelSuitability(site:Pick<Site,'category'|'language'>,channel
 export function eligibilityFor(site:Site,channel:Channel):{eligible:boolean;reason:string;requirement?:Qualification}{
  if(!channel.enabled)return {eligible:false,reason:'该平台目前停用，请查看官方规则'};
  const suitability=channelSuitability(site,channel);if(!suitability.eligible)return suitability;
+ if(channel.id==='feddit'){
+  if(!['software','developer','ai'].includes(site.category))return {eligible:false,reason:'Feddit botlife 当前只用于本人维护的软件、开发或 AI 项目'};
+  const allowed:Qualification[]=['software','developer','aiArtifact'],proof=allowed.find(value=>validQualificationUrl(site.qualifications?.[value]));
+  if(!proof)return {eligible:false,reason:'需要提供本人维护的软件、开发项目或 AI 制品公开资料网址',requirement:site.category==='ai'?'aiArtifact':site.category==='developer'?'developer':'software'};
+  return {eligible:true,reason:`已声明${qualificationLabels[proof]}；发布前仍须核对项目关系、短标题和 botlife 当前规则`,requirement:proof};
+ }
  if(channel.id==='paragraph'&&site.paragraph?.publicationId&&validQualificationUrl(site.paragraph.url))return {eligible:true,reason:'已连接本人出版物；AI 将结合出版物公开内容核对原创用途、相关性与附带商业披露',requirement:'publication'};
  if(channel.id==='github-gist'&&(validQualificationUrl(site.qualifications?.developer)||validQualificationUrl(site.qualifications?.techContent)))return {eligible:true,reason:'有公开技术材料；发布前仍会核对真实性、可复用价值和与本站关系',requirement:validQualificationUrl(site.qualifications?.developer)?'developer':'techContent'};
  const required=requirementsFor(channel);

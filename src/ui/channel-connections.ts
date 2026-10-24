@@ -2,7 +2,7 @@ import {BATCH5_CONNECTED_MESSAGES,BATCH5_MESSAGES} from '../shared/batch5-messag
 import type {Account,Snapshot} from '../shared/types';
 import {validNotebinAccount} from '../shared/notebin-account';
 
-export type ConnectionChannelId='yeetmd'|'markdownpage'|'slopit'|'rant'|'whitewind'|'hackmd'|'agentsgather'|'agentboard'|'carcinus'|'tantive'|'thethings'|'swarmmemo'|'synthfolk'|'large-language'|'agentswiki'|'berrry'|'colony'|'agentnotepad'|'agenthow'|'product-index'|'listed-startups'|'openagentchat'|'agentriot'|'shellbook'|'slugpost'|'notebin'|'wordcell'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'brewpage'|'markdrop'|'katbin'|'agentdrop'|'mdshare'|'totpage'|'mdview'|'txtsbs'|'pastyx'|'nextgen-slides'|'shippage'|'pstrs'|'yourwebs'|'pastemyst'|'markdownpaste'|'draftmark'|'memorywiki'|'here-now'|'shiply'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
+export type ConnectionChannelId='chatclaw'|'feddit'|'hart'|'yeetmd'|'markdownpage'|'slopit'|'rant'|'whitewind'|'hackmd'|'agentsgather'|'agentboard'|'carcinus'|'tantive'|'thethings'|'swarmmemo'|'synthfolk'|'large-language'|'agentswiki'|'berrry'|'colony'|'agentnotepad'|'agenthow'|'product-index'|'listed-startups'|'openagentchat'|'agentriot'|'shellbook'|'slugpost'|'notebin'|'wordcell'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'brewpage'|'markdrop'|'katbin'|'agentdrop'|'mdshare'|'totpage'|'mdview'|'txtsbs'|'pastyx'|'nextgen-slides'|'shippage'|'pstrs'|'yourwebs'|'pastemyst'|'markdownpaste'|'draftmark'|'memorywiki'|'here-now'|'beacon'|'gitbook'|'valtown'|'bitbucket'|'shiply'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'read_only'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -23,6 +23,9 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖'|'产
   {id:'rant',name:'rant.li',format:'全文',firstStep:BATCH5_CONNECTED_MESSAGES.overview.rant},
   {id:'whitewind',name:'WhiteWind',format:'全文',firstStep:BATCH5_CONNECTED_MESSAGES.overview.whitewind},
   {id:'hackmd',name:'HackMD',format:'全文',firstStep:BATCH5_MESSAGES.hackmdToken},
+  {id:'chatclaw',name:'ChatClaw',format:'短帖',firstStep:'无需邮箱。首次任务自动建立并复用该网站的公开 agent 账号，发布审核通过的开发者短帖；结果不明时只读对账，不会重发。'},
+  {id:'feddit',name:'Feddit botlife',format:'短帖',firstStep:'无需邮箱。首次任务自动建立并复用该网站的发布账号；只向已经核实规则的社区提交审核通过的软件维护链接帖，结果不明时不会重发。'},
+  {id:'hart',name:'Hart',format:'全文',firstStep:'无需邮箱或账号表单。本机自动保存并复用该网站的命名空间和管理密钥，发布审核通过的软件教程；结果不明时只读对账，不保证永久保留。'},
   {id:'agentsgather',name:'AgentsGather',format:'全文',firstStep:'无需账号或邮箱。稿件通过 AI 复核后匿名发布，每篇都会检查链接。'},
   {id:'agentboard',name:'Agentboard',format:'全文',firstStep:'无需邮箱或手动注册。第一篇发布时自动建好账号并发一条自我介绍帖，之后的稿件发在其他版块；结果不明时不会重发。'},
   {id:'swarmmemo',name:'SwarmMemo',format:'全文',firstStep:'无需邮箱。外链助手自动建好一个发布账号，密钥只存在本机；结果不明时不会重发。'},
@@ -70,8 +73,12 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖'|'产
   {id:'markdrop',name:'Markdrop',format:'全文',firstStep:'无需注册，默认不过期，但不保证长期保留。'},
   {id:'draftmark',name:'Draftmark',format:'全文',firstStep:'无需注册，发布公开全文；平台不保证长期保留。'},
   {id:'memorywiki',name:'Memory.wiki',format:'全文',firstStep:'无需注册，发布公开全文；结果不明时不会重发，也不保证长期保留。'},
-  {id:'here-now',name:'here.now',format:'全文',firstStep:'连接一次你已验证邮箱的 here.now 账号密钥，也能检查已有页面。匿名的 24 小时页面不算长期外链。'},
-  {id:'shiply',name:'Shiply.now',format:'全文',firstStep:'向你的邮箱要一个六位验证码，验证一次后一直沿用这个账号；每篇都会复核并检查链接。'},
+  {id:'here-now',name:'here.now',format:'全文',firstStep:'网站关联的收信邮箱测试通过后，到期任务读取验证码，可信邮件自动验证、其他邮件须确认；已有密钥可直接连接。匿名 24 小时页面不计入外链。'},
+  {id:'beacon',name:'Beacon',format:'全文',firstStep:'网站关联的 Gmail 收信邮箱测试通过后，到期任务自动收码连接，同一账号持续复用。仅发布审核通过的原创软件文档；账号页面没有计划到期时间，不保证永久保留。'},
+  {id:'gitbook',name:'GitBook',format:'全文',firstStep:'先在 GitBook 官网准备一个 Basic 文档站，再粘贴 PAT 并选择要关联的本地网站；唯一可用的远端站点会自动识别，多候选时再手动指定组织、站点和空间。连接后可自动发布，但不会自动注册、建站、创建 PAT、升级或付款。'},
+  {id:'valtown',name:'Val Town',format:'全文',firstStep:'先由本人完成 Val Town 免费账号的 Google 登录或人机验证，并在官方设置页创建最小权限 token；粘贴 token、选择网站后，可自动发布已审核的软件文档。本工具不自动开户或创建 token。'},
+  {id:'bitbucket',name:'Bitbucket',format:'产品资料',firstStep:'连接已核实的 Free 工作区、私有项目和最小权限 token。一个工作区只服务一个网站，并且只首次创建 root 发布一篇审核通过的软件文档；不会覆盖、批量铺站或把旧事务交给新连接。'},
+  {id:'shiply',name:'Shiply.now',format:'全文',firstStep:'网站关联的收信邮箱测试通过后，到期任务自动获取验证码；可信邮件自动验证，其他邮件须确认，之后一直沿用这个账号；每篇仍须审核和检查链接。'},
   {id:'supanote',name:'Supanote',format:'全文',firstStep:'无需注册，匿名发布；平台没给管理权限时不能修改或删除。'},
   {id:'docs-md',name:'Docs MD',format:'全文',firstStep:'无需注册，匿名发布全文。'},
   {id:'paper-wf',name:'Paper.wf',format:'全文',firstStep:'可连接已有账号；自动建号可能需要首次人机验证。'},
@@ -86,11 +93,11 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖'|'产
   {id:'wordpress-com',name:'WordPress.com',format:'全文',firstStep:'首次在浏览器授权，再选择已公开博客和要关联的网站。'},
   {id:'leaflet',name:'Leaflet',format:'全文',firstStep:'首次连接本人 Bluesky 托管账号的应用密码，之后发布完整文章。'},
   {id:'raindrop',name:'Raindrop',format:'短帖',firstStep:'确认邮箱并建一个公开合集，再粘贴 Test token、选好合集。'},
-  {id:'paragraph',name:'Paragraph',format:'全文',firstStep:'连接已有 publication 的 API 密钥，并选择网站。'},
+  {id:'paragraph',name:'Paragraph',format:'全文',firstStep:'先在官网用邮箱、Google 或 GitHub 准备出版物，再连接其 API 密钥。无需钱包；当前不自动开户或创建密钥。'},
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
-const needsBinding=new Set<ConnectionChannelId>(['whitewind','hackmd','agentboard','product-index','swarmmemo','synthfolk','large-language','agentswiki','berrry','agenthow','colony','openagentchat','agentriot','shellbook','agentnotepad','notebin','wordcell','vibedrop','plopino','shippage','here-now','shiply','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop','carcinus']);
-const selfProvisioned=new Set<ConnectionChannelId>(['yeetmd','markdownpage','slopit','rant','agentswiki','agentsgather','agentboard','tantive','thethings','swarmmemo','synthfolk','large-language','berrry','agenthow','listed-startups','openagentchat','agentriot','shellbook','agentnotepad','slugpost','notebin','wordcell','vibedrop','plopino','shippage','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','pastyx','mdshare','agentdrop','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki','carcinus']);
+const needsBinding=new Set<ConnectionChannelId>(['whitewind','hackmd','agentboard','product-index','swarmmemo','synthfolk','large-language','agentswiki','berrry','agenthow','colony','openagentchat','agentriot','shellbook','agentnotepad','notebin','wordcell','vibedrop','plopino','shippage','here-now','beacon','gitbook','valtown','bitbucket','shiply','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop','carcinus']);
+const selfProvisioned=new Set<ConnectionChannelId>(['chatclaw','feddit','hart','yeetmd','markdownpage','slopit','rant','agentswiki','agentsgather','agentboard','tantive','thethings','swarmmemo','synthfolk','large-language','berrry','agenthow','listed-startups','openagentchat','agentriot','shellbook','agentnotepad','slugpost','notebin','wordcell','vibedrop','plopino','shippage','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','pastyx','mdshare','agentdrop','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki','carcinus']);
 
 const fingerprintPattern=/^[0-9a-f]{64}$/;
 
@@ -130,6 +137,26 @@ export function isRaindropConnectionAccount(account:Account){
   }catch{return false}
 }
 
+export function isBeaconConnectionAccount(account:Account){
+  const proof=account.beacon;
+  return account.channelId==='beacon'&&!account.retiredAt&&account.status==='registered'&&account.credentialKind==='api_token'&&account.hasPassword&&proof?.version===1&&proof.stage==='ready'&&fingerprintPattern.test(proof.emailHash)&&fingerprintPattern.test(proof.apiKeyFingerprint)&&(!proof.remoteAccountIdHash||fingerprintPattern.test(proof.remoteAccountIdHash))&&!!account.verifiedAt&&account.verifiedAt===proof.checkedAt&&Number.isFinite(Date.parse(proof.checkedAt));
+}
+
+export function isGitBookConnectionAccount(account:Account){
+  const proof=account.gitbook;
+  return account.channelId==='gitbook'&&!account.retiredAt&&account.status==='registered'&&account.credentialKind==='api_token'&&account.hasPassword&&account.source==='imported'&&account.email===''&&proof?.version===1&&proof.stage==='ready'&&proof.siteType==='basic'&&proof.siteVisibility==='public'&&proof.soleAdmin===true&&[proof.tokenFingerprint,proof.bindingHash,proof.authenticatedUserIdHash,proof.organizationMemberIdHash,proof.baselineHash].every(value=>fingerprintPattern.test(value))&&!!account.verifiedAt&&account.verifiedAt===proof.checkedAt&&Number.isFinite(Date.parse(proof.checkedAt));
+}
+
+export function isValTownConnectionAccount(account:Account){
+  const proof=account.valtown;
+  return account.channelId==='valtown'&&!account.retiredAt&&account.status==='registered'&&account.credentialKind==='api_token'&&account.hasPassword&&account.source==='imported'&&account.email===''&&proof?.version===1&&proof.stage==='ready'&&proof.tier==='free'&&proof.valRead==='confirmed'&&proof.valWrite==='not_proven_by_read_api'&&proof.tokenExpiry==='not_exposed_by_api'&&/^[A-Za-z0-9_-]{1,64}$/.test(proof.username)&&[proof.ownerIdHash,proof.tokenFingerprint].every(value=>fingerprintPattern.test(value))&&account.username===proof.username&&!!account.verifiedAt&&account.verifiedAt===proof.checkedAt&&Number.isFinite(Date.parse(proof.checkedAt));
+}
+
+export function isBitbucketConnectionAccount(account:Account){
+  const proof=account.bitbucket;
+  return account.channelId==='bitbucket'&&!account.retiredAt&&account.status==='registered'&&account.credentialKind==='api_token'&&account.hasPassword&&account.source==='imported'&&account.email===''&&proof?.version===1&&proof.stage==='ready'&&proof.permission==='owner'&&proof.publicationCapability==='reviewed_static_manifest_only'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(proof.workspaceSlug)&&/^\{[0-9a-f-]{36}\}$/i.test(proof.workspaceUuid)&&/^\{[0-9a-f-]{36}\}$/i.test(proof.projectUuid)&&[proof.userUuidHash,proof.tokenFingerprint,proof.freePlanEvidenceSha256,proof.bindingHash].every(value=>fingerprintPattern.test(value))&&account.username===proof.workspaceSlug&&account.verifiedAt===proof.checkedAt&&Number.isFinite(Date.parse(proof.checkedAt));
+}
+
 export function isHereNowConnectionAccount(account:Account){
   const binding=account.hereNow;
   return account.channelId==='here-now'&&account.status==='registered'&&account.credentialKind==='api_token'&&account.source==='imported'&&account.hasPassword&&!!binding&&binding.version===1&&binding.identity==='verified_personal'&&account.username===binding.accountId&&fingerprintPattern.test(binding.keyFingerprint)&&Number.isFinite(Date.parse(binding.checkedAt));
@@ -166,6 +193,10 @@ function usable(account:Account,id:ConnectionChannelId){
   if(id==='markest')return isMarkestReadAccessAccount(account);
   if(id==='deno')return isDenoReadAccessAccount(account);
   if(id==='raindrop')return isRaindropConnectionAccount(account);
+  if(id==='beacon')return isBeaconConnectionAccount(account);
+  if(id==='gitbook')return isGitBookConnectionAccount(account);
+  if(id==='valtown')return isValTownConnectionAccount(account);
+  if(id==='bitbucket')return isBitbucketConnectionAccount(account);
   if(id==='here-now')return isHereNowConnectionAccount(account);
   if(id==='shiply')return account.channelId==='shiply'&&account.credentialKind==='api_token'&&account.status==='registered'&&account.hasPassword&&account.shiply?.stage==='ready';
   if(id==='shippage')return isShipPageConnectionAccount(account);
@@ -175,7 +206,7 @@ function usable(account:Account,id:ConnectionChannelId){
 export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBindings'|'sites'|'tasks'|'channels'>|null):ConnectionOverviewRow[]{
   if(!data)return [];
   return channels.map(({id,name,format,firstStep})=>{
-    const accounts=['yeetmd','markdownpage','agentsgather','thethings','listed-startups','slugpost','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','pstrs','yourwebs','pastemyst','markdownpaste','html-app','memorywiki'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id);
+    const accounts=['chatclaw','feddit','hart','yeetmd','markdownpage','agentsgather','thethings','listed-startups','slugpost','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','pstrs','yourwebs','pastemyst','markdownpaste','html-app','memorywiki'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id);
     const connected=accounts.filter(account=>usable(account,id));
     const connectedIds=new Set(connected.map(account=>account.id));
     const accountById=new Map(connected.map(account=>[account.id,account]));
@@ -230,6 +261,6 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
       detail=id==='verbose'?'原发布账号或一次性令牌需检查；不能重新注册换号。':['mataroa','paper-wf'].includes(id)&&issue.status==='needs_verification'?'首次验证待完成；沿用下方原发布账号继续，勿重复注册。':`${accounts.length-connected.length} 个本机发布账号需检查密钥或状态。`;
     }else if(unbound){state='attention';detail=selectionRequired?'原发布账号已保留；请选择要使用的发布账号并关联网站后继续。':'发布账号已保存在本机，尚未关联可发布的网站。';}
     else {state='connected';detail=`${connected.length} 个本机发布账号已连接${needsBinding.has(id)?`，${boundSiteIds.size} 个网站已关联`:''}。`;}
-    return {id,name,format,state,detail,connectedCount:connected.length,boundSiteCount:boundSiteIds.size,checkedCount,attentionAccountId:issue?.id??(unbound||['here-now','shiply','plopino','shippage'].includes(id)&&connected.length===1?connected[0]?.id:undefined)};
+    return {id,name,format,state,detail,connectedCount:connected.length,boundSiteCount:boundSiteIds.size,checkedCount,attentionAccountId:issue?.id??(unbound||['here-now','beacon','gitbook','valtown','bitbucket','shiply','plopino','shippage'].includes(id)&&connected.length===1?connected[0]?.id:undefined)};
   });
 }

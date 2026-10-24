@@ -13,7 +13,7 @@ export type AccessGroup=NonNullable<Channel['accessClass']>;
 export const ACCESS_GROUPS:ReadonlyArray<{id:AccessGroup;title:string;note?:string}>=[
   {id:'direct_submit',title:'免注册直接发'},
   {id:'auto_account',title:'软件自动建号'},
-  {id:'email_auto',title:'给邮箱就自动'},
+  {id:'email_auto',title:'接好收信邮箱后自动'},
   {id:'human_verify_once',title:'要你过一次验证'},
   {id:'connect_once',title:'连一次后自动'},
   {id:'wallet',title:'钱包登录',note:'连钱包只是登录，每篇都要你确认；软件不会要你的助记词。'},
@@ -22,18 +22,19 @@ export const ACCESS_GROUPS:ReadonlyArray<{id:AccessGroup;title:string;note?:stri
 ];
 
 const HOW:Record<Exclude<AccessGroup,'unqualified'>,string>={
-  direct_submit:'免注册',auto_account:'自动建号',email_auto:'给邮箱',human_verify_once:'验证一次',connect_once:'连一次',wallet:'钱包登录',manual:'你来发',
+  direct_submit:'免注册',auto_account:'自动建号',email_auto:'接好收信邮箱',human_verify_once:'验证一次',connect_once:'连一次',wallet:'钱包登录',manual:'你来发',
 };
 
 export function platformWeight(channel:Pick<Channel,'linkRel'>):string{
-  if(!channel.linkRel||channel.linkRel==='unknown')return '权重未确认';
-  return normalizeChannelLinkRel(channel.linkRel)==='follow'?'可传权重':'不传权重';
+  if(!channel.linkRel||channel.linkRel==='unknown')return '链接属性未确认';
+  const rel=normalizeChannelLinkRel(channel.linkRel);
+  return rel==='follow'?'普通链接':`链接标记 ${rel}`;
 }
 
-/** "{怎么接} · {保留多久} · {可传权重/不传权重}" */
+/** Setup, known expiry and observed link attributes are separate from ranking. */
 export function platformOneLiner(channel:Channel,group:AccessGroup=channel.accessClass??'manual'):string{
   const how=HOW[group==='unqualified'?(channel.accessClass&&channel.accessClass!=='unqualified'?channel.accessClass:builtInAccessClass(channel)):group];
-  const keep=channel.retentionDays!==undefined?`保留 ${channel.retentionDays} 天`:'长期保留';
+  const keep=channel.retentionDays!==undefined?`保留 ${channel.retentionDays} 天`:'未注明到期';
   return `${how} · ${keep} · ${platformWeight(channel)}`;
 }
 

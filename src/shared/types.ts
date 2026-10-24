@@ -38,6 +38,19 @@ import type {WordcellPublicationPersistence} from '../integrations/wordcell';
 import type {NotebinIdentityBinding,NotebinPublicationPersistence} from '../integrations/notebin';
 import type {NotebinPublisherDependencies} from '../integrations/notebin-publisher';
 import type {NotebinIdentityJournal,NotebinPublicationJournal} from '../main/notebin-publication';
+import type {HartDependencies,HartPersistence} from '../integrations/hart';
+import type {FedditDependencies,FedditPersistence} from '../integrations/feddit';
+import type {FedditReviewedCommunity} from '../integrations/feddit-publisher';
+import type {FedditProductTaskReceipt} from '../main/feddit-publication';
+import type {BeaconDependencies} from '../integrations/beacon';
+import type {BeaconAccountProof,BeaconTaskPersistence,BeaconTaskReceipt} from '../main/beacon-publication';
+import type {GitBookDependencies} from '../integrations/gitbook';
+import type {GitBookAccountProof,GitBookProductPersistence,GitBookTaskReceipt} from '../main/gitbook-publication';
+import type {ValTownDependencies} from '../integrations/valtown';
+import type {ValTownAccountProof,ValTownProductPersistence,ValTownTaskReceipt} from '../main/valtown-publication';
+import type {BitbucketAccountProof} from '../main/bitbucket-publication';
+import type {BitbucketDependencies} from '../integrations/bitbucket';
+import type {BitbucketProductPersistence,BitbucketTaskReceipt} from '../main/bitbucket-publication';
 import type {HtmlAppPublicNoticeAcceptance} from './html-app-notice';
 import type {OpenAgentChatDependencies,OpenAgentChatMutationIdentity} from '../integrations/openagentchat';
 import type {ShellbookDependencies,ShellbookMutationIdentity} from '../integrations/shellbook';
@@ -76,6 +89,7 @@ export interface Site {
 }
 export type ChannelAccessClass='direct_submit'|'auto_account'|'email_auto'|'human_verify_once'|'connect_once'|'wallet'|'manual'|'unqualified';
 export interface Channel {termsCache?:ChannelTermsCache;accessClass?:ChannelAccessClass}
+export interface Channel {fedditReviewedCommunity?:FedditReviewedCommunity}
 export interface Task {
   emailWaitRegisteredAt?:string;
   humanAction?: HumanAction;
@@ -128,7 +142,9 @@ export type ArticleReviewMode='manual'|'ai';
 export type ArticleCheckName='factualAccuracy'|'authorRelationship'|'affiliateDisclosure'|'independentValue'|'financialSafety'|'channelRules';
 export type ArticleChecks=Record<ArticleCheckName,'pass'|'fail'|'unknown'>;
 export type ArticleReviewReasonCode='review_changes_requested'|'passed'|'content_rejected'|'policy_unknown'|'policy_not_found'|'evidence_fetch_failed'|'evidence_invalid'|'evidence_truncated'|'invalid_topic'|'format_invalid'|'format_repair_exhausted'|'ai_unavailable'|'ai_daily_limit'|'analysis_daily_limit'|'ai_task_limit'|'input_too_long'|'user_policy_decision';
-export interface ArticleReview {bindingVersion?:2;bindingHash?:string;targetUrl?:string;failureStage?:'input'|'response';factManifest?:ArticleFact[];patches?:ArticlePatch[];termsHash?:string;status:'running'|'passed'|'failed';reason:string;reasonCode?:ArticleReviewReasonCode;reviewContractVersion?:number;checks?:ArticleChecks;policyDecision?:ChannelPolicyDecision;reviewedAt?:string;evidenceUrls:string[];draftRevision:number;contentHash:string;contextHash:string}
+export interface ArticlePublicationContext {scope:'visible_workspace_only'|'isolated_acceptance_only';sameChannelTasks:number;sameAccountTasks?:number;distinctSites:number;publicationIntent:'single_original_article'|'unknown';knownContentPattern?:'promotion'|'affiliate_link_farm'|'bulk_search_manipulation'|'unknown'}
+export interface ArticlePolicyAssessment {version:1;useKind:'original_editorial'|'promotion'|'affiliate'|'financial'|'unknown';verdict:'compatible'|'forbidden'|'unknown';reason:string;citations:Array<{url:string;quote:string;purpose:'hosting_purpose'|'use_restriction'}>;draftRevision:number;contentHash:string;termsHash:string;targetUrl:string;contextHash:string;publicationContext?:ArticlePublicationContext}
+export interface ArticleReview {policyAssessment?:ArticlePolicyAssessment;bindingVersion?:2;bindingHash?:string;targetUrl?:string;failureStage?:'input'|'response';factManifest?:ArticleFact[];patches?:ArticlePatch[];termsHash?:string;status:'running'|'passed'|'failed';reason:string;reasonCode?:ArticleReviewReasonCode;reviewContractVersion?:number;checks?:ArticleChecks;policyDecision?:ChannelPolicyDecision;reviewedAt?:string;evidenceUrls:string[];draftRevision:number;contentHash:string;contextHash:string}
 export interface ArticleReviewMigration {contractVersion:4;recordedAt:string;priorRepairAttempts:number;draft:{title:string;description:string;body:string};draftRevision:number;topicUrl?:string;topicContentHash?:string;review:ArticleReview}
 export interface OneReviewRetryBinding {siteId:string;channelId:string;accountId:string|null;draftRevision:number;contentHash:string;contextHash:string;provider:Settings['provider'];model:string}
 interface OneReviewRetryBase extends OneReviewRetryBinding {version:1;purpose:'independent_article_review';operationTokenHash:string;grantedAt:string}
@@ -307,6 +323,14 @@ export type AccountStatus='draft'|'needs_verification'|'registered'|'credentials
 export type AccountIssueCode='legacy_saved'|'password_missing'|'bad_password'|'email_exists'|'username_taken'|'verification_required'|'registration_failed'|'registration_unknown'|'restricted';
 export interface AccountDiagnostic {code:AccountIssueCode;message:string;at:string;retryable:boolean}
 export interface Account {hereNow?:{version:1;checkedAt:string;accountId:string;keyFingerprint:string;identity:'verified_personal';existingSlug?:string;existingSiteUrl?:string}}
+export interface Account {beacon?:BeaconAccountProof;beaconEmail?:import('../main/beacon-email').BeaconEmailState}
+export interface Account {gitbook?:GitBookAccountProof}
+export interface Account {valtown?:ValTownAccountProof}
+export interface Account {bitbucket?:BitbucketAccountProof}
+export interface Task {bitbucket?:BitbucketTaskReceipt}
+export interface ExecutionContext {bitbucketPersistence?:BitbucketProductPersistence;bitbucketDependencies?:BitbucketDependencies}
+export interface ExecutionResult {bitbucket?:BitbucketTaskReceipt}
+export interface Account {hereNowEmail?:{version:1;emailHash:string;requestedAt:string;siteId?:string;previousRequestedAt?:string;keyName:'site-publishing';stage:'requesting'|'request_unknown'|'code_sent'|'verifying'|'verify_unknown'|'verify_opaque'|'ready'}}
 export interface Account {shiply?:{version:1;emailHash:string;requestedAt:string;siteId?:string;previousRequestedAt?:string;stage:'requesting'|'request_unknown'|'code_sent'|'verifying'|'verify_unknown'|'verify_opaque'|'ready';keyFingerprint?:string}}
 export interface NotebinAccountProof {version:1;rootAccountId:string;rootKeyFingerprint:string;whoamiResponseHash:string;noteKeyFingerprint:string;keyId:string;keyListResponseHash:string;noteReadResponseHash:string;audience:'https://notebin.ca';scopes:readonly ['note:read','note:create'];rootIdentity:'exact_readback';keyBinding:'exact_response'|'exact_readback';verifiedAt:string}
 export interface Account {raindrop?:RaindropAccountBinding;denoReadAccess?:{version:1;checkedAt:string;appId:string;appSlug:string;declaredOrgSlug:string;tokenFingerprint:string;identity:'app_verified_org_declared'};markestReadAccess?:{version:1;checkedAt:string;keyFingerprint:string;identity:'user_declared'};mataroaExcludedSiteIds?:string[];verboseExcludedSiteIds?:string[];rentryExcludedSiteIds?:string[];publicationUrl?:string;displayName?:string;credentialKind?:'password'|'api_token'|'oauth';id:string;channelId:string;email:string;username:string;mailboxId?:string;createdAt:string;status:AccountStatus;hasPassword:boolean;source?:'generated'|'imported';updatedAt?:string;lastUsedAt?:string;registeredAt?:string;verifiedAt?:string;registrationAttempts?:number;diagnostic?:AccountDiagnostic}
@@ -337,7 +361,7 @@ export interface Snapshot {platformSurvival?:Record<string,PlatformSurvival>;pla
 export type FinancePlatformGroup='no_signup'|'auto_account'|'email_auto'|'one_time_verification'|'connected_auto'|'wallet_login'|'manual_publish'|'ineligible';
 export interface FinancePlatformCount {count:number;channelIds:string[];runtimeSchedulableIds:string[];trialCount:number;acceptedCount:number;pendingAcceptanceCount?:number;confirmationRequiredIds?:string[];verificationRequiredIds?:string[];connectionRequiredIds:string[];temporaryIds:string[];groupedChannelIds?:Record<FinancePlatformGroup,string[]>}
 export interface Snapshot {sites:Site[];tasks:Task[];channels:Channel[];accounts:Account[];mailboxes:Mailbox[];accountBindings:SiteAccountBinding[];settings:Settings;events:Event[];runtime:Runtime;siteOriginMigrations?:Array<{siteId:string}>;channelPolicyStatus?:Record<string,Record<string,'valid'|'expired_or_changed'|'unconfirmed'>>;capacity?:SiteCapacity[];financePlatformCounts?:Record<string,FinancePlatformCount>;aiModels?:AiModelDiscovery;demo?:boolean}
-export interface AddSitesBatchInput {domains:string[];monthlyTarget:number;articleReviewMode:ArticleReviewMode;siteType:'auto'|'finance-zh';contactEmail:string}
+export interface AddSitesBatchInput {domains:string[];monthlyTarget:number;articleReviewMode:ArticleReviewMode;siteType:'auto'|'finance-zh';contactEmail:string;mailboxId?:string}
 export interface AddSitesBatchResult {added:number;duplicates:number;errors:Array<{index:number;input:string;code:'invalid_domain'|'save_failed';message:string}>;siteIds:string[];rolloutDays:number}
 export interface SiteContentInput {id:string;topics:Array<{url:string;title?:string}>;linkTargets:string[];forbiddenTerms:string[]}
 export interface AddSiteInput {domain:string;email:string;monthlyTarget:number;articleReviewMode?:ArticleReviewMode}
@@ -367,10 +391,32 @@ export interface ExecutionResult {wordcell?:WordcellTaskReceipt}
 export interface Task {notebin?:NotebinTaskReceipt;notebinJournal?:NotebinPublicationJournal}
 export interface ExecutionContext {notebinPersistence?:NotebinPublicationPersistence;notebinDependencies?:NotebinPublisherDependencies;notebinAccess?:{load():Promise<{rootAccountId:string;noteApiKey:string;binding:NotebinIdentityBinding}>}}
 export interface ExecutionResult {notebin?:NotebinTaskReceipt}
+export interface Task {beacon?:BeaconTaskReceipt}
+export interface ExecutionContext {beaconPersistence?:BeaconTaskPersistence;beaconDependencies?:BeaconDependencies}
+export interface ExecutionResult {beacon?:BeaconTaskReceipt}
+export interface Task {gitbook?:GitBookTaskReceipt}
+export interface ExecutionContext {gitbookPersistence?:GitBookProductPersistence;gitbookDependencies?:GitBookDependencies}
+export interface ExecutionResult {gitbook?:GitBookTaskReceipt}
+export interface Task {valtown?:ValTownTaskReceipt}
+export interface ExecutionContext {valtownPersistence?:ValTownProductPersistence;valtownDependencies?:ValTownDependencies}
+export interface ExecutionResult {valtown?:ValTownTaskReceipt}
+export interface HartTaskReceipt {operationId:string;owner:string;artifact:string;publicUrl:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';version?:number;latestUrl?:string;pinnedUrl?:string;targetRel?:string;robots?:'allowed'|'not_declared'}
+export interface Task {hart?:HartTaskReceipt}
+export interface ExecutionContext {hartPersistence?:HartPersistence;hartDependencies?:HartDependencies}
+export interface ExecutionResult {hart?:HartTaskReceipt}
+export interface ChatClawTaskReceipt {stage:'register_submitting'|'register_opaque'|'post_submitting'|'post_opaque'|'api_receipt'|'published';intent:import('../integrations/chatclaw').ChatClawIntent;postId?:string;publicUrl?:string;targetRel?:string;robots?:'allowed'|'not_declared'}
+export interface Task {chatclaw?:ChatClawTaskReceipt}
+export interface ExecutionContext {chatclawDependencies?:import('../integrations/chatclaw').ChatClawDependencies}
+export interface ExecutionResult {chatclaw?:ChatClawTaskReceipt}
+export interface Task {feddit?:FedditProductTaskReceipt}
+export interface ExecutionContext {fedditPersistence?:FedditPersistence;fedditPersistenceFactory?:()=>Promise<FedditPersistence>;fedditDependencies?:FedditDependencies;fedditReviewedCommunity?:FedditReviewedCommunity}
+export interface ExecutionResult {feddit?:FedditProductTaskReceipt}
 export interface LinkResult {outcome?:'found'|'absent'|'unreachable'|'invalid';found:boolean;url:string;rel:string;reason:string}
 export const PLOPINO_IPC_COMMANDS=['account:connect-agentswiki','account:connect-openagentchat','account:connect-agentnotepad','account:connect-colony','account:connect-large-language','account:connect-plopino','account:connect-synthfolk'] as const;
-export const IPC_COMMANDS=['app:ready','snapshot','settings:adopt-ai-limit','ahrefs.saveAndTest','site:add','site:add-batch','site:archive','site:restore','site:dismiss-proposal','site:reroll-writing-profile','site:content-update','site:update','site:delete','site:analyze','site:pause','site:migrate-origin','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:import-gsc-batch','search:save-key','task:retry','task:review-once','task:skip','task:verify','task:remove-referral','task:acknowledge-remote','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:enable-trial','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-product-index','account:connect-carcinus-existing','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-hackmd','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit','account:transfer-owner'] as const;
-export const HERE_NOW_IPC_COMMANDS=['account:connect-here-now','account:cancel-here-now'] as const;
+export const VALTOWN_IPC_COMMANDS=['account:connect-valtown'] as const;
+export const BITBUCKET_IPC_COMMANDS=['account:connect-bitbucket'] as const;
+export const IPC_COMMANDS=['app:ready','snapshot','settings:adopt-ai-limit','ahrefs.saveAndTest','site:add','site:add-batch','site:archive','site:restore','site:dismiss-proposal','site:reroll-writing-profile','site:content-update','site:update','site:delete','site:analyze','site:pause','site:migrate-origin','site:queue-channel','site:confirm-channel-policy','site:adopt-gist','search:bing','search:import-gsc','search:import-gsc-batch','search:save-key','task:retry','task:review-once','task:skip','task:verify','task:remove-referral','task:acknowledge-remote','task:set-url','task:open','task:open-result','task:generate','task:update-draft','task:approve','plan:run','plan:pause','settings:save','channel:enable-trial','channel:accept-html-app-public-notice','settings:test-ai','settings:test-mail','settings:discover-models','mailbox:save','mailbox:test','mailbox:delete','mailbox:import','account:save','account:set-bindings','account:bind','account:unbind','account:connect-gist','account:connect-product-index','account:connect-carcinus-existing','account:connect-blogger','account:reconnect-blogger','account:connect-bluesky','account:connect-hackmd','account:connect-gitbook','account:connect-leaflet','account:raindrop-collections','account:connect-raindrop','account:cancel-raindrop-connect','account:connect-paragraph','account:connect-paper','account:connect-hive','account:connect-mataroa','account:connect-markest','account:cancel-markest','account:list-deno-apps','account:connect-deno','account:cancel-deno','account:connect-prose','account:cancel-prose','account:wordpress-status','account:authorize-wordpress','account:cancel-wordpress','account:connect-wordpress','account:cancel-blogger','account:blogger-blogs','account:disconnect-blogger','site:bind-blogger','site:bind-blogger-batch','account:retry','account:reveal','account:delete','channel:save','channel:delete','channel:import-metrics','backup:export','backup:import','backup:auto-status','backup:auto-configure','backup:auto-run','backup:auto-restore','app:update-status','app:check-update','app:download-update','app:cancel-update','app:install-update','app:recover-update','data:export','external:open','app:quit','account:transfer-owner'] as const;
+export const HERE_NOW_IPC_COMMANDS=['account:connect-here-now','account:cancel-here-now','account:request-here-now-code','account:resend-here-now-code','account:verify-here-now-code','account:recover-here-now-verify'] as const;
 export const SHIPLY_IPC_COMMANDS=['account:request-shiply-code','account:resend-shiply-code','account:verify-shiply-code','account:recover-shiply-verify'] as const;
 
 export interface NextgenSlidesTaskReceipt {operationId:string;sourceHash:string;requestHash:string;createdAt:string;stage:'submitting'|'opaque_response'|'api_receipt'|'published';id?:string}

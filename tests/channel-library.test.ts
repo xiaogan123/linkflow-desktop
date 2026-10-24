@@ -51,7 +51,7 @@ test('new publishing candidates are explicit about automation, qualification and
   assert.equal(channel(id).automation,'manual',id);assert.equal(channel(id).checkedAt,'2026-09-28');
  }
  const blogger=channel('blogger');assert.equal(blogger.automation,'api');assert.equal(blogger.checkedAt,'2026-10-04');assert.match(blogger.notes,/OAuth/);assert.match(blogger.notes,/绑定.*博客/);
- assert.equal(channel('paragraph').automation,'api');assert.equal(channel('paragraph').checkedAt,'2026-10-07');assert.equal(channel('betalist').free,'paid');assert.match(channel('paragraph').notes,/禁止以第三方促销/);
+ assert.equal(channel('paragraph').automation,'api');assert.equal(channel('paragraph').checkedAt,'2026-10-22');assert.equal(channel('betalist').free,'paid');assert.match(channel('paragraph').notes,/禁止以第三方促销/);
 });
 
 

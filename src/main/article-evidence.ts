@@ -132,8 +132,13 @@ export function validateFactManifest(draft:NonNullable<Task['draft']>,facts:Arti
 
 /** Cache changes only when fetched policy content or applicability changes, never catalog copy or dates. */
 export function buildChannelTermsCache(channel:Pick<Channel,'id'>&Partial<Pick<Channel,'notes'|'checkedAt'>>,sources:ChannelTermsSource[],previous?:ChannelTermsCache,now:Date=new Date()):ChannelTermsCache{
+  // Evidence collectors also carry transient excerpts and size metadata. Persist
+  // only the source contract so the cache remains compatible with backups.
+  sources=sources.map(({url,kind,text,appliesTo,applicability})=>({url,kind,text,...(appliesTo!==undefined?{appliesTo}:{}),...(applicability!==undefined?{applicability}:{})}));
   const sourceHash=hash(sources.map(({url,kind,text,appliesTo,applicability})=>({url,kind,text,appliesTo,applicability})));
-  if(previous?.version===1&&previous.channelId===channel.id&&previous.sourceHash===sourceHash&&validChannelTermsCache(previous))return previous;
+  if(previous?.version===1&&previous.channelId===channel.id&&previous.sourceHash===sourceHash&&validChannelTermsCache(previous)){
+    return previous.sources.every(source=>Object.keys(source).every(key=>['url','kind','text','appliesTo','applicability'].includes(key)))?previous:{...previous,sources};
+  }
   const policy=sources.filter(item=>['rules','content_policy'].includes(item.kind)&&item.applicability==='verified'&&item.appliesTo===channel.id);
   let remaining=ARTICLE_EVIDENCE_LIMITS.channelSummaryCharacters;
   const summarySources=[...policy,...sources.filter(item=>!policy.includes(item))];
@@ -235,7 +240,7 @@ export function applyEvidencePatchResult(draft:NonNullable<Task['draft']>,facts:
   return {draft:patched,factManifest};
 }
 
-export const ARTICLE_PREFLIGHT_MESSAGES={site_forbidden_term:SITE_ACTION_MESSAGES.forbiddenTerm,site_target_not_allowed:SITE_ACTION_MESSAGES.targetNotAllowed,fact_manifest_invalid:'事实清单格式无效',fact_number_unsupported:'数字缺少原文依据',evidence_invalid:'引用未出现在资料快照',disclosure_missing:'缺少商业披露',link_count_invalid:'正文链接数量不符',language_invalid:'正文语种不符',length_invalid:'正文篇幅不符',format_invalid:'正文格式不符',return_promise:'内容包含收益承诺',process_leak:'正文提到了写稿过程（如“提供的材料”“选题页”）',price_prediction:'内容包含价格预测',referral_content:'内容包含推荐码或推荐链接'} as const;
+export const ARTICLE_PREFLIGHT_MESSAGES={site_forbidden_term:SITE_ACTION_MESSAGES.forbiddenTerm,site_target_not_allowed:SITE_ACTION_MESSAGES.targetNotAllowed,fact_manifest_invalid:'事实清单不合格：每条 claim 必须逐字复制正文里的一句原话，quote 必须逐字摘自资料',fact_number_unsupported:'数字缺少原文依据',evidence_invalid:'引用未出现在资料快照',disclosure_missing:'缺少商业披露',link_count_invalid:'正文链接数量不符',language_invalid:'正文语种不符',length_invalid:'正文篇幅不符',format_invalid:'正文格式不符',return_promise:'内容包含收益承诺',process_leak:'正文提到了写稿过程（如“提供的材料”“选题页”）',price_prediction:'内容包含价格预测',referral_content:'内容包含推荐码或推荐链接'} as const;
 export function articleBodyUrls(body:string){
   const urls:string[]=[];
   const withoutMarkdown=body.replace(/\[[^\]]*\]\(\s*(https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\s*\)/g,(_whole,url:string)=>{urls.push(url);return ''});
@@ -334,7 +339,7 @@ function forecastIn(clause:string,pattern:RegExp,check:(match:RegExpExecArray)=>
 }
 /** Phrases that tell the reader how the article was produced: "the provided material", the topic page, the draft itself. */
 const PROCESS_LEAK=[
-  /资料快照|证据快照|选题(?:材料|资料|页面|页|来源)|指定(?:选题|材料|资料)|本稿|推广内容发布者/u,
+  /资料快照|证据快照|选题(?:材料|资料|页面|页|来源)|指定选题|本稿|推广内容发布者/u,
   /(?:^|[\s，。；：、！？“"（(]|根据|依据|按照?|仅凭|只凭|仅依据|只依据|由于|但|而|且|因|据)所?提供的(?:材料|资料|公开资料|公开材料|规则说明|说明|页面|信息|内容|来源)/u,
   /(?:提供的|所给的?|上述|现有)(?:材料|资料)(?:中|里)?(?:没有|未|不含|并未)/u,
   /\b(?:the |this |these )?provided (?:materials?|sources?|evidence|snapshot|pages?|documents?)\b|\b(?:evidence|source) snapshot\b|\b(?:assigned|designated) topic\b|\bmaterials? (?:provided|supplied)\b/i,

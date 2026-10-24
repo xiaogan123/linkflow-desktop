@@ -62,6 +62,27 @@ export class AiMalformedOutputError extends TaskReasonError {
   constructor(message:string,rawOutput:string,options:ErrorOptions={},oversized=false){super('format_invalid',message,options);this.rawOutput=rawOutput.slice(0,MAX_OUTPUT);this.oversized=oversized}
 }
 
+export type CodexCliDiagnostic = 'schema_invalid'|'model_unsupported'|'authentication'|'rate_limit'|'cli_failure';
+const CODEX_DIAGNOSTIC_MESSAGES:Record<CodexCliDiagnostic,string>={schema_invalid:'结构化输出 Schema 被拒绝',model_unsupported:'当前模型或思考档不受支持',authentication:'CLI 登录授权不可用',rate_limit:'CLI 服务限流或用量已用完',cli_failure:'未识别的 CLI 错误'};
+/** Contains only allowlisted metadata. Child output, prompts and credentials never enter the error. */
+export class CodexCliError extends TaskReasonError {
+  readonly diagnostic:CodexCliDiagnostic;
+  readonly exitCode:number|null;
+  constructor(exitCode:number|null,diagnostic:CodexCliDiagnostic){
+    super('temporary_failure',`Codex CLI 失败（退出码 ${exitCode}）；${CODEX_DIAGNOSTIC_MESSAGES[diagnostic]}`);
+    this.name='CodexCliError';this.diagnostic=diagnostic;this.exitCode=exitCode;
+  }
+}
+function codexFailureDiagnostic(stderr:string):CodexCliDiagnostic{
+  // Only CLI error records qualify; ordinary echoed prompt/header text is not diagnostic evidence.
+  const errors=stderr.split(/\r?\n/).filter(line=>{if(/^ERROR:/.test(line))return true;try{const event=JSON.parse(line);return event?.type==='error'||!!event?.error&&typeof event.error==='object'}catch{return false}}).join('\n');
+  if(/invalid_json_schema|Invalid schema for (?:response_format|text\.format)/i.test(errors))return 'schema_invalid';
+  if(/model_not_found|unsupported_model|(?:model|reasoning)[^\n]{0,160}(?:not supported|unsupported)|(?:not supported|unsupported)[^\n]{0,160}(?:model|reasoning)/i.test(errors))return 'model_unsupported';
+  if(/invalid_api_key|token_expired|authentication_error|401 Unauthorized|not logged in|authentication (?:failed|required)/i.test(errors))return 'authentication';
+  if(/rate_limit_exceeded|usage_limit_reached|insufficient_quota|429 Too Many Requests/i.test(errors))return 'rate_limit';
+  return 'cli_failure';
+}
+
 function withTimeout(signal?: AbortSignal, timeoutMs = TIMEOUT_MS): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new TaskReasonError('temporary_failure','AI 请求超时')), timeoutMs);
@@ -181,7 +202,7 @@ async function codexJson<T>(settings: Settings, prompt: string, schema: Record<s
       child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); if (output.length > MAX_OUTPUT) abort(); });
       child.stderr.on('data', (chunk: Buffer) => { errorText += chunk.toString('utf8'); if (errorText.length > MAX_OUTPUT) abort(); });
       child.on('error', error => finish(new TaskReasonError('temporary_failure','无法启动 Codex CLI',{cause:error})));
-      child.on('close', code => { if (settled) return; if (code !== 0) return finish(new TaskReasonError('temporary_failure',`Codex CLI 失败（退出码 ${code}）${settings.model||settings.reasoningEffort?'；请检查显式模型和思考档是否受当前 CLI 支持':''}`)); try { finish(undefined, parseAiJson<T>(output)); } catch (error) { finish(error as Error); } });
+      child.on('close', code => { if (settled) return; if (code !== 0) return finish(new CodexCliError(code,codexFailureDiagnostic(errorText))); try { finish(undefined, parseAiJson<T>(output)); } catch (error) { finish(error as Error); } });
       child.stdin.on('error', () => {});
       child.stdin.end(prompt);
     });

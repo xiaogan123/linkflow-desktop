@@ -96,6 +96,20 @@ export function verificationCodes(subject:string,text='',html=''):CodeCandidate[
   return [...found.values()];
 }
 
+/** Alphanumeric login codes are scoped to a durable here.now email request. */
+function hereNowLoginContext(context:ExecutionContext):boolean {
+  const wait=context.task.emailWait,account=context.getAccount(),journal=account?.hereNowEmail;
+  return context.channel.id==='here-now'&&context.channel.domain==='here.now'&&wait?.kind==='code'&&wait.continuation==='here-now'&&!!journal&&journal.stage==='code_sent'&&journal.requestedAt===wait.since&&journal.emailHash===createHash('sha256').update(wait.recipient.trim().toLowerCase()).digest('hex')&&account?.id===context.task.accountId&&account.email===wait.recipient;
+}
+function hereNowLoginCodes(subject:string,text:string,html:string):CodeCandidate[]{
+  const found=new Map<string,CodeCandidate>(),marker=new RegExp(MARKER,'i');
+  for(const source of [subject,text,htmlText(html)])for(const match of source.matchAll(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/g)){
+    const before=source.slice(Math.max(0,match.index!-80),match.index),after=source.slice(match.index!+match[0].length,match.index!+match[0].length+80);
+    if((marker.test(before)||marker.test(after))&&!nonVerificationNumber(before,after))found.set(match[0],{code:match[0],snippet:snippet(source,match.index)});
+  }
+  return [...found.values()];
+}
+
 function rawUrls(text:string):string[] {
   const urls=new Set<string>(),decoded=text.replace(/&amp;/gi,'&').replace(/=\r?\n/g,'');
   for(const match of decoded.matchAll(/https?:\/\/[^\s<>"'\[\]]+/gi))try{
@@ -362,7 +376,9 @@ function collectMessage(plan:ScanPlan,message:ScanMessage,parsed:ParsedVerificat
   const messageId=parsed.messageId??envelope.messageId??`sha256:${createHash('sha256').update(source).digest('hex')}`;
   if(plan.seen.has(messageId))return;plan.seen.add(messageId);
   const subject=(parsed.subject??envelope.subject??'').slice(0,MAX_BYTES),text=(parsed.text??'').slice(0,MAX_BYTES),html=typeof parsed.html==='string'?parsed.html.slice(0,MAX_BYTES):'';
-  const codes=plan.mode==='link'?[]:verificationCodes(subject,text,html);
+  const hereLogin=hereNowLoginContext(plan.context),shiplyLogin=plan.context.channel.id==='shiply'&&plan.context.task.emailWait?.continuation==='shiply';
+  if((hereLogin||shiplyLogin)&&received<plan.start)return;
+  const codes=plan.mode==='link'?[]:hereLogin?hereNowLoginCodes(subject,text,html):verificationCodes(subject,text,html);
   const body=`${text}\n${html}`,hasVerificationContext=LINK_CONTEXT.test(`${subject}\n${htmlText(body)}`);
   if(!plan.confirmationRequired&&!authenticatedFor(source,channel.domain,plan.context.mailbox?.host??plan.context.settings.mail.host)){
     if(codes.length||plan.mode!=='code'&&hasVerificationContext)plan.untrusted??={snippet:snippet(subject||text||htmlText(html)),messageId};
@@ -371,7 +387,7 @@ function collectMessage(plan:ScanPlan,message:ScanMessage,parsed:ParsedVerificat
   if(plan.mode!=='link'){
     const date=envelope.date?new Date(envelope.date).getTime():NaN;
     for(const candidate of codes){
-      if(!Number.isFinite(date)||date<plan.start-DATE_SKEW_MS){plan.staleCode??={code:candidate.code,snippet:candidate.snippet,messageId};continue}
+      if(!Number.isFinite(date)||date<plan.start-(hereLogin||shiplyLogin?0:DATE_SKEW_MS)){plan.staleCode??={code:candidate.code,snippet:candidate.snippet,messageId};continue}
       if(!plan.codes.has(candidate.code))plan.codes.set(candidate.code,{snippet:candidate.snippet,messageId});
     }
   }

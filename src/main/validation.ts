@@ -3,7 +3,7 @@ import {isReasoningEffort} from '../shared/types';
 export const Id=z.string().uuid();
 export const category=z.enum(['software','ai','developer','design','business','content','education','finance','general']);
 export const OptionalContactEmail=z.union([z.email().max(254),z.literal('')]);
-export const AddSitesBatch=z.object({domains:z.array(z.string()).min(1).max(10000),monthlyTarget:z.number().int().min(1).max(20),articleReviewMode:z.enum(['manual','ai']),siteType:z.enum(['auto','finance-zh']),contactEmail:OptionalContactEmail.default('')}).strict();
+export const AddSitesBatch=z.object({domains:z.array(z.string()).min(1).max(10000),monthlyTarget:z.number().int().min(1).max(20),articleReviewMode:z.enum(['manual','ai']),siteType:z.enum(['auto','finance-zh']),contactEmail:OptionalContactEmail.default(''),mailboxId:Id.optional()}).strict();
 export const SiteContentUpdate=z.object({id:Id,topics:z.array(z.object({url:z.url().max(2048),title:z.string().trim().max(300).optional()}).strict()).max(200),linkTargets:z.array(z.url().max(2048)).max(200),forbiddenTerms:z.array(z.string().trim().min(1).max(120)).max(200)}).strict();
 export const AddSite=z.object({domain:z.string().trim().min(3).max(253),email:z.email().max(254),monthlyTarget:z.number().int().min(1).max(20),articleReviewMode:z.enum(['manual','ai']).optional()});
 const qualificationNames=['software','developer','portfolio','publication','business','localBusiness','techContent','wordpressPlugin','drupalProject','javascriptPackage','pythonPackage','dotnetPackage','rustCrate','phpPackage','dartPackage','rubyGem','containerImage','aiArtifact','firefoxExtension','vscodeExtension','jetbrainsPlugin','linuxApp','androidFoss','openSource','gameAsset'] as const;

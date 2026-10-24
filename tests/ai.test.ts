@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createAi, discoverApiModels, parseAiJson } from '../src/integrations/ai';
+import { CodexCliError, createAi, discoverApiModels, parseAiJson } from '../src/integrations/ai';
 import {errorReasonCode} from '../src/shared/task-reasons';
 import type { SecretStore, Settings } from '../src/shared/types';
 
@@ -158,6 +158,24 @@ test('Codex CLI failure never exposes child stderr', { skip: process.platform ==
     assert.doesNotMatch(String(error), /private-stderr-marker/);
     return true;
   });
+});
+
+test('Codex failure exposes only allowlisted diagnostics, never raw error records or prompts', { skip: process.platform === 'win32' }, async t => {
+  for(const [record,diagnostic] of [
+    ['ERROR: unexpected status 400 Bad Request: {"error":{"code":"invalid_json_schema","message":"private-stderr-marker"}}','schema_invalid'],
+    ['ERROR: The model private-stderr-marker is not supported when using Codex with ChatGPT','model_unsupported'],
+    ['{"type":"error","message":"401 Unauthorized private-stderr-marker"}','authentication'],
+    ['ERROR: 429 Too Many Requests private-stderr-marker','rate_limit'],
+    ['private-stderr-marker invalid_json_schema 401 Unauthorized','cli_failure'],
+    ['{"type":"message","message":"invalid_json_schema private-stderr-marker"}','cli_failure'],
+  ] as const){
+    const {executable}=await fakeCodex(t,`process.stderr.write(${JSON.stringify(record)});process.stdout.write('private-output-marker');process.exit(17);`);
+    const settings={provider:'codex',codexPath:executable,model:'synthetic-model'} as Settings;
+    await assert.rejects(createAi(settings,emptySecrets).json('private-prompt-marker',{}),error=>{
+      assert.ok(error instanceof CodexCliError);assert.equal(error.diagnostic,diagnostic);assert.equal(error.exitCode,17);assert.equal(error.reasonCode,'temporary_failure');
+      assert.doesNotMatch(String(error)+JSON.stringify(error),/private-(?:stderr|output|prompt)-marker/);assert.equal(error.cause,undefined);return true;
+    });
+  }
 });
 
 test('API provider retains the 90 second deadline', async t => {

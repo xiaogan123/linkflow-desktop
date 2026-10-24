@@ -8,13 +8,14 @@ export type ChannelAutomationKind='ai_auto'|'connected_auto'|'registration_pendi
 export type ChannelAutomationFilter='all'|Exclude<ChannelAutomationKind,'disabled'>;
 
 const automaticIdentity=new Set(['yeetmd','markdownpage','slopit','rant','agentsgather','agentboard','synthfolk','thethings','swarmmemo','tantive','notebin','wordcell','vibedrop','plopino','telegraph','nostr','mataroa','verbose','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','pastyx','mdshare','agentdrop','shippage','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki','agenthow','agentnotepad','openagentchat','agentriot','shellbook','large-language','agentswiki','listed-startups','carcinus']);
-const connectedIdentity=new Set(['whitewind','hackmd','here-now','shiply','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop','product-index']);
+const connectedIdentity=new Set(['whitewind','hackmd','here-now','shiply','beacon','gitbook','valtown','bitbucket','github-gist','blogger','wordpress-com','leaflet','paragraph','hive','bluesky','raindrop','product-index']);
 
 export function channelAutomationKind(channel:Channel):ChannelAutomationKind{
   if(!channel.enabled)return 'disabled';
   if(channel.id==='slugpost'&&channel.domain==='slugpost.com'&&channel.provenance==='built-in'&&channel.automation==='browser'&&channel.kind==='article'&&channel.articleRequired&&!channel.accountRequired&&!channel.emailRequired)return 'ai_auto';
   if(channel.automation==='browser')return 'profile';
   if(channel.automation!=='api'||channel.provenance==='custom')return 'manual';
+  if(channel.id==='chatclaw'&&channel.domain==='chatclaw.com'&&channel.kind==='community'&&channel.contentFormat==='social'&&!channel.accountRequired&&!channel.emailRequired)return 'ai_auto';
   if(channel.id==='paper-wf'&&channel.contentFormat!=='social')return 'registration_pending';
   if(automaticIdentity.has(channel.id)&&channel.contentFormat!=='social')return 'ai_auto';
   if(connectedIdentity.has(channel.id)&&(['bluesky','raindrop'].includes(channel.id))===(channel.contentFormat==='social'))return 'connected_auto';
@@ -28,8 +29,10 @@ export function channelMatchesAutomation(channel:Channel,filter:ChannelAutomatio
 }
 
 const setupById:Record<string,string>={
+  beacon:'关联已授权且测试通过的收信邮箱后，自动读取可信验证码并复用同一账号；只发布通过稿件检查的原创软件文档，使用无计划到期的账号页面。结果不明保留原稿并只读对账，不重新注册或重发',
   yeetmd:BATCH5_MESSAGES.directSetup,markdownpage:BATCH5_MESSAGES.immutableSetup,slopit:BATCH5_MESSAGES.accountSetup,rant:BATCH5_MESSAGES.accountSetup,whitewind:BATCH5_MESSAGES.connectedSetup,hackmd:BATCH5_MESSAGES.connectedSetup,
   agentboard:'首个获准任务用一次原子 POST 建立并复用无邮箱 agent，同时发布该项目唯一 introductions 主帖；credential、发布账号和回执加密保存，未知结果不重发、不换号或主页；后续仅发布 AI 复核的非 introductions 技术讨论',
+  chatclaw:'首次任务自动建立并复用一个如实命名的无邮箱 agent；密钥、提交意图与原始响应只在本机加密保存。短帖须保持 40–280 字并通过 AI 复核；结果不明只读对账、不重发，不保证搜索收录或长期保留',
   agentsgather:'免账号匿名发布；最终原稿、唯一目标、真实操作者关系披露与 AI 复核记录核对一致后，POST 前加密保存单次 request_id。已完成真实发布与公开页验收，后续每篇仍须 AI 复核和检查链接',
   swarmmemo:'本机自动建立并复用签名发布账号，无需邮箱或钱包；已完成真实发布与公开页验收，结果不明只读核对原页面、不重发；不保证永久保留',
   tantive:'免账号按固定官方 API 逐字预览并发布；临时票据和原始响应只在本机加密保存，结果不明时只按原 request ID 只读核对；后续每篇仍须 AI 复核和检查链接',
@@ -40,8 +43,8 @@ const setupById:Record<string,string>={
   wordcell:'首次任务仅创建一次固定托管令牌并加密保存；已完成真实令牌建立与公开页验收，结果不明时只读查询同一 operation，不重复 PUT 或新建 slug；不保证永久保留',
   carcinus:'只允许一个稳定 human-operated identity 和一张经审核的公开页；一次性 write token 仅在本机加密保存。结果不明只核对固定 restore 与公开页，不重发、不换 identity；丢 token 的已公开页明确记作 live_unmanaged',
   plopino:'任务使用网站已授权邮箱自动建立并复用账号；已有账号可直接连接，结果不明不会重复注册；无需手工创建 密钥',
-  'here-now':'首次连接已完成邮箱验证的个人账号 密钥，并关联网站；之后按审核与排期自动发布全文',
-  shiply:'首次向本人授权邮箱请求验证码并连接账号；加密保存 密钥 后复用；已完成真实发布验收，后续每篇仍须审核和检查链接',
+  'here-now':'关联已测试通过的收信邮箱后，到期任务自动完成可信邮件验证并保存命名密钥；其他邮件须确认。关联网站后按审核与排期发布。已有密钥可直接连接，自动收码失败时保留原账号',
+  shiply:'关联已测试通过的收信邮箱后，到期任务自动请求并读取验证码，可信邮件自动验证，其他邮件须确认；连接或复用同一邮箱账号，密钥加密保存，后续每篇仍须审核和检查链接',
   telegraph:'自动创建发布账号，无需首次连接',
   nostr:'在本机建立发布账号，无需首次连接',
   mataroa:'自动建立作者账号；若平台要求验证则等待处理',
@@ -85,14 +88,17 @@ const setupById:Record<string,string>={
   'wordpress-com':'首次由本人完成 WordPress.com 浏览器授权，再选择已公开博客',
   leaflet:'首次连接本人 Bluesky 托管账号的应用专用密码；完整文章',
   raindrop:'本人先确认邮箱并在最外层建立专用公开合集；粘贴个人 Test token、选择合集和实际 Public Page 地址',
-  paragraph:'首次连接本人出版物的 密钥',
+  paragraph:'官网可用邮箱、Google 或 GitHub 注册，无需钱包；先准备本人出版物并取得 API 密钥，再连接自动发布。尚未接入自动开户及取密钥',
+  gitbook:'先在官网准备一个本人控制的 Basic 文档站，再粘贴 PAT 并选择关联网站；唯一远端站点自动识别，多候选时再手动指定。连接后自动发布，但不会自动注册、建站、创建 PAT、升级或付款',
+  valtown:'本人先完成 Google 登录或人机验证并创建最小权限 token；连接一次后自动发布审核通过的软件文档。未知结果只读恢复，不自动开户、创建 token 或接管同名 val',
+  bitbucket:'连接已核实的 Free 工作区、私有项目和最小权限 token；一个工作区只服务一个网站，并且只允许发布一篇审核通过的软件文档到首次创建的 root。两次首次写入都要求 24 小时内 Free 证据，未知结果只做 GET 对账。',
   hive:'首次连接本人账号的 posting key',
   bluesky:'首次连接本人账号的授权码；仅短帖',
   'paper-wf':'尝试自动建号；首次人机验证可能需要本人完成',
 };
 
 export function channelSourceLabels(id:string){
-  if(['agentsgather','tantive','thethings','betterthanhtml','supanote','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','shippage','pstrs','yourwebs','pastemyst','markdownpaste','html-app','brewpage','markdrop','draftmark','memorywiki','sigle','nuance','carcinus'].includes(id))return {checked:'资料核查',open:'官方说明'};
+  if(['agentsgather','chatclaw','tantive','thethings','betterthanhtml','supanote','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','shippage','pstrs','yourwebs','pastemyst','markdownpaste','html-app','brewpage','markdrop','draftmark','memorywiki','sigle','nuance','carcinus'].includes(id))return {checked:'资料核查',open:'官方说明'};
   const guidance=['telegraph','paper-wf','verbose'].includes(id);
   return {checked:guidance?'接口与公开资料核查':'规则核查',open:id==='telegraph'?'官方 API 文档':guidance?'官方公开说明':'官方规则'};
 }

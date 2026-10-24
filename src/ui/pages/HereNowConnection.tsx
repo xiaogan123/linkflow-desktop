@@ -6,6 +6,39 @@ import {Button,Field} from '../components';
 type Props={data:Snapshot|null;disabled:boolean;account?:Account;onClose:()=>void;onAction:<T>(command:string,payload?:unknown,success?:string)=>Promise<T|undefined>};
 
 export function HereNowConnection({data,disabled,account,onClose,onAction}:Props){
+  const [useKey,setUseKey]=useState(!!account?.hereNow);
+  const [active,setActive]=useState(account),[email,setEmail]=useState(account?.email??(data?.mailboxes.length===1?data.mailboxes[0].user:'')),[code,setCode]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [siteIds,setSiteIds]=useState((data?.accountBindings??[]).filter(binding=>binding.channelId==='here-now'&&binding.accountId===account?.id).map(binding=>binding.siteId));
+  useEffect(()=>{const latest=data?.accounts.find(value=>value.id===active?.id);if(latest)setActive(latest)},[data?.accounts,active?.id]);
+  if(useKey||active?.hereNow)return <HereNowKeyConnection {...{data,disabled,account:active,onClose,onAction}}/>;
+  const stage=active?.hereNowEmail?.stage;
+  const waitEnded=stage==='code_sent'&&Date.now()-Date.parse(active!.hereNowEmail!.requestedAt)>=10*60_000;
+  const validEmail=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())&&email.length<=254;
+  async function run(command:string,payload:unknown,success:string){
+    if(busy)return;setBusy(true);setError('');
+    try{const saved=await onAction<Account>(command,payload,success);setCode('');if(saved)setActive(saved);else setError('操作未完成；请查看原账号状态，结果不明时不要再次提交。')}
+    catch{setCode('');setError('操作结果不明；原账号记录已保留，不会重复注册。')}
+    finally{setBusy(false)}
+  }
+  const stageLabel:Record<string,string>={requesting:'正在请求验证码',request_unknown:'验证码请求结果不明',code_sent:'等待邮箱验证码',verifying:'正在验证邮箱',verify_unknown:'验证结果不明',verify_opaque:'验证响应已加密保存，等待恢复',ready:'账号已连接'};
+  return <div className="side-drawer-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget&&!busy)onClose()}}><aside className="side-drawer narrow" role="dialog" aria-modal="true" aria-label="连接 here.now 邮箱账号"><header><div><h2>连接 here.now</h2></div><button className="icon-button" aria-label="关闭" disabled={busy} onClick={onClose}><X size={18}/></button></header><div className="drawer-form">
+    <p className="drawer-intro">网站关联的收信邮箱通过测试后，到期任务会自动请求并读取验证码。可信邮件可自动完成验证，其他邮件会提示你确认。已有账号会优先复用，无需为每个域名重新注册。</p>
+    <p className="cell-note">这里也可手动连接。没有待执行任务时，请在下方填写邮箱验证码；连接后仍按稿件审核和排期发布。</p>
+    <Field label="本人邮箱"><input aria-label="here.now 收件邮箱" type="email" autoComplete="email" value={email} disabled={disabled||busy||!!active} onChange={event=>setEmail(event.target.value)}/></Field>
+    {!active&&<Button variant="primary" disabled={disabled||busy||!validEmail} onClick={()=>void run('account:request-here-now-code',{email:email.trim(),...(siteIds.length===1?{siteId:siteIds[0]}:{})},'已向原邮箱请求验证码。')}>请求一次验证码</Button>}
+    {active&&<p role="status" className="account-diagnostic">{stageLabel[stage??'']??'原账号状态需检查'}。{waitEnded?'本机本轮等待已结束，不代表平台验证码已经失效。':stage==='request_unknown'||stage==='verify_unknown'?'原请求与账号保留，不会自动重试。':''}</p>}
+    {stage==='code_sent'&&!waitEnded&&<Field label="邮箱中的验证码" hint="格式如 ABCD-2345；已有待执行任务且邮箱接通时会自动读取。"><input aria-label="here.now 邮箱验证码" autoComplete="one-time-code" maxLength={9} value={code} disabled={disabled||busy} onChange={event=>setCode(event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g,''))}/></Field>}
+    {(!active||stage==='code_sent'||stage==='verify_opaque')&&<fieldset className="checkbox-grid" disabled={disabled||busy}><legend>允许此账号用于哪些网站</legend>{(data?.sites??[]).map(site=><label className="site-binding-option" key={site.id}><input type="checkbox" checked={siteIds.includes(site.id)} onChange={event=>setSiteIds(current=>event.target.checked?[...new Set([...current,site.id])]:current.filter(id=>id!==site.id))}/><span>{site.domain}</span></label>)}</fieldset>}
+    {stage==='code_sent'&&!waitEnded&&<Button variant="primary" disabled={disabled||busy||!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)} onClick={()=>void run('account:verify-here-now-code',{accountId:active!.id,code,siteIds},'here.now 账号已连接，密钥已加密保存。')}>验证并保存</Button>}
+    {waitEnded&&<Button disabled={disabled||busy} onClick={()=>void run('account:resend-here-now-code',{accountId:active!.id},'已为原 here.now 账号重新请求验证码；请使用最新邮件。')}>为原账号重新取码</Button>}
+    {stage==='verify_opaque'&&<Button disabled={disabled||busy} onClick={()=>void run('account:recover-here-now-verify',{accountId:active!.id,siteIds},'已恢复原 here.now 验证响应。')}>从原响应恢复</Button>}
+    {error&&<p role="alert" className="account-diagnostic">{error}</p>}
+    {!active&&<Button disabled={busy} onClick={()=>setUseKey(true)}>已有命名密钥，直接连接</Button>}
+    <div className="drawer-actions"><Button disabled={busy} onClick={onClose}>关闭</Button></div>
+  </div></aside></div>;
+}
+
+function HereNowKeyConnection({data,disabled,account,onClose,onAction}:Props){
   const [apiKey,setApiKey]=useState(''),[existingSiteUrl,setExistingSiteUrl]=useState(account?.hereNow?.existingSiteUrl??''),[siteIds,setSiteIds]=useState((data?.accountBindings??[]).filter(binding=>binding.channelId==='here-now'&&binding.accountId===account?.id).map(binding=>binding.siteId));
   const [busy,setBusy]=useState(false),[error,setError]=useState('');
   const running=useRef(false),alive=useRef(true);

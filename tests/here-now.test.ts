@@ -246,8 +246,9 @@ test('normal Controller performs the single authenticated create and exact publi
   };
   const controller=new Controller(store,vault,'isolated',{channelCatalog:catalog,hereNowDependencies:{now:()=>new Date(now),fetch:hereNowFetch},recheckLink:periodicFixtureCheck(hereNowFetch)});
   controller.runtime.aiReady=true;
+  const invalidSnapshots:string[]=[];store.onChange=()=>{try{validateBackup({state:store.read(),secrets:Object.fromEntries(plaintext)})}catch(error){invalidSnapshots.push(error instanceof Error?error.message:String(error))}};
   try{
-    await controller.tick();const saved=store.read().tasks[0],diagnostic=JSON.stringify(saved);
+    await controller.tick();assert.deepEqual(invalidSnapshots,[],'Every committed publication snapshot must be backup-valid');const saved=store.read().tasks[0],diagnostic=JSON.stringify(saved);
     assert.equal(creates,1,diagnostic);assert.equal(uploads,1,diagnostic);assert.equal(finalizes,1,diagnostic);assert.equal(ownerReads,2,diagnostic);assert.equal(publicReads,1,diagnostic);
     assert.equal(saved.status,'live',diagnostic);assert.equal(saved.hereNow?.stage,'published');assert.equal(saved.checkpoint,'here_now_published');assert.equal(saved.publicUrl,siteUrl);
     assert.doesNotThrow(()=>validateBackup({state:store.read(),secrets:Object.fromEntries(plaintext)}));

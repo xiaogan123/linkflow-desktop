@@ -14,7 +14,7 @@ import {articleContextHash,reviewArticleDraft} from '../src/main/article-review'
 import {decorateManagedDraft} from '../src/main/draft-contract';
 import {CHANNELS} from '../src/integrations/catalog';
 import {analyzeWebsiteHtml} from '../src/integrations/web';
-import type {AddSitesBatchInput,Site,Task} from '../src/shared/types';
+import type {AddSitesBatchInput,Mailbox,Site,Task} from '../src/shared/types';
 import type {Vault} from '../src/main/vault';
 
 const stamp='2026-10-01T00:00:00.000Z';
@@ -25,6 +25,8 @@ const base:Omit<AddSitesBatchInput,'domains'>={monthlyTarget:2,articleReviewMode
 const vault={available:()=>true,encryptSecrets:()=>({})} as unknown as Vault;
 function site():Site{return {id:siteId,domain:'example.com',url:'https://example.com',email:'',name:'Example',description:'Educational guides',category:'finance',language:'zh-CN',monthlyTarget:2,status:'ready',createdAt:stamp,analyzedAt:stamp}}
 function task():Task{return {id:taskId,siteId,channelId:'telegraph',sourceDomain:'telegra.ph',status:'queued',createdAt:stamp,scheduledAt:stamp,updatedAt:stamp,attempts:0,message:'fixture',topicUrl:'https://example.com/guides/reading',draft:{title:'Reading the documentation',description:'An educational guide',body:'Read the original documentation before choosing a workflow.'},articleApprovedAt:stamp,history:[{at:stamp,status:'queued',message:'fixture history'}]}}
+const mailboxId='44444444-4444-4444-8444-444444444444';
+function mailbox():Mailbox{return {id:mailboxId,label:'收码',host:'imap.gmail.com',port:993,user:'codes@gmail.com',secure:true,hasPassword:true,aliases:[],createdAt:stamp,updatedAt:stamp,verifiedAt:stamp}}
 
 test('batch input accepts an empty public email and enforces the import contract',()=>{
   assert.equal(AddSitesBatch.parse({...base,domains:['example.com']}).contactEmail,'');
@@ -32,7 +34,61 @@ test('batch input accepts an empty public email and enforces the import contract
   assert.throws(()=>AddSitesBatch.parse({...base,domains:['example.com'],siteType:'unknown'}));
   assert.throws(()=>AddSitesBatch.parse({...base,domains:['example.com'],contactEmail:'invalid'}));
   assert.throws(()=>AddSitesBatch.parse({...base,domains:['example.com'],monthlyTarget:0}));
+  assert.equal(AddSitesBatch.parse({...base,domains:['example.com'],mailboxId}).mailboxId,mailboxId);
+  assert.throws(()=>AddSitesBatch.parse({...base,domains:['example.com'],mailboxId:'unknown'}));
   assert.equal(EditSite.parse({id:siteId,email:'',publicEmail:''}).email,'');
+});
+
+test('batch binds only new websites to a currently usable selected mailbox',async()=>{
+  const store=new Store(':memory:');
+  try{
+    store.update(state=>{state.settings.autoRun=false;state.mailboxes=[mailbox()];state.sites=[site()]});
+    const result=await addSitesBatch(store,{...base,domains:['example.com','new.example.com'],mailboxId},{now});
+    assert.equal(result.added,1);assert.equal(result.duplicates,1);
+    assert.equal(store.read().sites[0].mailboxId,undefined);
+    assert.equal(store.read().sites[1].mailboxId,mailboxId);
+    assert.equal(store.read().sites[1].publicEmail,'');
+  }finally{store.close()}
+});
+
+test('batch rejects deleted, untested and failed mailboxes before saving any website',async()=>{
+  const store=new Store(':memory:');
+  try{
+    for(const current of [undefined,{...mailbox(),verifiedAt:undefined},{...mailbox(),lastError:'test failed'}]){
+      store.update(state=>{state.mailboxes=current?[current]:[]});
+      await assert.rejects(addSitesBatch(store,{...base,domains:['new.example.com'],mailboxId},{now}),/收信邮箱不存在或尚未测试可用/);
+      assert.equal(store.read().sites.length,0);
+    }
+    store.update(state=>{state.mailboxes=[mailbox()]});
+    const result=await addSitesBatch(store,{...base,domains:['new.example.com'],mailboxId},{now,yieldToUi:async()=>{store.update(state=>{state.mailboxes=[]})}});
+    assert.equal(result.added,0);assert.deepEqual(result.errors.map(error=>[error.index,error.code]),[[0,'save_failed']]);
+    assert.match(result.errors[0].message,/收信邮箱不存在或尚未测试可用/);
+    assert.equal(store.read().sites.length,0);
+  }finally{store.close()}
+});
+
+test('mailbox failure after a yield returns partial results and analyzes every committed site exactly once',async()=>{
+  const store=new Store(':memory:');
+  try{
+    store.update(state=>{state.settings.autoRun=false;state.mailboxes=[mailbox()]});
+    const domains=Array.from({length:12},(_,index)=>`new-${index}.example.com`),analyses:string[]=[];
+    let yields=0;
+    const result=await addSitesBatch(store,{...base,siteType:'auto',domains,mailboxId},{now,
+      yieldToUi:async()=>{if(++yields===2)store.update(state=>{state.mailboxes[0].lastError='lost connection'})},
+      analyze:id=>analyses.push(id)});
+    assert.equal(result.added,10);assert.equal(result.duplicates,0);
+    assert.deepEqual(result.errors.map(error=>[error.index,error.code]),[[10,'save_failed'],[11,'save_failed']]);
+    assert.ok(result.errors.every(error=>error.message.includes('收信邮箱不存在或尚未测试可用')));
+    assert.equal(store.read().sites.length,10);
+    assert.deepEqual(analyses,result.siteIds);
+    assert.equal(new Set(analyses).size,10);
+    assert.ok(store.read().sites.every(value=>value.mailboxId===mailboxId));
+    store.update(state=>{state.mailboxes[0].lastError=undefined});
+    const retry=await addSitesBatch(store,{...base,siteType:'auto',domains,mailboxId},{now,analyze:id=>analyses.push(id)});
+    assert.equal(retry.added,2);assert.equal(retry.duplicates,10);assert.deepEqual(retry.errors,[]);
+    assert.equal(new Set(analyses).size,12);assert.equal(analyses.length,12);
+    assert.deepEqual(analyses.slice(10),retry.siteIds);
+  }finally{store.close()}
 });
 
 test('batch normalizes addresses, reports bad rows, and deduplicates both saved and incoming sites',async()=>{

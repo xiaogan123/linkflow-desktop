@@ -33,15 +33,22 @@ test('accepted Draftmark is enabled with per-document credentials and software e
 });
 
 test('enabled built-in publisher capabilities follow the real first-step contract',()=>{
-  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentsgather','agentswiki','betterthanhtml','brewpage','carcinus','deed-page','docs-md','draftmark','html-app','katbin','large-language','listed-startups','lucid-page','markdownpage','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','rant','shellbook','shippage','slugpost','supanote','swarmmemo','synthfolk','tantive','telegraph','thethings','totpage','txtsbs','verbose','vibedrop','wordcell','yeetmd','yourwebs']);
+  assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='ai_auto').map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentsgather','agentswiki','betterthanhtml','brewpage','carcinus','chatclaw','deed-page','docs-md','draftmark','html-app','katbin','large-language','listed-startups','lucid-page','markdownpage','markdownpaste','markdrop','mataroa','mdshare','memorywiki','nextgen-slides','nostr','openagentchat','pastemyst','pastyx','plopino','pstrs','rant','shellbook','shippage','slugpost','supanote','swarmmemo','synthfolk','tantive','telegraph','thethings','totpage','txtsbs','verbose','vibedrop','wordcell','yeetmd','yourwebs']);
   assert.equal(channelAutomationKind(channel('slopit')),'disabled');
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='connected_auto').map(item=>item.id).sort(),['blogger','bluesky','github-gist','hackmd','here-now','hive','leaflet','paragraph','product-index','shiply','wordpress-com']);
+  // Off by default until a real reviewed draft publishes end to end through the product path.
+  for(const id of ['beacon','bitbucket','gitbook','valtown','feddit'])assert.equal(channelAutomationKind(channel(id)),'disabled',id);
   assert.deepEqual(CHANNELS.filter(item=>channelAutomationKind(item)==='registration_pending').map(item=>item.id),['paper-wf']);
   assert.match(channelAutomationView(channel('nostr')).setup,/本机建立发布账号/);
   assert.match(channelAutomationView(channel('paper-wf')).setup,/人机验证/);
   assert.match(channelAutomationView(channel('bluesky')).method??'',/短帖/);
   assert.match(channelAutomationView(channel('blogger')).setup,/本人完成 Google 授权/);
   assert.match(channelAutomationView(channel('deed-page')).setup,/免注册发布静态全文.*不保证长期可用或保留/);
+  const chatclaw=channel('chatclaw');
+  assert.equal(channelAutomationView(chatclaw).method,'官方 API · 短帖');
+  assert.match(channelAutomationView(chatclaw).setup??'',/无邮箱 agent.*40–280 字.*AI 复核.*不重发.*不保证搜索收录或长期保留/);
+  assert.deepEqual(channelSourceLabels('chatclaw'),{checked:'资料核查',open:'官方说明'});
+  for(const changed of [{enabled:false},{provenance:'custom' as const},{domain:'other.invalid'},{kind:'article' as const},{contentFormat:undefined},{accountRequired:true},{emailRequired:true}])assert.notEqual(channelAutomationKind({...chatclaw,...changed}),'ai_auto');
 });
 
 test('accepted batch channels expose their actual UI capability and safety boundaries',()=>{
@@ -197,7 +204,7 @@ test('invalid Telegraph credentials replace generic locally-ready copy with acco
   assert.equal(channelAutomationKind(plopino),'ai_auto');
   assert.equal(channelAutomationKind(here),'connected_auto');
   assert.match(channelAutomationView(plopino).setup??'',/已授权邮箱.*自动建立.*不.*重复注册/);
-  assert.match(channelAutomationView(here).setup??'',/邮箱验证.*密钥.*关联网站/);
+  assert.match(channelAutomationView(here).setup??'',/可信邮件验证.*密钥.*其他邮件须确认.*关联网站/);
   for(const value of [plopino,here]){
     assert.equal(channelMatchesAutomation(value,channelAutomationKind(value) as 'ai_auto'|'connected_auto',true,'software'),true);
     assert.equal(channelMatchesAutomation(value,'all',true,'finance'),false);

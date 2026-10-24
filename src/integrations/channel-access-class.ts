@@ -7,16 +7,16 @@ type BuiltInAccessClass=Exclude<AccessClass,'unqualified'>;
 // Identity setup is a property of a platform. Suitability is evaluated for each
 // site below; it cannot be inferred from the platform's setup method alone.
 const WALLET=new Set(['sigle','nuance']);
-const HUMAN_VERIFY_ONCE=new Set(['paper-wf','here-now']);
+const HUMAN_VERIFY_ONCE=new Set(['paper-wf']);
 // Paragraph publishes with a publication API key and Hive with an existing posting key: both are connected once.
 const CONNECT_ONCE=new Set([
   'hackmd','whitewind','raindrop','prose','github-gist','paragraph','hive',
-  'bluesky','blogger','leaflet','wordpress-com','product-index',
+  'bluesky','blogger','leaflet','wordpress-com','product-index','gitbook',
 ]);
-// The software requests and reads the Shiply code from the site's inbox.
-const EMAIL_AUTO=new Set(['shiply']);
+// An authorized, tested inbox is required; the scheduler reuses its original address.
+const EMAIL_AUTO=new Set(['shiply','here-now','beacon']);
 // These accept an anonymous page with no account at all.
-const DIRECT_SUBMIT=new Set(['brewpage','deed-page']);
+const DIRECT_SUBMIT=new Set(['brewpage','deed-page','hart']);
 
 export function builtInAccessClass(channel:Pick<Channel,'id'|'automation'|'accountRequired'|'emailRequired'>):BuiltInAccessClass {
   if(WALLET.has(channel.id))return 'wallet';

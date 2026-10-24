@@ -36,10 +36,10 @@ test('「在用」is the scheduler\'s own answer; a platform it would skip says 
   assert.equal(platformRows(data, undefined, []).find(row => row.channel.id === used.id)!.action.kind, 'in_use');
 });
 
-test('one-liners and reasons use the plain wording of the spec', () => {
+test('one-liners do not infer retention guarantees or ranking credit from missing expiry and rel attributes', () => {
   const base = {...CHANNELS.find(channel => channel.id === 'txtsbs')!};
-  assert.equal(platformOneLiner({...base, retentionDays: undefined, linkRel: 'nofollow'}, 'direct_submit'), '免注册 · 长期保留 · 不传权重');
-  assert.equal(platformOneLiner({...base, retentionDays: 30, linkRel: 'follow'}, 'direct_submit'), '免注册 · 保留 30 天 · 可传权重');
+  assert.equal(platformOneLiner({...base, retentionDays: undefined, linkRel: 'nofollow'}, 'direct_submit'), '免注册 · 未注明到期 · 链接标记 nofollow');
+  assert.equal(platformOneLiner({...base, retentionDays: 30, linkRel: 'follow'}, 'direct_submit'), '免注册 · 保留 30 天 · 普通链接');
   assert.equal(unsuitableReason(site, {...base, languages: ['en']}), '只收英语');
   assert.equal(unsuitableReason(site, {...base, promotionPolicy: 'forbidden'}), '禁止推广内容');
   assert.equal(unsuitableReason({...site, language: 'en'}, {...CHANNELS.find(channel => channel.id === 'product-hunt')!, languages: ['*'], audience: ['general']}), '只收软件项目');

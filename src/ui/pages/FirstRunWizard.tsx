@@ -65,7 +65,7 @@ export function FirstRunWizard({data,disabled,onAction,onClose,onSettings,onConn
       <div className="dialog-actions"><Button variant="primary" onClick={()=>setStep(2)}>{data.runtime.aiReady?'下一步':'先跳过，下一步'}</Button></div>
     </section>}
 
-    {step===2&&<AddSitesForm disabled={disabled} hideMode onAction={onAction} onAdded={result=>setAdded(previous=>previous?{...result,added:previous.added+result.added,siteIds:[...previous.siteIds,...result.siteIds],rolloutDays:Math.max(previous.rolloutDays,result.rolloutDays)}:result)} onClose={()=>added?.added?setStep(3):onClose()}/>}
+    {step===2&&<AddSitesForm disabled={disabled} hideMode mailboxes={data.mailboxes} onAction={onAction} onAdded={result=>setAdded(previous=>previous?{...result,added:previous.added+result.added,siteIds:[...previous.siteIds,...result.siteIds],rolloutDays:Math.max(previous.rolloutDays,result.rolloutDays)}:result)} onClose={()=>added?.added?setStep(3):onClose()}/>}
 
     {step===3&&<section>
       <fieldset className="article-review-mode"><legend className="sr-only">发布方式</legend>

@@ -6,7 +6,7 @@ export {MAIL_AUTOMATION_MESSAGES} from './registration-messages';
 
 export interface EmailWait {
   kind:'link'|'code';recipient:string;since:string;nextPollAt:string;expiresAt:string;mailboxId?:string;
-  consumedMessageIds:string[];continuation:'shiply'|'here-now'|'signup'|'browser';
+  consumedMessageIds:string[];continuation:'beacon'|'shiply'|'here-now'|'signup'|'browser';
 }
 /** The verification value lives in the vault, never in this public descriptor. */
 export interface EmailConfirmation {wait:EmailWait;messageId:string}

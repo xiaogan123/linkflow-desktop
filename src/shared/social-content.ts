@@ -5,10 +5,11 @@ export function graphemeLength(value:string):number {
 }
 
 /** Short posts are reviewed and published verbatim; never truncate or append after approval. */
-export function socialDraftError(task:Pick<Task,'draft'|'topicUrl'>,site:Pick<Site,'url'>,channel:Pick<Channel,'contentFormat'>):string|undefined {
+export function socialDraftError(task:Pick<Task,'draft'|'topicUrl'>,site:Pick<Site,'url'>,channel:Pick<Channel,'contentFormat'>&{id?:string}):string|undefined {
   if(channel.contentFormat!=='social')return;
   const body=task.draft?.body;
-  if(!body||body!==body.trim()||graphemeLength(body)>300||new TextEncoder().encode(body).length>3000)return '短内容须为完整纯文本，最多 300 个字符且不超过 3000 字节；不会截断后发布。';
+  const length=body?graphemeLength(body):0,chatClaw=channel.id==='chatclaw',maximum=chatClaw?280:300;
+  if(!body||body!==body.trim()||length>maximum||chatClaw&&length<40||new TextEncoder().encode(body).length>3000)return chatClaw?'ChatClaw 短帖须为完整纯文本，40–280 个字符；通过检查的原稿不会截断。':'短内容须为完整纯文本，最多 300 个字符且不超过 3000 字节；不会截断后发布。';
   if(/<[^>]+>|\]\(https?:\/\//i.test(body))return '短内容请使用纯文本与完整网址，不使用 HTML 或 Markdown 链接。';
   const urls=[...body.matchAll(/https?:\/\/[^\s<>]+/g)].map(match=>match[0]);
   if(urls.length!==1)return '短内容须保留一个相关正文页面链接，不能堆放多个链接。';

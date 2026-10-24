@@ -1,3 +1,6 @@
+import {GitBookConnection} from './GitBookConnection';
+import {ValTownConnection} from './ValTownConnection';
+import {BitbucketConnection} from './BitbucketConnection';
 import {HackmdConnection} from './HackmdConnection';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowClockwise,ArrowSquareOut,Check,Copy,Eye,EyeSlash,GithubLogo,GoogleLogo,LockKey,MagnifyingGlass,PencilSimple,Plus,PlugsConnected,ShieldCheck,SignOut,Trash,UserCircle,WarningCircle,X} from '@phosphor-icons/react';
@@ -40,6 +43,9 @@ const statuses:Record<string,[string,string]>={registered:['正常','green'],dra
 export function AccountsPage({data,disabled,onImport,onEdit,onDelete,onAction,onSetup,connectRequest,onConnectHandled}:Props){
   const [sort,setSort]=useState(unsorted);
   const onSort=(column:string)=>setSort(current=>toggleTableSort(current,column));
+  const [gitbookDrawer,setGitbookDrawer]=useState<{account?:Account}|null>(null);
+  const [valtownDrawer,setValtownDrawer]=useState<{account?:Account}|null>(null);
+  const [bitbucketDrawer,setBitbucketDrawer]=useState<{account?:Account}|null>(null);
   const [hackmdDrawer,setHackmdDrawer]=useState<{account?:Account}|null>(null);
   const [plopinoDrawer,setPlopinoDrawer]=useState<{account?:Account}|null>(null);
   const [leafletDrawer,setLeafletDrawer]=useState<{account?:Account}|null>(null);
@@ -79,7 +85,10 @@ export function AccountsPage({data,disabled,onImport,onEdit,onDelete,onAction,on
   });
   const openGist=(account?:Account)=>{setGistAccountId(account?.id??'');setGistToken('');setGistOpen(true)};
   const openConnection=(id:ConnectionChannelId,account?:Account)=>{
-    if(id==='hackmd')setHackmdDrawer({account});
+    if(id==='valtown')setValtownDrawer({account});
+    else if(id==='bitbucket')setBitbucketDrawer({account});
+    else if(id==='gitbook')setGitbookDrawer({account});
+    else if(id==='hackmd')setHackmdDrawer({account});
     else if(id==='colony')setColonyDrawer({account});
     else if(id==='agentnotepad')setAgentNotepadDrawer({account});
     else if(id==='product-index')setProductIndexDrawer({account});
@@ -155,6 +164,9 @@ export function AccountsPage({data,disabled,onImport,onEdit,onDelete,onAction,on
     {denoDrawer&&<DenoConnection data={data} disabled={disabled} account={denoDrawer.account} onClose={()=>setDenoDrawer(null)} onAction={onAction}/>}
     {hereNowDrawer&&<HereNowConnection data={data} disabled={disabled} account={hereNowDrawer.account} onClose={()=>setHereNowDrawer(null)} onAction={onAction}/>}
     {shiplyDrawer&&<ShiplyConnection data={data} disabled={disabled} account={shiplyDrawer.account} onClose={()=>setShiplyDrawer(null)} onAction={onAction}/>}
+    {gitbookDrawer&&<GitBookConnection data={data} disabled={disabled} account={gitbookDrawer.account} onClose={()=>setGitbookDrawer(null)} onAction={onAction}/>}
+    {valtownDrawer&&<ValTownConnection data={data} disabled={disabled} account={valtownDrawer.account} onClose={()=>setValtownDrawer(null)} onAction={onAction}/>}
+    {bitbucketDrawer&&<BitbucketConnection data={data} disabled={disabled} account={bitbucketDrawer.account} onClose={()=>setBitbucketDrawer(null)} onAction={onAction}/>} 
     {hackmdDrawer&&<HackmdConnection data={data} disabled={disabled} account={hackmdDrawer.account} onClose={()=>setHackmdDrawer(null)} onAction={onAction}/>}
     {leafletDrawer&&<LeafletConnection data={data} disabled={disabled} account={leafletDrawer.account} onClose={()=>setLeafletDrawer(null)} onAction={onAction}/>}
     {raindropDrawer&&<RaindropConnection data={data} disabled={disabled} account={raindropDrawer.account} onClose={()=>setRaindropDrawer(null)} onAction={onAction}/>}

@@ -20,6 +20,31 @@ const WIKI={title:TITLE,summary:DESCRIPTION,language:'en',type:'methodology',tag
 const CONNECTED_CONTEXT={site:SITE,task:TASK};
 
 type Fixture=(builder:Function, module:Record<string,unknown>)=>unknown;
+/** GitBook writes need a probed binding; the POST bodies sent are the public payload. */
+async function gitBookWrite(builder:Function,module:Record<string,unknown>,extra:Record<string,unknown>={}){
+  const m=module as Record<string,Function>&{GITBOOK_AUTHENTICATED_USER_URL:string};
+  const token=`gb_${'a'.repeat(40)}`,org='org_example',siteId='site_example',spaceId='space_example';
+  const article=m.prepareGitBookArticle({title:TITLE,slug:'example-research',markdown:`# ${TITLE}\n\n${BODY}\n`,targetUrl:TARGET});
+  const json=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});
+  const reads=new Map<string,unknown>([
+    [m.GITBOOK_AUTHENTICATED_USER_URL,{object:'user',id:'user_example',displayName:'Example',urls:{location:m.GITBOOK_AUTHENTICATED_USER_URL}}],
+    [m.gitBookOrganizationMembersUrl(org),{items:[{object:'member',id:'member_example',role:'admin',disabled:false,user:{object:'user',id:'user_example'},joinedAt:AT,sso:false,spaces:1,teams:0,sites:1}]}],
+    [m.gitBookOrganizationUrl(org),{object:'organization',id:org,plan:'free',trial:{status:'none'},permissions:{admin:true}}],
+    [m.gitBookSiteUrl(org,siteId),{object:'site',id:siteId,type:'basic',appliedType:'basic',visibility:'public',permissions:{view:true,edit:true,create:true,admin:true},published:false,urls:{}}],
+    [m.gitBookSpaceUrl(spaceId),{object:'space',id:spaceId,organization:org,revision:'revision_example',visibility:'private',permissions:{view:true,edit:true,merge:true,admin:true}}],
+    [m.gitBookSiteSpacesUrl(org,siteId),{items:[{object:'site-space',id:'ss_example',path:'documentation',default:true,space:{object:'space',id:spaceId},title:'Documentation',draft:false,urls:{}}]}],
+    [m.gitBookPageReadUrl(spaceId,article.slug,'cr_example'),{object:'page',title:article.title,slug:article.slug,noIndex:false,noRobotsIndex:false,markdown:article.markdown}],
+  ]);
+  const sent:unknown[]=[];
+  const fetch=async(url:string,init:RequestInit)=>{if(init.method==='GET'){if(!reads.has(url))throw Error(`unexpected GET ${url}`);return json(reads.get(url))}sent.push(JSON.parse(String(init.body)));throw Error('stop after capture')};
+  const probe=await m.probeGitBookBinding({organizationId:org,siteId,spaceId,token},{fetch});
+  if(probe.status!=='usable')throw Error('GitBook fixture binding unusable');
+  let intent:unknown;
+  const persistence={secretStorage:'encrypted',async persistIntent(value:unknown){intent=value},assertReadyToSubmit:()=>true,async persistOpaqueResponse(){},async loadOpaqueResponse(){return undefined},async promoteReceipt(){}};
+  await Reflect.apply(builder,undefined,[{operationId:`gitbook_${'1'.repeat(32)}`,binding:probe.binding,token,article,...extra},persistence,{allowExternalWrite:true,now:()=>new Date(AT),fetch}]);
+  if(!sent.length)throw Error('GitBook fixture sent nothing');
+  return {sent,intent};
+}
 const call=(...args:unknown[]):Fixture=>builder=>Reflect.apply(builder,undefined,args);
 /** Arguments are explicit; the inventory is discovered from production exports. */
 const fixtures:Record<string,Fixture>={
@@ -111,6 +136,12 @@ const fixtures:Record<string,Fixture>={
   'vibedrop.ts:publicationIdentity':call({accountId:ACCOUNT,operationId:`vibedrop_publish_${UUID.replaceAll('-','')}`,createdAt:AT,title:TITLE,html:HTML}),
   'writefreely-protocol.ts:writeFreelyPostPayload':call(TITLE,BODY,'example-research'),
   'yourwebs.ts:yourwebsRequest':call(HTML,TITLE),
+  'beacon.ts:renderBeaconArticle':call(ARTICLE),
+  'gitbook.ts:createGitBookChangeRequest':(builder,module)=>gitBookWrite(builder,module),
+  'gitbook.ts:mergeGitBookChangeRequest':(builder,module)=>gitBookWrite(builder,module,{changeRequestId:'cr_example'}),
+  'hart.ts:renderHartArticle':call({draft:DRAFT,targetUrl:TARGET,language:'en'}),
+  'hart-publisher.ts:renderHartTaskArticle':call(TASK,SITE),
+  'html2link-article.ts:renderHtml2LinkArticle':call({draft:DRAFT,targetUrl:TARGET,language:'en'}),
 };
 
 test('every discovered public builder has an invoked, unbranded fixture',async t=>{

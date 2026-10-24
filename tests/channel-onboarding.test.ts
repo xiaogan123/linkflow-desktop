@@ -54,7 +54,7 @@ test('accepted anonymous publishers expose their current no-signup access withou
 
 test('verified no-signup and automatic identity flows stay distinct',()=>{
   for(const id of ['lucid-page','rentry','betterthanhtml','supanote','docs-md'])assert.equal(channelOnboardingKind(builtIn(id)),'no_signup',id);
-  assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentswiki','carcinus','large-language','mataroa','nostr','notebin','openagentchat','paper-wf','plopino','shellbook','shippage','swarmmemo','telegraph','verbose','vibedrop','wordcell']);
+  assert.deepEqual(CHANNELS.filter(item=>channelMatchesOnboarding(item,'ai_account')).map(item=>item.id).sort(),['agentboard','agenthow','agentnotepad','agentriot','agentswiki','beacon','carcinus','here-now','large-language','mataroa','nostr','notebin','openagentchat','paper-wf','plopino','shellbook','shiply','shippage','swarmmemo','synthfolk','telegraph','verbose','vibedrop','wordcell']);
   assert.match(channelOnboardingView(channel('telegraph')).setup,/自动创建发布账号/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/本机创建作者密钥/);
   assert.match(channelOnboardingView(channel('nostr')).setup,/不是钱包连接/);
@@ -78,19 +78,20 @@ test('accepted agent identities and directory access expose verified onboarding 
   assert.equal(channelOnboardingKind(channel('listed-startups')),'no_signup');assert.equal(channelOnboardingKind(channel('product-index')),'existing_account');
 });
 
-test('wallet means the platform setup while Linkflow states the credential it actually uses',()=>{
-  for(const id of ['paragraph','sigle','nuance','hive'])assert.equal(channelOnboardingKind(builtIn(id)),'wallet',id);
-  assert.equal(CHANNELS.filter(item=>channelMatchesOnboarding(item,'wallet')).every(item=>['paragraph','sigle','nuance','hive'].includes(item.id)),true);
+test('wallet classification only covers a wallet-required flow, not publication keys or posting keys',()=>{
+  for(const id of ['sigle','nuance'])assert.equal(channelOnboardingKind(builtIn(id)),'wallet',id);
+  assert.equal(CHANNELS.filter(item=>channelMatchesOnboarding(item,'wallet')).every(item=>['sigle','nuance'].includes(item.id)),true);
   const paragraph=channelOnboardingView(channel('paragraph'));
-  assert.match(paragraph.setup,/钱包或邮箱/);
+  assert.equal(paragraph.kind,'existing_account');
+  assert.match(paragraph.setup,/邮箱免密码.*不要求钱包/);
   assert.match(paragraph.setup,/密钥/);
   assert.deepEqual(paragraph.aliases,['Mirror']);
   assert.equal(CHANNELS.filter(item=>item.id==='paragraph').length,1);
   assert.match(channelOnboardingView(builtIn('sigle')).setup,/Leather \/ Stacks.*逐篇签名.*未接无人值守/);
   assert.match(channelOnboardingView(builtIn('nuance')).setup,/NFID、Plug 或 Internet Identity.*委托有期限.*未接无人值守/);
-  assert.equal(channelOnboardingKind(channel('hive')),'wallet');
+  assert.equal(channelOnboardingKind(channel('hive')),'existing_account');
   assert.match(channelOnboardingView(channel('hive')).setup,/posting key/);
-  assert.match(channelOnboardingView(channel('hive')).setup,/未接钱包签名流程/);
+  assert.match(channelOnboardingView(channel('hive')).setup,/不调用钱包弹窗/);
   assert.deepEqual(channelOnboardingView(channel('hive')).aliases,['PeakD','Ecency']);
 });
 
@@ -116,7 +117,7 @@ test('custom and unmapped rows remain unknown even when they reuse a trusted id 
 
 test('setup combines with capability, free, finance and selected-site visibility using AND',()=>{
   const select=(automation:Parameters<typeof channelMatchesAutomation>[1],setup:Parameters<typeof channelMatchesOnboarding>[1],siteVisible=true)=>CHANNELS.filter(item=>channelMatchesDirectoryFilters(item,{automation,onboarding:setup,freeOnly:true,category:'finance',siteVisible})).map(item=>item.id).sort();
-  assert.deepEqual(select('connected_auto','wallet'),['paragraph']);
+  assert.deepEqual(select('connected_auto','wallet'),[]);
   assert.deepEqual(select('ai_auto','no_signup'),['betterthanhtml','brewpage','deed-page','docs-md','draftmark','html-app','katbin','lucid-page','markdrop','memorywiki','nextgen-slides','pastemyst','pastyx','pstrs','supanote','thethings','txtsbs','yourwebs']);
   assert.deepEqual(select('ai_auto','existing_account'),[]);
   assert.deepEqual(select('connected_auto','ai_account'),[]);
@@ -191,12 +192,16 @@ test('business onboarding keeps company and local-service eligibility separate f
   assert.match(bing.setup,/纯线上内容站不适用/);
 });
 
-test('new publishers preserve automatic account and existing verified identity distinction',()=>{
+test('email publishers require an authorized tested inbox before automatic registration',()=>{
   const plopino=channel('plopino'),here=channel('here-now');
   assert.equal(channelOnboardingKind(plopino),'ai_account');
-  assert.equal(channelOnboardingKind(here),'existing_account');
+  assert.equal(channelOnboardingKind(here),'ai_account');
   assert.match(channelOnboardingView(plopino).setup,/已授权邮箱.*自动建立.*不会重复注册/);
-  assert.match(channelOnboardingView(here).setup,/邮箱验证.*密钥/);
+  for(const value of [here,channel('shiply')]){
+    assert.equal(value.accessClass,'email_auto');
+    assert.match(channelOnboardingView(value).setup,/已授权.*测试通过.*到期任务自动请求并读取.*验证码/);
+    assert.doesNotMatch(channelOnboardingView(value).setup,/验收前停用|验证码仍需本人/);
+  }
   assert.equal(channelMatchesDirectoryFilters(plopino,{automation:'ai_auto',onboarding:'ai_account',freeOnly:true,category:'software',siteVisible:true}),true);
-  assert.equal(channelMatchesDirectoryFilters(here,{automation:'connected_auto',onboarding:'existing_account',freeOnly:true,category:'software',siteVisible:true}),true);
+  assert.equal(channelMatchesDirectoryFilters(here,{automation:'connected_auto',onboarding:'ai_account',freeOnly:true,category:'software',siteVisible:true}),true);
 });

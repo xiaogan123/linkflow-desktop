@@ -132,6 +132,15 @@ export function earliestPublicationAt(siteId:string,channelId:string,tasks:Task[
 }
 
 function sharedDestinationKey(state:State,siteId:string,channelId:string,accountId?:string,receipt?:Task):string|undefined{
+  // Beacon's reusable API key is an administrative owner credential, not one
+  // public author/destination shared by every bound site. Each task creates its
+  // own deterministic tenant page; use the site namespace for scheduler
+  // ownership while the ordinary platform/day and same-site cadence gates stay
+  // in eligiblePlatforms.
+  if(channelId==='beacon')return `beacon:site:${siteId}`;
+  if(channelId==='gitbook')return `gitbook:site:${siteId}`;
+  if(channelId==='valtown')return `valtown:site:${siteId}`;
+  if(channelId==='bitbucket'){const id=accountId??state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='bitbucket')?.accountId,workspace=state.accounts.find(item=>item.id===id)?.bitbucket?.workspaceSlug;return workspace?`bitbucket:workspace:${workspace}`:'bitbucket:pending-workspace'}
 if(channelId==='rentry'||channelId==='lucid-page'||channelId==='betterthanhtml'||channelId==='supanote'||channelId==='docs-md'||channelId==='katbin'||channelId==='mdshare'||channelId==='pstrs'||channelId==='yourwebs'||channelId==='nextgen-slides'||channelId==='totpage'||channelId==='mdview'||channelId==='txtsbs'||channelId==='pastyx'||channelId==='agentdrop'||channelId==='pastemyst'||channelId==='markdownpaste'||channelId==='slugpost'||channelId==='html-app'||channelId==='memorywiki')return `${channelId}:workspace`;
   if(channelId==='agentboard'){
     const accounts=state.accounts.filter(item=>item.channelId==='agentboard');

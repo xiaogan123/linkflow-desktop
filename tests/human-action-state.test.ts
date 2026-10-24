@@ -117,7 +117,7 @@ test('legacy human migration persists the same action and never resets its wait 
 });
 
 test('all human kinds time out at 48h, preserve work and enter the existing 14-day cooldown',()=>{
-  const channel={...CHANNELS[0],id:'fixture-channel',automation:'browser' as const};
+  const channel={...CHANNELS[0],id:'fixture-channel',enabled:true,automation:'browser' as const};
   for(const kind of HUMAN_ACTION_KINDS){
     const value=waiting(kind,{draft:{title:'Fixture',description:'Fixture',body:'Original'},cost:{aiCalls:2}});
     maintainWaitingTasks([value],[site],[channel],defaultSettings(),new Date(deadline));
@@ -135,7 +135,7 @@ test('user-skipped human actions remain valid retained backup evidence',()=>{
 });
 
 test('registration-only waits release capacity at 48h without removing their identity or resubmission evidence',()=>{
-  const channel={...CHANNELS[0],id:'fixture-channel',automation:'browser' as const};
+  const channel={...CHANNELS[0],id:'fixture-channel',enabled:true,automation:'browser' as const};
   const value=waiting('account_login',{accountId,checkpoint:'account_registration_submitted',submittedAt:since});
   maintainWaitingTasks([value],[site],[channel],defaultSettings(),new Date(deadline));
   assert.equal(value.status,'skipped');assert.equal(value.reasonCode,'human_timeout');assert.equal(value.accountId,accountId);

@@ -611,7 +611,7 @@ export default function App() {
     </main>
 
     {wizardOpen && data && !demo && <Dialog title="开始使用外链助手" width="wide" onClose={closeWizard}><FirstRunWizard data={data} disabled={pending} onAction={act} onClose={closeWizard} onSettings={() => { setWizardOpen(false); nav('settings'); }} onConnect={channelId => { closeWizard(); setPendingConnect({ channelId, nonce: Date.now() }); nav('accounts'); }} onOverview={() => { closeWizard(); nav('overview'); }} /></Dialog>}
-    {modal === 'add' && <Dialog title="添加网站" onClose={close}><AddSitesForm disabled={pending || demo} onAction={act} onClose={close} defaultMode={data?.settings.articleReviewMode === 'manual' ? 'manual' : 'ai'} /></Dialog>}
+    {modal === 'add' && <Dialog title="添加网站" onClose={close}><AddSitesForm disabled={pending || demo} onAction={act} onClose={close} defaultMode={data?.settings.articleReviewMode === 'manual' ? 'manual' : 'ai'} mailboxes={data?.mailboxes} /></Dialog>}
     {modal === 'editSite' && site && <Dialog title="编辑网站" onClose={close}><form onSubmit={saveSite} className="dialog-form"><Field label="网站名称"><input value={name} onChange={e => setName(e.target.value)} /></Field>
 <Field label="网站简介"><textarea rows={4} value={description} onChange={e => setDescription(e.target.value)} /></Field>
 <div className="form-grid"><Field label="类别"><select value={category} onChange={e => setCategory(e.target.value as Category)}>{Object.entries(categoryText).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>

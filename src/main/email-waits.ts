@@ -94,6 +94,11 @@ export class EmailWaitCoordinator {
     if(signal.aborted)return;
     const state=this.store.read(),task=state.tasks.find(value=>value.id===original.id);
     if(!state.settings.autoRun||state.settings.channelOverrides[original.channelId]===false||!task||task.status!=='needs_input'||task.checkpoint!=='waiting_email'||task.accountId!==original.accountId||task.emailWait?.since!==original.emailWait?.since||task.emailWait?.recipient!==original.emailWait?.recipient||task.emailWait?.mailboxId!==original.emailWait?.mailboxId||!state.sites.some(site=>site.id===task.siteId&&site.status==='ready'))return;
+    const account=state.accounts.find(value=>value.id===task.accountId),wait=task.emailWait;
+    if(wait&&(task.channelId==='beacon'||task.channelId==='shiply'||task.channelId==='here-now'&&!!account?.hereNowEmail)){
+      const journal=task.channelId==='beacon'?account?.beaconEmail:task.channelId==='shiply'?account?.shiply:account?.hereNowEmail;
+      if(account?.email!==wait.recipient||journal?.requestedAt!==wait.since||(account.mailboxId??state.sites.find(value=>value.id===task.siteId)?.mailboxId)!==wait.mailboxId||state.sites.find(value=>value.id===task.siteId)?.mailboxId!==wait.mailboxId)return;
+    }
     return task;
   }
   private handoff(task:Task, ambiguous=false, snippet?:string):void {
@@ -105,7 +110,7 @@ export class EmailWaitCoordinator {
     const wait=task.emailWait;
     if(!wait)return;
     const consumedMessageIds=[...wait.consumedMessageIds,...(messageId?[messageId]:[])].slice(-100);
-    this.services.patch(task.id,{status:'queued',checkpoint:task.signup?'signup_resume':wait.continuation==='browser'?'account_registration_submitted':undefined,emailWait:wait.continuation==='shiply'?undefined:{...wait,consumedMessageIds},humanAction:undefined,reasonCode:undefined,scheduledAt:(this.services.now?.()??new Date()).toISOString(),message:M.emailReceived});
+    this.services.patch(task.id,{status:'queued',checkpoint:task.signup?'signup_resume':wait.continuation==='browser'?'account_registration_submitted':undefined,emailWait:wait.continuation==='beacon'||wait.continuation==='shiply'||wait.continuation==='here-now'&&!!this.store.read().accounts.find(account=>account.id===task.accountId)?.hereNowEmail?undefined:{...wait,consumedMessageIds},humanAction:undefined,reasonCode:undefined,scheduledAt:(this.services.now?.()??new Date()).toISOString(),message:M.emailReceived});
   }
   private async scanDue(tasks:Task[],signal:AbortSignal):Promise<void> {
     const groups=new Map<string,Array<{original:Task;context:ExecutionContext}>>();
@@ -157,7 +162,8 @@ export class EmailWaitCoordinator {
           if(result.kind==='confirmation_required')await this.services.confirm!(task,result,signal);
           else await this.services.consume(task,result,signal);
         }catch{
-          const current=this.current(original,signal);if(current)this.handoff(current);
+          const current=this.current(original,signal),mailbox=context.mailbox,latestMailbox=mailbox&&this.store.read().mailboxes.find(value=>value.id===mailbox.id);
+          if(current&&!current.humanAction&&!current.deferredAt&&current.reasonCode===original.reasonCode&&!!mailbox&&JSON.stringify(latestMailbox)===JSON.stringify(mailbox))this.handoff(current);
           continue;
         }
         // Confirmation has its own resumable handoff; receiving a message is

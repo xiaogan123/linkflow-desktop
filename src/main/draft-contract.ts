@@ -83,7 +83,7 @@ function envelopeFor(site:Site,channel:Channel,task:Task):WritingEnvelope{
 export function profileDraftInstruction(site:Site,channel:Channel,task:Task,genre:WritingGenre):string{
   const language=channel.languages.includes('*')?site.language:channel.languages[0];
   const format=FORMATS[channel.id]??'正文使用静态Markdown段落和标题，不用原始HTML、图片或表格。';
-  const short=channel.contentFormat==='social'?`正文为纯文本，最多 ${Math.max(0,300-graphemeLength(Object.values(envelopeFor(site,channel,task)).slice(0,4).join('\n\n'))-8)} 个字素。程序补齐披露、风险、品牌署名和链接后，全文不得超过三百字素。`:'';
+  const socialMaximum=channel.id==='chatclaw'?280:300,short=channel.contentFormat==='social'?`正文为纯文本，最多 ${Math.max(0,socialMaximum-graphemeLength(Object.values(envelopeFor(site,channel,task)).slice(0,4).join('\n\n'))-8)} 个字素。程序补齐披露、风险、品牌署名和链接后，全文须${channel.id==='chatclaw'?'在 40–280 个字素之间':'不超过三百字素'}，不能截断审核后的原稿。`:'';
   const update=channel.id==='agentriot'?`正文最多 ${Math.max(0,500-Object.values(envelopeFor(site,channel,task)).slice(0,4).filter(Boolean).join(' ').length-1)} 字符；程序附加内容后最终单行不得超过五百字符。`:'';
   return buildProfileDraftInstruction(site.writingProfile!,genre,{language,taskId:task.id,articleRequired:channel.articleRequired,additionalRules:format+'\n'+short+'\n'+update})+
     '\nfacts 的完整 JSON 序列化长度不得超过 10000 字符；title、description 和 body 须遵守返回结构的长度上限。不得写邀请码、推荐码，禁止带 ref 等推荐参数的链接。渠道格式和字数上限优先于档案篇幅偏好，不能截断正文。'+
