@@ -16,6 +16,7 @@ import type { CapacityBlockReason,Channel, Site, SiteCapacity, Task, LinkResult 
 import type { State } from './store';
 import {accountForSiteChannel,boundAccount,channelExecutionReadiness} from './account-bindings';
 import {eligibilityFor} from '../integrations/eligibility';
+import {channelTermsBlockReason} from './article-review';
 import {hasActiveSiteOriginRecoveryGrant,migrationAwareTopicKey} from './site-origin-migration';
 import {countFinanceAutomaticPlatforms} from '../shared/channel-metrics';
 import type {FinancePlatformCount} from '../shared/types';
@@ -408,6 +409,8 @@ export function selectTaskPlatform(state:State,task:Task,matches:Match[],now=new
     const recovered=schedulableTaskMatches(state,withoutExclusions,matches,now);
     if(recovered.length){task.failedPlatformIds=undefined;task.failedPlatformAt=undefined;qualified=recovered;}
   }
+  // A platform whose saved terms already rule this site out is skipped here, not picked and bounced at execution.
+  qualified=qualified.filter(({match:{channel}})=>{const cache=channel.termsCache??state.channelTermsCache?.[channel.id];return !cache||cache.reviewVersion!==2||!channelTermsBlockReason(site,channel,cache)});
   const fresh=qualified.filter(({match:{channel},readiness})=>{
     const source=sourceKey(channelSourceDomain(site,channel,readiness.account));
     return !state.tasks.some(other=>other.id!==task.id&&other.siteId===site.id&&!other.recoveredAt&&sourceKey(other.sourceDomain)===source&&

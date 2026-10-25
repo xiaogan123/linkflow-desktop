@@ -458,6 +458,13 @@ function publisherCadenceWait(state:ReturnType<Store['read']>,task:Task,now=new 
   return at.getTime()>now.getTime()?at:undefined;
 }
 
+/** The task only reached account creation: no draft, no AI spent and no publication sent. */
+function accountStageOnly(task:Task):boolean{
+  // The account-creation checkpoint itself is not a publication; any other remote intent still blocks.
+  const checkpoint=/_account_create_pending$/.test(task.checkpoint??'')?undefined:task.checkpoint;
+  return !task.draft&&!(task.cost?.aiCalls)&&!hasRemotePublicationIntent({...task,checkpoint});
+}
+
 function hasAutomaticRepairBudget(task:Task):boolean{
   return TASK_AI_BUDGET-(task.cost?.aiCalls??0)>=AUTOMATIC_REPAIR_AI_CALLS;
 }
@@ -1336,7 +1343,7 @@ export class Controller {
           }
           else if(task.checkpoint==='system_vault_unavailable'&&this.vault.available())Object.assign(task,taskTransition(task,{status:'queued',checkpoint:undefined,scheduledAt:stamp,updatedAt:stamp,message:'系统钥匙串已就绪，自动计划继续。'}));
           else if((task.checkpoint==='paper_account_create_pending'&&channel?.id==='paper-wf'||task.checkpoint==='mataroa_account_create_pending'&&channel?.id==='mataroa'||task.checkpoint==='verbose_account_create_pending'&&channel?.id==='verbose')&&channel?.enabled&&task.accountId&&
-            !task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.blogger&&task.attempts<s.settings.maxAttempts&&(task.cost?.aiCalls??0)<TASK_AI_BUDGET){
+            !task.paper&&!task.hive&&!task.mataroa&&!task.verbose&&!task.rentry&&!task.lucid&&!task.paragraph&&!task.nostr&&!task.bluesky&&!task.blogger&&(task.attempts<s.settings.maxAttempts||accountStageOnly(task))&&(task.cost?.aiCalls??0)<TASK_AI_BUDGET){
             const readiness=channelExecutionReadiness(s,site.id,channel,task.accountId);
             const binding=s.accountBindings.find(item=>item.siteId===site.id&&item.channelId===channel.id);
             const account=readiness.account;
@@ -1349,8 +1356,9 @@ export class Controller {
               if(task.deferredAt){try{resumeDeferredTask(s.tasks,task.id,s.settings,now)}catch{continue}}
               const reviewValid=!!task.articleReview&&articleReviewStillValid(task,site,channel,s.settings,account);
               task.history??=[];task.history.push({at:stamp,status:task.status,message:task.message,linkCheck:task.linkCheck});task.history=task.history.slice(-50);
+              // Attempts spent only on creating and verifying this site's account are not publication attempts.
               Object.assign(task,taskTransition(task,{status:'queued',checkpoint:tokenReadOnly?'verbose_account_create_pending':task.draft?'article_review':undefined,waitingSince:undefined,nextCheckAt:undefined,
-                scheduledAt:stamp,updatedAt:stamp,message:'原发布账号已验证，沿用同一任务和稿件自动继续。'},now,true));
+                ...(!tokenReadOnly&&accountStageOnly(task)?{attempts:0}:{}),scheduledAt:stamp,updatedAt:stamp,message:'原发布账号已验证，沿用同一任务和稿件自动继续。'},now,true));
               if(!reviewValid){task.articleReview=undefined;task.articleApprovedAt=undefined;}
             }
           }

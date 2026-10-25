@@ -206,7 +206,7 @@ function usable(account:Account,id:ConnectionChannelId){
 export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBindings'|'sites'|'tasks'|'channels'>|null):ConnectionOverviewRow[]{
   if(!data)return [];
   return channels.map(({id,name,format,firstStep})=>{
-    const accounts=['chatclaw','feddit','hart','yeetmd','markdownpage','agentsgather','thethings','listed-startups','slugpost','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','pstrs','yourwebs','pastemyst','markdownpaste','html-app','memorywiki'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id);
+    const accounts=['chatclaw','feddit','hart','yeetmd','markdownpage','agentsgather','thethings','listed-startups','slugpost','docs-md','katbin','agentdrop','mdshare','totpage','mdview','txtsbs','pastyx','nextgen-slides','pstrs','yourwebs','pastemyst','markdownpaste','html-app','memorywiki'].includes(id)?[]:data.accounts.filter(account=>account.channelId===id&&!account.retiredAt);
     const connected=accounts.filter(account=>usable(account,id));
     const connectedIds=new Set(connected.map(account=>account.id));
     const accountById=new Map(connected.map(account=>[account.id,account]));
@@ -259,7 +259,9 @@ export function connectionOverview(data:Pick<Snapshot,'accounts'|'accountBinding
     else if(issue){
       state='attention';
       detail=id==='verbose'?'原发布账号或一次性令牌需检查；不能重新注册换号。':['mataroa','paper-wf'].includes(id)&&issue.status==='needs_verification'?'首次验证待完成；沿用下方原发布账号继续，勿重复注册。':`${accounts.length-connected.length} 个本机发布账号需检查密钥或状态。`;
-    }else if(unbound){state='attention';detail=selectionRequired?'原发布账号已保留；请选择要使用的发布账号并关联网站后继续。':'发布账号已保存在本机，尚未关联可发布的网站。';}
+    // Plopino and VibeDrop hand an unbound saved identity to a person; the others pick it up when a task needs it.
+    }else if(unbound&&selfProvisioned.has(id)&&!selectionRequired&&!['plopino','vibedrop'].includes(id)){state='no_setup';detail='本机已有发布账号；任务需要时自动关联网站，不用你处理。';}
+    else if(unbound){state='attention';detail=selectionRequired?'原发布账号已保留；请选择要使用的发布账号并关联网站后继续。':'发布账号已保存在本机，尚未关联可发布的网站。';}
     else {state='connected';detail=`${connected.length} 个本机发布账号已连接${needsBinding.has(id)?`，${boundSiteIds.size} 个网站已关联`:''}。`;}
     return {id,name,format,state,detail,connectedCount:connected.length,boundSiteCount:boundSiteIds.size,checkedCount,attentionAccountId:issue?.id??(unbound||['here-now','beacon','gitbook','valtown','bitbucket','shiply','plopino','shippage'].includes(id)&&connected.length===1?connected[0]?.id:undefined)};
   });

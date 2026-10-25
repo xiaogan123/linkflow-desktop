@@ -291,3 +291,13 @@ test('task-managed publishers are visible without inventing separate connected a
     assert.equal(row(data,id).state,'unavailable',id);
   }
 });
+
+test('retired identities and unbound accounts a task will pick up on its own are not shown as work for the user',()=>{
+  const data=snapshot();
+  data.accounts=[account('agenthow',{retiredAt:at})];
+  assert.equal(row(data,'agenthow').state,'no_setup');assert.equal(row(data,'agenthow').connectedCount,0);
+  data.accounts=[account('wordcell')];
+  assert.equal(row(data,'wordcell').state,'no_setup');assert.match(row(data,'wordcell').detail,/自动关联/);
+  // Plopino still hands an unbound saved identity to a person.
+  data.accounts=[account('plopino')];assert.equal(row(data,'plopino').state,'attention');
+});

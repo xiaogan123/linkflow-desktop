@@ -211,3 +211,15 @@ test('anonymous Rentry and accountless Lucid reject duplicate public bodies afte
     try{await (pinPublicationFixtures(controller.store),controller.tick());const saved=store.read().tasks.find(item=>item.id===taskTwo)!;assert.equal(aiCalls,2);assert.equal(reviews,0);assert.equal(publishes,0);assert.equal(saved.status,'queued');assert.equal(saved.reasonCode,'diversity_deferred');assert.ok(Date.parse(saved.scheduledAt)>Date.now());assert.equal(saved.submittedAt,undefined)}finally{store.close()}
   }));
 });
+
+test('a platform whose saved terms rule the site out is not picked only to bounce at execution',async()=>{
+  const {buildChannelTermsCache,reviewedChannelTermsCache}=await import('../src/main/article-evidence');
+  const finance={...site(),category:'finance' as const},state=emptyState();state.sites=[finance];state.settings.timezone='UTC';
+  const lucid=enabledChannel('lucid-page');
+  const terms=(financeVerdict:'allowed'|'forbidden')=>reviewedChannelTermsCache(buildChannelTermsCache(lucid,[{url:lucid.rulesUrl,kind:'content_policy',text:'Original documents may be hosted here; no spam or bulk pages.',appliesTo:lucid.id,applicability:'verified'}]),{finance:financeVerdict,promotion:'allowed',disclosurePlacement:'unknown'});
+  const selected=makePlan(state,finance,[{channel:lucid,score:1,reason:'fixture'}],new Date(fixed));
+  assert.equal(selected.length,1);
+  const at=new Date(selected[0].scheduledAt);
+  assert.equal(selectTaskPlatform(state,{...selected[0]},[{channel:{...lucid,termsCache:terms('forbidden')},score:1,reason:'fixture'}],at),undefined);
+  assert.equal(selectTaskPlatform(state,{...selected[0]},[{channel:{...lucid,termsCache:terms('allowed')},score:1,reason:'fixture'}],at)?.id,'lucid-page');
+});

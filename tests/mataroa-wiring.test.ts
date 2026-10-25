@@ -190,3 +190,23 @@ test('explicit empty Mataroa site selection revokes every existing site, includi
     assert.equal(channelExecutionReadiness(state,secondSiteId,channel()).kind,'handoff_required');
   }finally{store.close()}
 });
+
+test('attempts spent only on creating and verifying the site account do not strand the task with a person',()=>{
+  const store=pendingStore();
+  try{
+    store.update(state=>{state.tasks=[{...task('needs_input'),checkpoint:'mataroa_account_create_pending',reasonCode:'account_handoff',attempts:3,humanAction:{kind:'account_login',since:stamp,deadline:'2026-10-09T12:17:00.000Z',instruction:'account_login',url:'https://mataroa.blog/accounts/create/',platform:'mataroa'}}]});
+    const controller=new Controller(pinPublicationFixtures(store),vault(),'fixture');controller.runtime.aiReady=true;controller.plan();
+    const saved=store.read().tasks.find(item=>item.id===taskId)!;
+    assert.equal(saved.status,'queued');assert.equal(saved.attempts,0);assert.equal(saved.humanAction,undefined);assert.equal(saved.accountId,accountId);
+  }finally{store.close()}
+});
+
+test('a task that already holds a draft keeps its attempt limit after the account is verified',()=>{
+  const store=pendingStore();
+  try{
+    store.update(state=>{state.tasks=[{...task('needs_input'),checkpoint:'mataroa_account_create_pending',reasonCode:'account_handoff',attempts:3,draft:{title:'Kept',description:'Kept',body:'Original draft'},draftRevision:1,cost:{aiCalls:2,amount:1}}]});
+    const controller=new Controller(pinPublicationFixtures(store),vault(),'fixture');controller.runtime.aiReady=true;controller.plan();
+    const saved=store.read().tasks.find(item=>item.id===taskId)!;
+    assert.equal(saved.status,'needs_input');assert.equal(saved.attempts,3);
+  }finally{store.close()}
+});
