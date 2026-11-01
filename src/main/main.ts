@@ -1,3 +1,4 @@
+import {connectPublisherToken} from './publisher-token-management';
 import {requestHereNowCode,resendHereNowCode,verifyHereNowCode,recoverHereNowVerifiedResponse} from './here-now-email';
 import {transferIdentityOwner} from './account-retirement';
 import {BATCH9B_MESSAGES} from '../shared/batch9b-messages';
@@ -308,6 +309,7 @@ async function command(name:string,p:unknown):Promise<unknown>{
       return controller.manageIdentity(()=>wordpressConnections.connect(d));
     }
     case 'account:connect-paragraph':{const d=z.object({apiKey:z.string().trim().min(8).max(4096),siteIds:z.array(z.string().uuid()).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectParagraph(store,vault,d.apiKey,d.siteIds,d.accountId));}
+    case 'account:connect-publisher-token':{const d=z.object({channelId:z.enum(['publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','netlify','cloudflare-pages','mastodon','leafmill','clawprint','shipstatic','dataecho','host0','agentel']),token:z.string().min(16).max(8192),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).length(1),renderGithubToken:z.string().min(20).max(512).optional(),renderRepository:z.string().regex(/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/).optional(),renderOwnerId:z.string().regex(/^(?:tea|own)-[a-z0-9]{10,40}$/).optional(),providerAccountId:z.string().regex(/^[a-f0-9]{32}$/i).optional(),projectName:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/).optional(),shipStaticDomain:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{4,61}[a-z0-9])?\.shipstatic\.com$/).optional(),markedShareDeviceKey:z.string().regex(/^[A-Za-z0-9_-]{16,512}$/).optional(),dataEchoEmail:z.email().optional(),markedShareEmail:z.email().max(254).optional()}).strict().parse(p);return controller.manageIdentity(()=>connectPublisherToken(store,vault,d));}
     case 'account:connect-hackmd':{const d=z.object({token:z.string().min(16).max(8192),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).length(1)}).strict().parse(p);return controller.manageIdentity(()=>connectHackMd(store,vault,d));}
     case 'account:connect-gitbook':{const d=z.object({token:z.string().trim().min(16).max(4096),accountId:z.string().uuid().optional(),siteIds:z.array(z.string().uuid()).min(1).max(1000),organizationId:z.string().regex(/^[A-Za-z0-9_-]{1,255}$/).optional(),siteId:z.string().regex(/^[A-Za-z0-9_-]{1,255}$/).optional(),spaceId:z.string().regex(/^[A-Za-z0-9_-]{1,255}$/).optional()}).strict().parse(p);return controller.manageIdentity(()=>connectGitBookAccount(store,vault,d));}
     case 'account:connect-valtown':{const d=z.object({token:z.string().trim().min(16).max(4096),siteIds:z.array(z.string().uuid()).min(1).max(1000),accountId:z.string().uuid().optional()}).strict().parse(p);return controller.manageIdentity(()=>connectValTownAccount(store,vault,d));}
@@ -605,7 +607,10 @@ async function command(name:string,p:unknown):Promise<unknown>{
     case 'backup:export':{
       const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showSaveDialog(win!,{title:'导出加密备份',defaultPath:'Linkflow-备份.lfb',filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled||!path.filePath)return {ok:false,message:'已取消'};
       if(controller.hasPendingWork()||activeCommands.size>1)throw Error('请等待当前操作完成后再导出备份');
-      const buffer=encryptBackup({state:store.read(),secrets:vault.exportSecrets()},passphrase);await writeFile(path.filePath,buffer,{mode:0o600});return {ok:true,message:'加密备份已保存，请妥善保管口令'};
+      // Export the same check a restore runs, so a file that cannot be restored is never written.
+      const backupData={state:store.read(),secrets:vault.exportSecrets()};
+      try{validateBackup(structuredClone(backupData))}catch(error){throw Error(`当前数据无法通过恢复校验，已停止导出，未写入备份文件。${error instanceof Error?error.message.slice(0,200):''}`)}
+      const buffer=encryptBackup(backupData,passphrase);await writeFile(path.filePath,buffer,{mode:0o600});return {ok:true,message:'加密备份已保存，请妥善保管口令'};
     }
     case 'backup:import':{
       ensureRestoreIdle();restoring=true;wordpressConnections.cancel();try{const {passphrase}=z.object({passphrase:z.string().min(12).max(256)}).parse(p);const path=await dialog.showOpenDialog(win!,{title:'恢复加密备份',properties:['openFile'],filters:[{name:'加密备份',extensions:['lfb']}]});if(path.canceled)return {ok:false,message:'已取消'};

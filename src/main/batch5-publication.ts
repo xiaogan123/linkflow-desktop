@@ -8,14 +8,16 @@ import type {Vault} from './vault';
 import type {Task} from '../shared/types';
 import {BATCH5_MESSAGES} from '../shared/batch5-messages';
 
-export const BATCH5_IDS=['yeetmd','markdownpage','slopit','rant','whitewind','hackmd'] as const;
+export const BATCH5_IDS=['yeetmd','markdownpage','slopit','rant','whitewind','hackmd','publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','netlify','cloudflare-pages','mastodon','leafmill','clawprint','shipstatic','host0','agentel','dataecho'] as const;
 export const isBatch5Channel=(id:string):boolean=>(BATCH5_IDS as readonly string[]).includes(id);
 const hash=z.string().regex(/^[a-f0-9]{64}$/),date=z.string().datetime();
 const intentSchema=z.object({version:z.literal(1),channelId:z.enum(BATCH5_IDS),operationId:z.string().min(1).max(128),siteId:z.string().uuid(),sourceHash:hash,requestHash:hash,createdAt:date}).strict();
 export const batch5TaskSchema=intentSchema.omit({siteId:true}).extend({stage:z.enum(['reserved','submitting','opaque_response','api_receipt','published']),publicUrl:z.url().max(2048).optional(),remoteId:z.string().max(256).optional(),accountId:z.string().max(256).optional()});
 const opaqueSchema=z.object({version:z.literal(1),intent:intentSchema,status:z.number().int().min(100).max(599),contentType:z.string().max(512),responseUrl:z.string().max(2048),bodyBase64:z.string().max(2_000_000),bodyComplete:z.boolean()}).strict();
 const receiptSchema=z.object({version:z.literal(1),intent:intentSchema,publicUrl:z.url().max(2048),remoteId:z.string().max(256).optional(),rawResponse:z.string().max(1_500_000),secret:z.string().max(16384).optional()}).strict();
-const journalSchema=z.object({version:z.literal(1),intent:intentSchema,sending:z.literal(true).optional(),opaque:opaqueSchema.optional(),receipt:receiptSchema.optional()}).strict();
+const domainStageSchema=z.object({version:z.literal(1),intent:intentSchema,domain:z.string().regex(/^[a-z0-9](?:[a-z0-9-]{4,61}[a-z0-9])?\.shipstatic\.com$/),remoteId:z.string().max(256)}).strict();
+const renderWriteSchema=z.object({stage:z.enum(['source_html','source_robots','source_ref','service']),requestHash:hash,requestBody:z.string().max(1_000_000),url:z.url().max(2048),opaque:opaqueSchema.optional()}).strict();
+const journalSchema=z.object({version:z.literal(1),intent:intentSchema,sending:z.literal(true).optional(),renderWrites:z.array(renderWriteSchema).max(4).optional(),opaque:opaqueSchema.optional(),receipt:receiptSchema.optional(),domainSending:domainStageSchema.optional(),domainOpaque:opaqueSchema.optional(),domainReceipt:receiptSchema.optional()}).strict();
 const accountIntentSchema=z.object({version:z.literal(1),channelId:z.enum(['slopit','rant']),siteId:z.string().uuid(),operationId:z.string().min(1).max(128),requestHash:hash,createdAt:date,username:z.string().max(128).optional(),email:z.string().max(254).optional(),password:z.string().max(1024).optional()}).strict();
 export const batch5RegistrationSchema=z.object({version:z.literal(1),channelId:z.enum(['slopit','rant']),operationId:z.string().min(1).max(128),createdAt:date,stage:z.enum(['reserved','sending','rate_limited','request_unknown','rejected','registered','not_sent']),sendGuardVersion:z.literal(1).optional(),sentAt:date.optional(),rateLimitCount:z.number().int().min(1).max(3).optional(),lastRateLimitedAt:date.optional()}).strict();
 const accountReceiptSchema=z.object({version:z.literal(1),intent:accountIntentSchema,accountId:z.string().min(1).max(256),publicUrl:z.url().max(2048),secret:z.string().min(1).max(16384),rawResponse:z.string().max(128000)}).strict();
@@ -23,10 +25,22 @@ const accountOpaqueSchema=z.object({version:z.literal(1),intent:accountIntentSch
 const accountJournalSchema=z.object({version:z.literal(1),intent:accountIntentSchema,registration:batch5RegistrationSchema.optional(),opaque:accountOpaqueSchema.optional(),receipt:accountReceiptSchema.optional()}).strict();
 type AccountJournal=z.infer<typeof accountJournalSchema>;
 type Journal=z.infer<typeof journalSchema>;
+const hashValue=(value:string)=>createHash('sha256').update(value).digest('hex');
 const same=(left:unknown,right:unknown)=>JSON.stringify(left)===JSON.stringify(right);
 const fail=()=>new Error(BATCH5_MESSAGES.invalidJournal);
 export function parseBatch5Journal(raw:string|undefined):Journal|undefined {
-  try{const journal=journalSchema.parse(JSON.parse(raw??''));if(journal.receipt&&!same(journal.intent,journal.receipt.intent)||journal.opaque&&!same(journal.intent,journal.opaque.intent))return;return journal;}catch{return;}
+  try{const journal=journalSchema.parse(JSON.parse(raw??''));if(journal.receipt&&!same(journal.intent,journal.receipt.intent)||journal.opaque&&!same(journal.intent,journal.opaque.intent))return;
+    if(journal.renderWrites){
+      if(journal.intent.channelId!=='render'||!journal.sending||journal.renderWrites.some((w,i)=>w.stage!==['source_html','source_robots','source_ref','service'][i]||hashValue(w.requestBody)!==w.requestHash||w.opaque&&!same(w.opaque.intent,journal.intent)))return;
+    }
+    if(journal.domainSending||journal.domainOpaque||journal.domainReceipt){
+      if(journal.intent.channelId!=='shipstatic'||!journal.receipt||!journal.domainSending||!same(journal.domainSending.intent,journal.intent)
+        ||journal.intent.requestHash!==createHash('sha256').update(`${journal.intent.sourceHash}\n${journal.domainSending.domain}`).digest('hex')
+        ||journal.domainSending.remoteId!==journal.receipt.remoteId||journal.domainOpaque&&!same(journal.domainOpaque.intent,journal.intent)
+        ||journal.domainReceipt&&(!same(journal.domainReceipt.intent,journal.intent)||journal.domainReceipt.remoteId!==journal.domainSending.remoteId
+          ||journal.domainReceipt.publicUrl!==`https://${journal.domainSending.domain}/`))return;
+    }
+    return journal;}catch{return;}
 }
 export function parseBatch5AccountJournal(raw:string|undefined){
   try{
@@ -75,7 +89,7 @@ export function batch5BackupMatches(task:Task,raw:string|undefined):boolean {
   const journal=parseBatch5Journal(raw);if(!journal||!matches(task,journal.intent))return false;
   if(task.batch5?.stage==='reserved')return !journal.sending&&!journal.opaque&&!journal.receipt&&!task.publicUrl;
   if(task.batch5?.stage==='opaque_response'&&!journal.opaque)return false;
-  if(['api_receipt','published'].includes(task.batch5?.stage??''))return !!journal.receipt&&journal.receipt.publicUrl===task.publicUrl&&task.batch5?.publicUrl===task.publicUrl&&journal.receipt.remoteId===task.batch5?.remoteId;
+  if(['api_receipt','published'].includes(task.batch5?.stage??'')){const receipt=journal.domainReceipt??journal.receipt;return !!receipt&&receipt.publicUrl===task.publicUrl&&task.batch5?.publicUrl===task.publicUrl&&receipt.remoteId===task.batch5?.remoteId;}
   return !task.publicUrl;
 }
 
@@ -92,11 +106,12 @@ export function createBatch5Persistence(store:StateStore,vault:SecureVault,taskI
       else if(!matches(task,journal.intent))throw fail();
       const {siteId:_,...intent}=journal.intent;
       const stage=journal.receipt?'api_receipt':journal.opaque?'opaque_response':journal.sending?'submitting':'reserved';
+      const finalReceipt=journal.domainReceipt??journal.receipt;
       if(task.batch5?.stage==='reserved'&&stage==='submitting')authorize();
-      task.batch5={...intent,stage:task.batch5?.stage==='published'?'published':stage,...(journal.receipt?{publicUrl:journal.receipt.publicUrl,remoteId:journal.receipt.remoteId}:{}),...(task.accountId?{accountId:task.accountId}:{})};
+      task.batch5={...intent,stage:task.batch5?.stage==='published'?'published':stage,...(finalReceipt?{publicUrl:finalReceipt.publicUrl,remoteId:finalReceipt.remoteId}:{}),...(task.accountId?{accountId:task.accountId}:{})};
       if(stage==='submitting'&&!task.trialSendStartedAt)task.trialSendStartedAt=new Date().toISOString();
-      task.submittedAt=stage==='reserved'?undefined:journal.intent.createdAt;task.publicUrl=journal.receipt?.publicUrl;if(stage!=='reserved'&&!['needs_input','skipped','expired'].includes(task.status))task.status='review';task.health='pending';task.checkpoint=`batch5_${stage}`;task.updatedAt=new Date().toISOString();
-      task.message=journal.receipt?BATCH5_MESSAGES.receiptSaved:BATCH5_MESSAGES.intentSaved;
+      task.submittedAt=stage==='reserved'?undefined:journal.intent.createdAt;task.publicUrl=finalReceipt?.publicUrl;if(stage!=='reserved'&&!['needs_input','skipped','expired'].includes(task.status))task.status='review';task.health='pending';task.checkpoint=`batch5_${stage}`;task.updatedAt=new Date().toISOString();
+      task.message=finalReceipt?BATCH5_MESSAGES.receiptSaved:BATCH5_MESSAGES.intentSaved;
     },ciphers,[],{[key]:expected});
   };
   return {
@@ -109,6 +124,33 @@ export function createBatch5Persistence(store:StateStore,vault:SecureVault,taskI
     async loadOpaqueResponse(){return (await read())?.opaque;},
     async saveReceipt(value){const expected=store.getCipher(key),journal=await read(),receipt=receiptSchema.parse(value);if(!journal||!same(journal.intent,receipt.intent)||store.read().tasks.find(task=>task.id===taskId)?.batch5?.stage==='reserved')throw fail();if(journal.receipt){if(same(journal.receipt,receipt))return;throw fail();}write({...journal,receipt},expected);},
     async loadReceipt(){return (await read())?.receipt;},
+    async markDomainSending(value){const stage=domainStageSchema.parse(value),journal=await read(),expected=store.getCipher(key);
+      if(!expected||!journal||stage.intent.channelId!=='shipstatic'||!same(journal.intent,stage.intent)
+        ||stage.intent.requestHash!==createHash('sha256').update(`${stage.intent.sourceHash}\n${stage.domain}`).digest('hex')||!journal.receipt
+        ||journal.receipt.remoteId!==stage.remoteId||journal.domainSending||journal.domainOpaque||journal.domainReceipt)throw fail();
+      authorize();write({...journal,domainSending:stage},expected);},
+    async assertReadyToBind(value){const stage=domainStageSchema.parse(value),journal=await read();if(!journal||!journal.domainSending
+      ||!same(journal.domainSending,stage)||journal.domainOpaque||journal.domainReceipt)throw fail();authorize();},
+    async saveDomainOpaqueResponse(value){const opaque=opaqueSchema.parse(value),journal=await read(),expected=store.getCipher(key);
+      if(!expected||!journal?.domainSending||!same(journal.intent,opaque.intent)||journal.domainReceipt||journal.domainOpaque)throw fail();
+      write({...journal,domainOpaque:opaque},expected);},
+    async loadDomainOpaqueResponse(){return (await read())?.domainOpaque;},
+    async saveDomainReceipt(value){const receipt=receiptSchema.parse(value),journal=await read(),expected=store.getCipher(key);
+      if(!expected||!journal?.domainSending||journal.domainReceipt||!same(receipt.intent,journal.intent)
+        ||receipt.remoteId!==journal.domainSending.remoteId||receipt.publicUrl!==`https://${journal.domainSending.domain}/`)throw fail();
+      write({...journal,domainReceipt:receipt},expected);},
+    async loadDomainReceipt(){return (await read())?.domainReceipt;},
+    async loadDomainStage(){return (await read())?.domainSending;},
+    async loadRenderWrites(){return (await read())?.renderWrites??[];},
+    async reserveRenderWrite(value){const stage=renderWriteSchema.parse(value),journal=await read(),expected=store.getCipher(key),writes=journal?.renderWrites??[];
+      if(!expected||!journal||journal.intent.channelId!=='render'||!journal.sending||journal.opaque||journal.receipt||stage.opaque||stage.stage!==['source_html','source_robots','source_ref','service'][writes.length]||hashValue(stage.requestBody)!==stage.requestHash
+        ||writes.length>0&&(!writes[writes.length-1].opaque?.bodyComplete||writes[writes.length-1].opaque?.status!==201))throw fail();
+      authorize();write({...journal,renderWrites:[...writes,stage]},expected);
+    },
+    async saveRenderWriteResponse(stage,value){const opaque=opaqueSchema.parse(value),journal=await read(),expected=store.getCipher(key),writes=journal?.renderWrites;
+      if(!expected||!journal||journal.intent.channelId!=='render'||!writes?.length||writes[writes.length-1].stage!==stage||writes[writes.length-1].opaque||!same(opaque.intent,journal.intent))throw fail();
+      write({...journal,renderWrites:writes.map((w,i)=>i===writes.length-1?{...w,opaque}:w)},expected);
+    },
     currentTaskState(){return store.read().tasks.find(value=>value.id===taskId)?.batch5;},
   };
 }
@@ -287,7 +329,13 @@ export function createBatch5AccountPersistence(store:StateStore,vault:SecureVaul
 export function assertBatch5Transition(previous:State,next:State,previousCiphers:Record<string,string>,nextCiphers:Record<string,string>):void {
   const stages=['reserved','submitting','opaque_response','api_receipt','published'];
   for(const task of next.tasks){if(!task.batch5)continue;batch5TaskSchema.parse(task.batch5);if(!matches(task,{...task.batch5,siteId:task.siteId})||!nextCiphers[`publication:${task.id}`])throw fail();}
-  for(const before of previous.tasks){if(!before.batch5)continue;const after=next.tasks.find(value=>value.id===before.id),key=`publication:${before.id}`;if(!after?.batch5||!matches(after,{...before.batch5,siteId:before.siteId})||stages.indexOf(after.batch5.stage)<stages.indexOf(before.batch5.stage)||!nextCiphers[key]||before.publicUrl&&after.publicUrl!==before.publicUrl)throw fail();}
+  for(const before of previous.tasks){if(!before.batch5)continue;const after=next.tasks.find(value=>value.id===before.id),key=`publication:${before.id}`;
+    const shipstaticFinal=before.channelId==='shipstatic'&&before.batch5.stage==='api_receipt'&&before.batch5.remoteId
+      &&before.publicUrl===`https://${before.batch5.remoteId}`&&after?.batch5?.remoteId===before.batch5.remoteId
+      &&typeof after.publicUrl==='string'&&/^https:\/\/[a-z0-9](?:[a-z0-9-]{4,61}[a-z0-9])?\.shipstatic\.com\/$/.test(after.publicUrl)
+      &&nextCiphers[key]!==previousCiphers[key];
+    if(!after?.batch5||!matches(after,{...before.batch5,siteId:before.siteId})||!['host0','dataecho'].includes(before.channelId)&&stages.indexOf(after.batch5.stage)<stages.indexOf(before.batch5.stage)||!nextCiphers[key]
+      ||before.publicUrl&&after.publicUrl!==before.publicUrl&&!shipstaticFinal)throw fail();}
   const allowedRegistrationStages:Record<Batch5RegistrationState['stage'],readonly Batch5RegistrationState['stage'][]>= {
     reserved:['reserved','sending','request_unknown','rejected','registered','not_sent'],
     sending:['sending','rate_limited','request_unknown','rejected','registered'],

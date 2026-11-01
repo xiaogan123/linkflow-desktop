@@ -4,7 +4,7 @@ import {emptyState,migrateState} from '../src/main/store';
 import {randomUUID} from 'node:crypto';
 import {validateBackup} from '../src/main/backup-validation';
 import {maintainWaitingTasks} from '../src/main/task-recovery';
-import {applyTemporaryRetryState,temporaryRetry} from '../src/main/temporary-retry';
+import {applyTemporaryRetryState,hasConsumedLocalSchedule,temporaryRetry} from '../src/main/temporary-retry';
 import {nextTask,schedulableTaskMatches,selectTaskPlatform} from '../src/main/planner';
 import type {Channel,Site,Task} from '../src/shared/types';
 
@@ -76,4 +76,14 @@ test('exhausting every otherwise valid exclusion clears the set and selects now 
   const state=emptyState(),value=task({channelId:'',sourceDomain:'',status:'queued',failedPlatformIds:['first'],failedPlatformAt:{first:NOW.toISOString()}}),first=channel('first');state.sites=[site];state.tasks=[value];
   const selected=selectTaskPlatform(state,value,[{channel:first,score:1,reason:'first'}],NOW);
   assert.equal(selected?.id,'first');assert.equal(value.channelId,'first');assert.equal(value.failedPlatformIds,undefined);assert.equal(value.failedPlatformAt,undefined);assert.ok(Date.parse(value.scheduledAt)<NOW.getTime()+86400000);
+});
+
+test('a due schedule is consumed only while the task is still locally unsent',()=>{
+  const queued=task({status:'queued',health:undefined,nextCheckAt:'2026-10-20T11:00:00.000Z',scheduledAt:'2026-10-21T11:00:00.000Z'});
+  assert.equal(hasConsumedLocalSchedule(queued,NOW),true);
+  assert.equal(hasConsumedLocalSchedule({...queued,nextCheckAt:'2026-10-20T13:00:00.000Z'},NOW),false);
+  assert.equal(hasConsumedLocalSchedule({...queued,submittedAt:NOW.toISOString()},NOW),false);
+  assert.equal(hasConsumedLocalSchedule({...queued,publicUrl:'https://first.example.com/a'},NOW),false);
+  assert.equal(hasConsumedLocalSchedule({...queued,reasonCode:'submission_unknown'},NOW),false);
+  assert.equal(hasConsumedLocalSchedule({...queued,status:'review'},NOW),false);
 });

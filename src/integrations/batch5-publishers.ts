@@ -1,18 +1,50 @@
+import {runOpenDocsTask,reconcileOpenDocsTask,verifyOpenDocsPublication} from './opendocs';
+import {runRenderTask,reconcileRenderTask,verifyRenderPublication} from './render-publisher';
+import {runMdpageTask,reconcileMdpageTask,verifyMdpagePublication} from './mdpage';
+import {runDropDeployTask,reconcileDropDeployTask,verifyDropDeployPublication} from './dropdeploy';
+import {runPublishMarkdownTask,reconcilePublishMarkdownTask,verifyPublishMarkdownPublication} from './publishmarkdown';
+import {runDataEchoConnectedTask,reconcileDataEchoConnectedTask,verifyDataEchoConnectedPublication} from './dataecho';
+import {runMarkedShareTask,reconcileMarkedShareTask,verifyMarkedSharePublication} from './marked-share';
+import {runOnePushTask,reconcileOnePushTask,verifyOnePushPublication} from './onepush';
+import {runLeafmillTask,reconcileLeafmillTask,verifyLeafmillPublication} from './leafmill';
+import {runNetlifyTask,reconcileNetlifyTask,verifyNetlifyPublication} from './netlify-publisher';
+import {runCloudflarePagesTask,reconcileCloudflarePagesTask,verifyCloudflarePagesPublication} from './cloudflare-pages';
+import {runMastodonTask,reconcileMastodonTask,verifyMastodonPublication} from './mastodon';
+import {runClawprintTask,reconcileClawprintTask,verifyClawprintPublication} from '../main/clawprint-publisher';
 import {runBatch5AccountedTask,reconcileBatch5AccountedTask,verifyBatch5AccountedPublication,prepareBatch5Account} from './batch5-accounted';
 import type {ExecutionContext,ExecutionResult,LinkResult} from '../shared/types';
 import {runBatch5DirectTask,reconcileBatch5DirectTask,verifyBatch5DirectPublication} from './batch5-direct';
 import {runWhiteWindTask,reconcileWhiteWindTask,verifyWhiteWindPublication} from './whitewind';
 import {runHackMdTask,reconcileHackMdTask,verifyHackMdPublication} from './hackmd';
+import {runShipStaticTask,reconcileShipStaticTask,verifyShipStaticPublication} from './shipstatic';
+import {runHost0ConnectedTask,reconcileHost0ConnectedTask,verifyHost0ConnectedPublication} from './host0';
+import {runAgentelConnectedTask,reconcileAgentelConnectedTask,verifyAgentelConnectedPublication} from '../main/agentel-publisher';
 
 const directVerify=(context:ExecutionContext):Promise<LinkResult>=>verifyBatch5DirectPublication(context.task,context.site,context.task.topicUrl??context.site.url,context.batch5Persistence!,context.batch5Dependencies,context.signal);
 const accounted={prepare:prepareBatch5Account,publish:runBatch5AccountedTask,reconcile:reconcileBatch5AccountedTask,verify:(context:ExecutionContext)=>verifyBatch5AccountedPublication(context,context.task.topicUrl??context.site.url)};
 export const BATCH5_PUBLISHERS={
+  render:{publish:runRenderTask,reconcile:reconcileRenderTask,verify:verifyRenderPublication},
+  'opendocs':{publish:runOpenDocsTask,reconcile:reconcileOpenDocsTask,verify:verifyOpenDocsPublication},
+  'mdpage':{publish:runMdpageTask,reconcile:reconcileMdpageTask,verify:verifyMdpagePublication},
+  'dropdeploy':{publish:runDropDeployTask,reconcile:reconcileDropDeployTask,verify:verifyDropDeployPublication},
+  'publishmarkdown':{publish:runPublishMarkdownTask,reconcile:reconcilePublishMarkdownTask,verify:verifyPublishMarkdownPublication},
+  dataecho:{publish:runDataEchoConnectedTask,reconcile:reconcileDataEchoConnectedTask,verify:verifyDataEchoConnectedPublication},
+  'marked-share':{publish:runMarkedShareTask,reconcile:reconcileMarkedShareTask,verify:verifyMarkedSharePublication},
+  onepush:{publish:runOnePushTask,reconcile:reconcileOnePushTask,verify:verifyOnePushPublication},
+  leafmill:{publish:runLeafmillTask,reconcile:reconcileLeafmillTask,verify:verifyLeafmillPublication},
+  netlify:{publish:runNetlifyTask,reconcile:reconcileNetlifyTask,verify:verifyNetlifyPublication},
+  'cloudflare-pages':{publish:runCloudflarePagesTask,reconcile:reconcileCloudflarePagesTask,verify:verifyCloudflarePagesPublication},
+  mastodon:{publish:runMastodonTask,reconcile:reconcileMastodonTask,verify:verifyMastodonPublication},
+  clawprint:{publish:runClawprintTask,reconcile:reconcileClawprintTask,verify:verifyClawprintPublication},
   slopit:accounted,
   rant:accounted,
   yeetmd:{publish:runBatch5DirectTask,reconcile:reconcileBatch5DirectTask,verify:directVerify},
   markdownpage:{publish:runBatch5DirectTask,reconcile:reconcileBatch5DirectTask,verify:directVerify},
   whitewind:{publish:runWhiteWindTask,reconcile:reconcileWhiteWindTask,verify:verifyWhiteWindPublication},
   hackmd:{publish:runHackMdTask,reconcile:reconcileHackMdTask,verify:verifyHackMdPublication},
+  shipstatic:{publish:runShipStaticTask,reconcile:reconcileShipStaticTask,verify:verifyShipStaticPublication},
+  host0:{publish:runHost0ConnectedTask,reconcile:reconcileHost0ConnectedTask,verify:verifyHost0ConnectedPublication},
+  agentel:{publish:runAgentelConnectedTask,reconcile:reconcileAgentelConnectedTask,verify:verifyAgentelConnectedPublication},
 };
 export function batch5Publisher(id:string){return Object.hasOwn(BATCH5_PUBLISHERS,id)?BATCH5_PUBLISHERS[id as keyof typeof BATCH5_PUBLISHERS]:undefined;}
 export function batch5FailureResult(result:ExecutionResult):ExecutionResult {

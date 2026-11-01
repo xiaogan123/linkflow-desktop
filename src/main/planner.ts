@@ -17,6 +17,7 @@ import type { State } from './store';
 import {accountForSiteChannel,boundAccount,channelExecutionReadiness} from './account-bindings';
 import {eligibilityFor} from '../integrations/eligibility';
 import {channelTermsBlockReason} from './article-review';
+import {publishMarkdownSingleArticleCandidate,mdpageSingleArticleCandidate,opendocsSingleArticleCandidate,renderSingleArticleCandidate,dropDeploySingleArticleCandidate,dataEchoSingleArticleCandidate,markedShareSingleArticleCandidate,agentelSingleArticleCandidate,clawprintSingleArticleCandidate,host0SingleArticleCandidate,leafmillSingleArticleCandidate,onepushSingleArticleCandidate,netlifySingleArticleCandidate,shipstaticSingleArticleCandidate} from './article-publication-context';
 import {hasActiveSiteOriginRecoveryGrant,migrationAwareTopicKey} from './site-origin-migration';
 import {countFinanceAutomaticPlatforms} from '../shared/channel-metrics';
 import type {FinancePlatformCount} from '../shared/types';
@@ -410,7 +411,10 @@ export function selectTaskPlatform(state:State,task:Task,matches:Match[],now=new
     if(recovered.length){task.failedPlatformIds=undefined;task.failedPlatformAt=undefined;qualified=recovered;}
   }
   // A platform whose saved terms already rule this site out is skipped here, not picked and bounced at execution.
-  qualified=qualified.filter(({match:{channel}})=>{const cache=channel.termsCache??state.channelTermsCache?.[channel.id];return !cache||cache.reviewVersion!==2||!channelTermsBlockReason(site,channel,cache)});
+  qualified=qualified.filter(({match:{channel}})=>{const cache=channel.termsCache??state.channelTermsCache?.[channel.id];if(!cache||cache.reviewVersion!==2)return true;
+    const blocked=channelTermsBlockReason(site,channel,cache);
+    return !blocked||blocked==='policy_unknown'&&cache.finance!=='forbidden'&&(leafmillSingleArticleCandidate(state.tasks,task,site,channel)||clawprintSingleArticleCandidate(state.tasks,task,site,channel)||netlifySingleArticleCandidate(state.tasks,task,site,channel)||markedShareSingleArticleCandidate(state.tasks,task,site,channel)||publishMarkdownSingleArticleCandidate(state.tasks,task,site,channel)||mdpageSingleArticleCandidate(state.tasks,task,site,channel)||opendocsSingleArticleCandidate(state.tasks,task,site,channel)||renderSingleArticleCandidate(state.tasks,task,site,channel)||dropDeploySingleArticleCandidate(state.tasks,task,site,channel)||onepushSingleArticleCandidate(state.tasks,task,site,channel)||shipstaticSingleArticleCandidate(state.tasks,task,site,channel)||dataEchoSingleArticleCandidate(state.tasks,task,site,channel)||host0SingleArticleCandidate(state.tasks,task,site,channel)||agentelSingleArticleCandidate(state.tasks,task,site,channel));
+  });
   const fresh=qualified.filter(({match:{channel},readiness})=>{
     const source=sourceKey(channelSourceDomain(site,channel,readiness.account));
     return !state.tasks.some(other=>other.id!==task.id&&other.siteId===site.id&&!other.recoveredAt&&sourceKey(other.sourceDomain)===source&&

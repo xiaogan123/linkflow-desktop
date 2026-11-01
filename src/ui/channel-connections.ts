@@ -2,7 +2,7 @@ import {BATCH5_CONNECTED_MESSAGES,BATCH5_MESSAGES} from '../shared/batch5-messag
 import type {Account,Snapshot} from '../shared/types';
 import {validNotebinAccount} from '../shared/notebin-account';
 
-export type ConnectionChannelId='chatclaw'|'feddit'|'hart'|'yeetmd'|'markdownpage'|'slopit'|'rant'|'whitewind'|'hackmd'|'agentsgather'|'agentboard'|'carcinus'|'tantive'|'thethings'|'swarmmemo'|'synthfolk'|'large-language'|'agentswiki'|'berrry'|'colony'|'agentnotepad'|'agenthow'|'product-index'|'listed-startups'|'openagentchat'|'agentriot'|'shellbook'|'slugpost'|'notebin'|'wordcell'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'brewpage'|'markdrop'|'katbin'|'agentdrop'|'mdshare'|'totpage'|'mdview'|'txtsbs'|'pastyx'|'nextgen-slides'|'shippage'|'pstrs'|'yourwebs'|'pastemyst'|'markdownpaste'|'draftmark'|'memorywiki'|'here-now'|'beacon'|'gitbook'|'valtown'|'bitbucket'|'shiply'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
+export type ConnectionChannelId='publishmarkdown'|'mdpage'|'opendocs'|'render'|'dropdeploy'|'marked-share'|'onepush'|'agentel'|'dataecho'|'host0'|'shipstatic'|'netlify'|'cloudflare-pages'|'mastodon'|'leafmill'|'clawprint'|'chatclaw'|'feddit'|'hart'|'yeetmd'|'markdownpage'|'slopit'|'rant'|'whitewind'|'hackmd'|'agentsgather'|'agentboard'|'carcinus'|'tantive'|'thethings'|'swarmmemo'|'synthfolk'|'large-language'|'agentswiki'|'berrry'|'colony'|'agentnotepad'|'agenthow'|'product-index'|'listed-startups'|'openagentchat'|'agentriot'|'shellbook'|'slugpost'|'notebin'|'wordcell'|'vibedrop'|'plopino'|'mataroa'|'verbose'|'rentry'|'lucid-page'|'betterthanhtml'|'supanote'|'docs-md'|'html-app'|'deed-page'|'brewpage'|'markdrop'|'katbin'|'agentdrop'|'mdshare'|'totpage'|'mdview'|'txtsbs'|'pastyx'|'nextgen-slides'|'shippage'|'pstrs'|'yourwebs'|'pastemyst'|'markdownpaste'|'draftmark'|'memorywiki'|'here-now'|'beacon'|'gitbook'|'valtown'|'bitbucket'|'shiply'|'paper-wf'|'hive'|'prose'|'markest'|'deno'|'nostr'|'github-gist'|'telegraph'|'blogger'|'wordpress-com'|'leaflet'|'paragraph'|'bluesky'|'raindrop';
 export type ConnectionState='no_setup'|'first_connection'|'attention'|'connected'|'read_only'|'unavailable';
 export interface ConnectionOverviewRow {
   id:ConnectionChannelId;
@@ -22,6 +22,22 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖'|'产
   {id:'slopit',name:'SlopIt',format:'全文',firstStep:BATCH5_CONNECTED_MESSAGES.overview.slopit},
   {id:'rant',name:'rant.li',format:'全文',firstStep:BATCH5_CONNECTED_MESSAGES.overview.rant},
   {id:'whitewind',name:'WhiteWind',format:'全文',firstStep:BATCH5_CONNECTED_MESSAGES.overview.whitewind},
+  {id:'clawprint',name:'Clawprint',format:'全文',firstStep:'连接已注册 AI 代理的 API key，关联一个软件网站；仅发布单独审核通过的原创软件经验，真实公开页验收待完成。'},
+  {id:'leafmill',name:'Leafmill',format:'全文',firstStep:'连接已验证邮箱账号的 API key 后自动发布；仅使用无预设到期文章，真实公开页验收进行中。'},
+  {id:'agentel',name:'Agentel',format:'全文',firstStep:'连接原 AI assistant API key 或等待单次自动注册；公开页验收前保持关闭。'},
+  {id:'dataecho',name:'DataEcho',format:'全文',firstStep:'连接原 API key 和本地账号邮箱，只读核对远端用户名；公开页验收前保持关闭。'},
+  {id:'host0',name:'host0',format:'全文',firstStep:'连接已验证的 Free API key 和单个原创软件网站；公开页验收前保持关闭。'},
+  {id:'shipstatic',name:'ShipStatic',format:'全文',firstStep:'连接 Free 账号 API key 与专用空白 shipstatic.com 域名；公开页真实验收待完成。'},
+  {id:'publishmarkdown',name:'Publish Markdown',format:'全文',firstStep:'连接专用 API key，只读核对文档列表；原稿与公开页验收前保持关闭。'},
+  {id:'opendocs',name:'OpenDocs',format:'全文',firstStep:'连接本人 API key，自动读取原工作区和 Free 文档配额；独立原稿及公开验收前保持关闭。'},
+  {id:'mdpage',name:'MD.page',format:'全文',firstStep:'连接原 API key，只读核对远端账号与页面；独立原稿及公开验收前保持关闭。'},
+  {id:'render',name:'Render',format:'全文',firstStep:'尚未达标：普通流程缺少新鲜免费配额确认入口，连接后不能自动发布；保持关闭。'},
+  {id:'dropdeploy',name:'DropDeploy',format:'全文',firstStep:'连接 Free API key，只读核对站点与存储配额；原稿与公开页验收前保持关闭。'},
+  {id:'marked-share',name:'Marked Share',format:'全文',firstStep:'连接原 API token、设备密钥与本地账号邮箱，仅只读核对文档列表；公开验收前保持关闭。'},
+  {id:'onepush',name:'OnePush',format:'全文',firstStep:'连接专用 API key，仅核对认证站点列表；认证新站无预设到期，真实公开页验收待完成。'},
+  {id:'netlify',name:'Netlify',format:'全文',firstStep:'连接免费个人账号的访问令牌；按审核后的稿件创建独立静态页面，真实发布验收待完成。'},
+  {id:'cloudflare-pages',name:'Cloudflare Pages',format:'全文',firstStep:'先准备专用空白 Direct Upload 项目和 Pages Edit 令牌，再填账号 ID、项目名并关联一个软件网站；真实发布验收待完成。'},
+  {id:'mastodon',name:'Mastodon',format:'短帖',firstStep:'连接 mastodon.social 自动账号令牌；开启 bot 标记及搜索索引，真实发布验收待完成。'},
   {id:'hackmd',name:'HackMD',format:'全文',firstStep:BATCH5_MESSAGES.hackmdToken},
   {id:'chatclaw',name:'ChatClaw',format:'短帖',firstStep:'无需邮箱。首次任务自动建立并复用该网站的公开 agent 账号，发布审核通过的开发者短帖；结果不明时只读对账，不会重发。'},
   {id:'feddit',name:'Feddit botlife',format:'短帖',firstStep:'无需邮箱。首次任务自动建立并复用该网站的发布账号；只向已经核实规则的社区提交审核通过的软件维护链接帖，结果不明时不会重发。'},
@@ -96,7 +112,7 @@ const channels:{id:ConnectionChannelId;name:string;format:'全文'|'短帖'|'产
   {id:'paragraph',name:'Paragraph',format:'全文',firstStep:'先在官网用邮箱、Google 或 GitHub 准备出版物，再连接其 API 密钥。无需钱包；当前不自动开户或创建密钥。'},
   {id:'bluesky',name:'Bluesky',format:'短帖',firstStep:'连接已有账号的 app password，并选择网站。'},
 ];
-const needsBinding=new Set<ConnectionChannelId>(['whitewind','hackmd','agentboard','product-index','swarmmemo','synthfolk','large-language','agentswiki','berrry','agenthow','colony','openagentchat','agentriot','shellbook','agentnotepad','notebin','wordcell','vibedrop','plopino','shippage','here-now','beacon','gitbook','valtown','bitbucket','shiply','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop','carcinus']);
+const needsBinding=new Set<ConnectionChannelId>(['publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','agentel','dataecho','host0','shipstatic','netlify','cloudflare-pages','mastodon','leafmill','clawprint','whitewind','hackmd','agentboard','product-index','swarmmemo','synthfolk','large-language','agentswiki','berrry','agenthow','colony','openagentchat','agentriot','shellbook','agentnotepad','notebin','wordcell','vibedrop','plopino','shippage','here-now','beacon','gitbook','valtown','bitbucket','shiply','hive','prose','markest','deno','blogger','wordpress-com','leaflet','paragraph','bluesky','raindrop','carcinus']);
 const selfProvisioned=new Set<ConnectionChannelId>(['chatclaw','feddit','hart','yeetmd','markdownpage','slopit','rant','agentswiki','agentsgather','agentboard','tantive','thethings','swarmmemo','synthfolk','large-language','berrry','agenthow','listed-startups','openagentchat','agentriot','shellbook','agentnotepad','slugpost','notebin','wordcell','vibedrop','plopino','shippage','mataroa','verbose','telegraph','nostr','rentry','lucid-page','betterthanhtml','supanote','docs-md','html-app','deed-page','brewpage','markdrop','katbin','nextgen-slides','totpage','mdview','txtsbs','pastyx','mdshare','agentdrop','pstrs','yourwebs','pastemyst','markdownpaste','draftmark','memorywiki','carcinus']);
 
 const fingerprintPattern=/^[0-9a-f]{64}$/;

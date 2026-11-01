@@ -3,6 +3,7 @@ import test from 'node:test';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 import {reuseBlueskyForLeaflet} from '../src/main/atproto-reuse';
 import {atprotoIdentityConflict,channelExecutionReadiness} from '../src/main/account-bindings';
 import {CHANNELS} from '../src/integrations/catalog';
@@ -40,7 +41,7 @@ test('explicit platform failures disable a trial; reason codes and writing failu
   s.tasks[0].trialFailure='publisher rate limit';reconcileChannelTrials(s,[channel]);reconcileChannelTrials(s,[channel]);assert.equal(s.settings.channelTrials?.yeetmd.failures,1);
   const next=task({id:'33333333-3333-4333-8333-333333333333',status:'queued'});s.tasks.push(next);assert.equal(claimChannelTrial(s,channel,next),true);next.status='failed';next.reasonCode='platform_rejected';next.trialFailure='publisher rejected';reconcileChannelTrials(s,[channel]);assert.equal(s.settings.channelOverrides.yeetmd,false);assert.equal(next.status,'needs_input');assert.equal(next.reasonCode,'channel_disabled');
 });
-test('unknown remote result keeps the platform trial locked',()=>{const s=state();claimChannelTrial(s,channel,s.tasks[0]);Object.assign(s.tasks[0],{status:'needs_input',reasonCode:'submission_unknown',submittedAt:at});reconcileChannelTrials(s,[channel]);assert.equal(trialTaskAvailable(s,channel,'other-task'),false);assert.equal(s.settings.channelTrials?.yeetmd.failures,0);});
+test('unknown remote result keeps the platform trial locked',()=>{const s=state();claimChannelTrial(s,channel,s.tasks[0]);Object.assign(s.tasks[0],{status:'needs_input',reasonCode:'submission_unknown',submittedAt:at});reconcileChannelTrials(s,[channel],new Date(at));assert.equal(trialTaskAvailable(s,channel,'other-task'),false);assert.equal(s.settings.channelTrials?.yeetmd.failures,0);});
 test('temporary publications never count toward the monthly target or reserve its slots',()=>{
   const t=task({temporaryPage:true,status:'live',firstLiveAt:at,publicUrl:'https://yeet.md/s/example',linkCheck:'found',health:'healthy'});
   assert.equal(publicationCounts(siteId,[t],new Date(at),'UTC').monthlyPages,0);assert.equal(reservesMonthlySlot({...t,status:'review'},new Date(at),'UTC'),false);
@@ -96,6 +97,27 @@ test('publication intent and secret receipt commit atomically and unknown restar
 });
 test('encryption failure prevents both intent commit and network authorization',async()=>{
   const f=fixture();try{let authorized=0;const p=createBatch5Persistence(f.store,{...f.vault,encryptSecrets:()=>{throw Error('locked');}},taskId,()=>{authorized++;});await assert.rejects(p.saveIntent(intent));assert.equal(f.store.read().tasks[0].batch5,undefined);assert.equal(f.store.getCipher(`publication:${taskId}`),undefined);assert.equal(authorized,1);}finally{f.close();}
+});
+test('ShipStatic domain binding has a separate durable one-shot guard and encrypted final URL',async()=>{
+  const f=fixture();try{
+    f.store.update(s=>{s.tasks[0].channelId='shipstatic';s.tasks[0].sourceDomain='shipstatic.com';});
+    let authorized=0;const p=createBatch5Persistence(f.store,f.vault,taskId,()=>{authorized++;});
+    const remote='calm-bird-abc1234.shipstatic.com',domain='reviewed-software-guide.shipstatic.com';
+    const shipIntent={...intent,channelId:'shipstatic',operationId:'8bf1278e-6e67-46b7-90e4-bc829ee8924e',requestHash:createHash('sha256').update(`${intent.sourceHash}\n${domain}`).digest('hex')};
+    await p.reserveIntent!(shipIntent);await p.markSending!(shipIntent);
+    await p.saveReceipt({version:1,intent:shipIntent,publicUrl:`https://${remote}`,remoteId:remote,rawResponse:'{"deployment":"remote"}'});
+    const stage={version:1 as const,intent:shipIntent,remoteId:remote,domain};
+    await p.markDomainSending!(stage);await assert.rejects(p.markDomainSending!(stage));
+    assert.ok(authorized>=3);assert.deepEqual(await p.loadDomainStage!(),stage);
+    const restarted=createBatch5Persistence(f.store,f.vault,taskId,()=>{throw Error('permission revoked')});
+    await assert.rejects(async()=>restarted.assertReadyToBind!(stage),/permission revoked/);
+    await restarted.saveDomainReceipt!({version:1,intent:shipIntent,publicUrl:`https://${domain}/`,remoteId:remote,rawResponse:'{"domain":"confirmed by GET"}'});
+    assert.equal(f.store.read().tasks[0].publicUrl,`https://${domain}/`);
+    assert.equal(JSON.stringify(f.store.read()).includes('confirmed by GET'),false);
+    await assert.rejects(restarted.saveDomainReceipt!({version:1,intent:shipIntent,publicUrl:`https://${domain}/`,remoteId:remote,rawResponse:'repeat'}));
+    const raw=await f.vault.get(`publication:${taskId}`);
+    assert.doesNotThrow(()=>validateBackup({state:f.store.read(),secrets:{[`publication:${taskId}`]:raw}}));
+  }finally{f.close();}
 });
 test('Rant rolling 24-hour budget and per-site identity are atomic',async()=>{
   const f=fixture();try{f.store.update(s=>{s.tasks=[];s.sites=[];for(let n=1;n<=4;n++){const id=`${n}2222222-2222-4222-8222-222222222222`;s.sites.push({...site,id});s.tasks.push(task({id:`${n}1111111-1111-4111-8111-111111111111`,siteId:id,channelId:'rant',sourceDomain:'rant.li'}));}});
@@ -156,4 +178,17 @@ test('Rant rolling registration ceiling does not reset across local midnight',as
     await assert.rejects(p.saveAccountIntent({version:1,channelId:'rant',siteId,operationId:'daily-limit',requestHash:'a'.repeat(64),createdAt:'2026-10-18T01:00:00.000Z',username:'fixture-next',password:'synthetic-password'}));
     assert.equal(f.store.read().accounts.length,3);assert.equal(f.store.getCipher(`batch5:identity:rant:${siteId}`),undefined);
   }finally{f.close();}
+});
+
+test('Render four stage journal is ordered, encrypted, one-shot and survives restart without reauthorization',async()=>{
+ const f=fixture();try{
+  f.store.update(s=>{s.tasks[0].channelId='render';s.tasks[0].sourceDomain='render.com'});
+  const p=createBatch5Persistence(f.store,f.vault,taskId,()=>{}),i={...intent,channelId:'render'};await p.reserveIntent!(i);await p.markSending!(i);
+  const stage=(name:'source_html'|'source_robots'|'source_ref'|'service')=>({stage:name,url:'https://api.example.org/'+name,requestBody:'{"synthetic":"'+name+'"}',requestHash:createHash('sha256').update('{"synthetic":"'+name+'"}').digest('hex')});
+  await assert.rejects(p.reserveRenderWrite!(stage('source_robots')));await p.reserveRenderWrite!(stage('source_html'));await assert.rejects(p.reserveRenderWrite!(stage('source_html')));await assert.rejects(p.reserveRenderWrite!(stage('source_robots')));
+  const restarted=createBatch5Persistence(f.store,f.vault,taskId,()=>{throw Error('revoked')});assert.equal((await restarted.loadRenderWrites!()).length,1);await assert.rejects(restarted.reserveRenderWrite!(stage('source_robots')));
+  for(const name of ['source_html','source_robots','source_ref','service'] as const){if(name!=='source_html')await p.reserveRenderWrite!(stage(name));const opaque={version:1 as const,intent:i,status:201,contentType:'application/json',responseUrl:stage(name).url,bodyBase64:Buffer.from('{"synthetic":"original-response"}').toString('base64'),bodyComplete:true};await restarted.saveRenderWriteResponse!(name,opaque);await assert.rejects(restarted.saveRenderWriteResponse!(name,opaque));}
+  assert.equal((await restarted.loadRenderWrites!()).length,4);await assert.rejects(p.reserveRenderWrite!(stage('service')));assert.equal(JSON.stringify(f.store.read()).includes('original-response'),false);
+  const raw=await f.vault.get(`publication:${taskId}`);assert.doesNotThrow(()=>validateBackup({state:f.store.read(),secrets:{[`publication:${taskId}`]:raw}}));
+ }finally{f.close()}
 });

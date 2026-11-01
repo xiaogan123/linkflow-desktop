@@ -8,12 +8,17 @@ const addedIds=['linkedin-company','crunchbase-company','trustpilot-business','b
 function financeSite(language='en'):Site{return {id:'publisher',domain:'publisher.example',url:'https://publisher.example/',email:'owner@publisher.example',name:'Publisher',description:'Original exchange fee and risk education',category:'finance',language,monthlyTarget:2,status:'ready',createdAt:'2026-09-30'}}
 
 test('publisher and brand entries without cited evidence remain unverified and manual',()=>{
- assert.equal(CHANNELS.length,145);
+ // 145 in the 1.2.42 baseline plus these sixteen connected publishers; every one is an API integration.
+ const connectedPublisherIds=['publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','agentel','dataecho','host0','shipstatic','clawprint','leafmill','netlify','cloudflare-pages','mastodon'];
+ assert.equal(new Set(connectedPublisherIds).size,16);
+ for(const id of connectedPublisherIds)assert.equal(CHANNELS.find(item=>item.id===id)?.automation,'api',id);
+ assert.equal(CHANNELS.length,145+connectedPublisherIds.length);
  for(const id of addedIds){const channel=CHANNELS.find(item=>item.id===id);assert(channel,id);assert.equal(channel.automation,'manual',id);assert.equal(channel.checkedAt,'2026-09-30',id);assert.equal(channel.evidenceSources?.length??0,0,id);assert.equal(channel.evidenceStatus,'unverified',id);if(channel.authority){assert.equal(channel.authority.target,channel.domain,id);assert.equal(channel.authority.provenance,'official_snapshot',id)}assert.equal(channel.traffic,undefined,id);assert(channel.rulesUrl.startsWith('https://'),id)}
  const blogger=CHANNELS.find(channel=>channel.id==='blogger');assert(blogger);assert.equal(blogger.automation,'api');assert.match(blogger.notes,/OAuth/);assert.match(blogger.notes,/绑定.*博客/);
- assert.equal(CHANNELS.filter(channel=>channel.automation==='api').length,75);
+ assert.equal(CHANNELS.filter(channel=>channel.automation==='api').length,75+connectedPublisherIds.length);
  const shiply=CHANNELS.find(channel=>channel.id==='shiply');assert(shiply);assert.equal(shiply.enabled,true);assert.equal(shiply.accountRequired,true);
  const prose=CHANNELS.find(channel=>channel.id==='prose');assert(prose);assert.equal(prose.enabled,false);assert.equal(prose.evidenceStatus,'source_checked');
+ const clawprint=CHANNELS.find(channel=>channel.id==='clawprint');assert(clawprint);assert.equal(clawprint.enabled,true);assert.equal(clawprint.automation,'api');assert.equal(clawprint.singleSiteOnly,true);assert.equal(clawprint.promotionPolicy,'unknown');assert.match(clawprint.notes,/客户端新自动开户路径.*尚未另行完成真实首次开户验收.*真实发表.*原生目标链接.*robots.*不承诺搜索收录/s);
  assert.equal(CHANNELS.filter(channel=>channel.automation==='browser').length,5);
 });
 

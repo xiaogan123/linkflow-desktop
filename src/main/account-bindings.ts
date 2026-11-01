@@ -465,6 +465,26 @@ export function channelExecutionReadiness(state:State,siteId:string,channel:Chan
     const account=accountForSiteChannel(state,siteId,'prose',accountId);
     return {kind:binding&&account&&binding.accountId===account.id&&validProseAccount(account)?'ready':'handoff_required',account};
   }
+  if(channel.id==='agentel'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='agentel');
+    const accounts=state.accounts.filter(item=>item.channelId==='agentel'&&!item.retiredAt);
+    const account=accountId?accounts.find(item=>item.id===accountId):accounts.find(item=>item.id===binding?.accountId)??accounts[0];
+    if(accounts.length>1||accountId&&!account||binding&&binding.accountId!==account?.id||account&&account.ownerSiteId!==siteId)return {kind:'handoff_required',account};
+    if(account?.status==='registered'&&account.hasPassword&&account.credentialKind==='api_token'&&binding?.accountId===account.id)return {kind:'ready',account};
+    if(account?.source==='generated'&&account.status==='unknown'&&!account.hasPassword&&account.registrationAttempts===1&&account.credentialKind==='api_token'&&binding?.accountId===account.id)return {kind:'autocreate',account};
+    if(!account&&!binding)return {kind:'autocreate'};
+    return {kind:'handoff_required',account};
+  }
+  if(channel.id==='clawprint'){
+    const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='clawprint');
+    const accounts=state.accounts.filter(item=>item.channelId==='clawprint'&&!item.retiredAt);
+    const account=accountId?accounts.find(item=>item.id===accountId):accounts.find(item=>item.id===binding?.accountId)??accounts[0];
+    if(accounts.length>1||accountId&&!account||binding&&binding.accountId!==account?.id||account?.ownerSiteId&&account.ownerSiteId!==siteId)return {kind:'handoff_required',account};
+    if(account?.status==='registered'&&account.hasPassword&&account.credentialKind==='api_token'&&binding?.accountId===account.id)return {kind:'ready',account};
+    // Only an already reserved original signup may continue. A new signup stays closed until its first real acceptance.
+    if(account?.source==='generated'&&account.status==='unknown'&&!account.hasPassword&&account.registrationAttempts===1&&account.credentialKind==='api_token'&&binding?.accountId===account.id)return {kind:'autocreate',account};
+    return {kind:'handoff_required',account};
+  }
   if(channel.id==='deed-page'){
     const binding=state.accountBindings.find(item=>item.siteId===siteId&&item.channelId==='deed-page');
     const account=accountForSiteChannel(state,siteId,'deed-page',accountId);
@@ -552,9 +572,12 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
   const site=state.sites.find(item=>item.id===siteId);
   if(!account||!site)throw Error('账号或网站不存在');
   if(account.channelId!==channel.id&&!(channel.id==='whitewind'&&account.channelId==='bluesky'))throw Error('账号与平台不匹配');
+  if(channel.id==='agentel'&&state.accountBindings.some(binding=>binding.siteId===siteId&&binding.channelId==='agentel'&&binding.accountId!==accountId&&state.accounts.some(existing=>existing.id===binding.accountId&&existing.source==='generated'&&existing.status==='unknown'&&existing.registrationAttempts===1)))throw Error('Agentel 原注册结果未确认，必须保留原账号绑定');
+  if(channel.id==='clawprint'&&state.accountBindings.some(binding=>binding.siteId===siteId&&binding.channelId==='clawprint'&&binding.accountId!==accountId&&state.accounts.some(existing=>existing.id===binding.accountId&&existing.source==='generated'&&existing.status==='unknown'&&existing.registrationAttempts===1)))throw Error('Clawprint 原注册结果未确认，必须保留原账号绑定');
   const atprotoDid=atprotoAccountDid(account);if(atprotoDid&&(['leaflet','whitewind'].includes(channel.id)||state.accounts.some(value=>value.channelId==='leaflet'&&leafletAccountDid(value)===atprotoDid))&&atprotoIdentityConflict(state,atprotoDid,siteId))throw Error(BATCH5_MESSAGES.identitySingleSite);
   if(channel.singleSiteOnly&&(state.accountBindings.some(binding=>binding.accountId===account.id&&binding.siteId!==siteId)||state.tasks.some(task=>task.accountId===account.id&&task.siteId!==siteId&&(!!task.submittedAt||!!task.publicUrl||!!task.firstLiveAt))))throw Error(BATCH5_MESSAGES.identitySingleSite);
   if(account.retiredAt)throw Error(ACCOUNT_IDENTITY_MESSAGES.retired);
+  if(['publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','netlify','shipstatic','dataecho','host0','agentel','cloudflare-pages','mastodon','leafmill'].includes(channel.id)&&state.tasks.some(task=>task.siteId===siteId&&task.channelId===channel.id&&task.accountId!==accountId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.batch5)))throw new AccountBindingError('pending_publication','原发布结果尚待确认，必须保留原发布账号。');
   const retiredPending=unresolvedRetiredPublication(state,siteId,channel.id,accountId,now);
   if(retiredPending)throw Error(ACCOUNT_IDENTITY_MESSAGES.pending(retiredPending));
   if(channel.automation!=='manual'&&siteIdentityConflict(state,account,siteId))throw Error('该发布账号已归属其他网站，不能跨站绑定或继续发布。');
@@ -627,6 +650,9 @@ export function bindAccount(state:State,accountId:string,siteId:string,channel:C
 }
 
 export function unbindAccount(state:State,accountId:string,siteId:string,channelId:string):void{
+  if(channelId==='agentel'&&state.accounts.some(account=>account.id===accountId&&account.source==='generated'&&account.status==='unknown'&&account.registrationAttempts===1))throw new AccountBindingError('pending_publication','Agentel 原注册结果未确认，必须保留原账号绑定');
+  if(channelId==='clawprint'&&state.accounts.some(account=>account.id===accountId&&account.source==='generated'&&account.status==='unknown'&&account.registrationAttempts===1))throw new AccountBindingError('pending_publication','Clawprint 原注册结果未确认，必须保留原账号绑定');
+  if(['publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','netlify','shipstatic','dataecho','host0','agentel','cloudflare-pages','mastodon','leafmill'].includes(channelId)&&state.tasks.some(task=>task.siteId===siteId&&task.channelId===channelId&&task.accountId===accountId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.batch5)))throw new AccountBindingError('pending_publication','原发布结果尚待确认，必须保留原发布账号。');
   const account=state.accounts.find(item=>item.id===accountId&&item.channelId===channelId);
   if(['rant','slopit'].includes(channelId)&&account?.source==='generated'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId))throw new AccountBindingError('pending_publication',BATCH5_MESSAGES.generatedAccountBound);
   if(channelId==='wordpress-com'&&state.accountBindings.some(item=>item.accountId===accountId&&item.siteId===siteId&&item.channelId===channelId)&&state.tasks.some(task=>task.accountId===accountId&&task.siteId===siteId&&task.channelId===channelId&&!task.firstLiveAt&&(task.submittedAt||task.publicUrl||task.wordpress)))throw Error('该网站有 WordPress.com 发布结果待检查，必须保留原博客发布账号。');
@@ -659,7 +685,7 @@ export function bindSelectedAccountSites(state:State,accountId:string,siteIds:It
 
 /** The account editor removes bindings through the same guards as an individual unbind. */
 export function setSelectedAccountSites(state:State,accountId:string,selected:Set<string>,channel:Channel,now=new Date()):void{
-  const protectedChannels=['rant','slopit','wordpress-com','leaflet','raindrop','prose','beacon','valtown','bitbucket','here-now','shiply','vibedrop','notebin','berrry','agenthow','swarmmemo','openagentchat','agentriot','shellbook','agentnotepad','colony','large-language'];
+  const protectedChannels=['rant','slopit','wordpress-com','leaflet','raindrop','prose','beacon','valtown','bitbucket','here-now','shiply','vibedrop','notebin','berrry','agenthow','swarmmemo','openagentchat','agentriot','shellbook','agentnotepad','colony','large-language','publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','netlify','shipstatic','dataecho','host0','agentel','cloudflare-pages','mastodon','leafmill','clawprint'];
   if(protectedChannels.includes(channel.id))for(const binding of [...state.accountBindings]){
     if(binding.accountId===accountId&&binding.channelId===channel.id&&!selected.has(binding.siteId))
       unbindAccount(state,accountId,binding.siteId,channel.id);

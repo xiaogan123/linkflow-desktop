@@ -74,7 +74,9 @@ for (const fail of [true, false]) {
   });
 }
 
-test('failure for the unchanged URL keeps bounded retry timing and allows a subsequent check', async () => {
+test('failure for the unchanged URL keeps bounded retry timing and allows a subsequent check', async t => {
+  // The retry follows the 1/7/30-day ladder from the task date, so the clock must stay inside that ladder.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-15T00:00:00.000Z') });
   const f = fixture(true);
   try {
     const pending = f.controller.verify(original.id);

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CHANNELS, matchChannels } from '../src/integrations/catalog.js';
+import { builtInAccessClass } from '../src/integrations/channel-access-class.js';
+import { connectionOverview } from '../src/ui/channel-connections.js';
+import { platformOneLiner } from '../src/ui/platforms-model.js';
 import type { Category, Site } from '../src/shared/types.js';
 
 function site(category: Category, language = 'en'): Site {
@@ -31,9 +34,31 @@ test('catalog contains distinct curated channels with source evidence', () => {
     assert.match(channel.freeNote, /[\u3400-\u9fff]/, `${channel.id} freeNote`);
     assert.match(channel.qualityReason, /[\u3400-\u9fff]/, `${channel.id} qualityReason`);
     assert.match(channel.notes, /[\u3400-\u9fff]/, `${channel.id} notes`);
-    if (channel.kind === 'community' && !['agentsgather','bluesky','hive','raindrop','colony','tantive','agentboard','chatclaw','feddit'].includes(channel.id)) assert.equal(channel.automation, 'manual');
+    if (channel.kind === 'community' && !['agentsgather','bluesky','hive','raindrop','colony','tantive','agentboard','chatclaw','feddit','mastodon'].includes(channel.id)) assert.equal(channel.automation, 'manual');
     if(channel.id==='bluesky'){assert.equal(channel.automation,'api');assert.equal(channel.contentFormat,'social');assert.equal(channel.articleRequired,true);assert.match(channel.notes,/短内容/);}
   }
+});
+
+test('channels that need an existing key are connect-once in the catalog, the access class and the connection page',()=>{
+  const overview=connectionOverview({accounts:[],accountBindings:[],sites:[],tasks:[],channels:CHANNELS});
+  for(const id of ['dataecho','shipstatic','clawprint']){
+    const channel=CHANNELS.find(item=>item.id===id);assert.ok(channel,id);
+    assert.equal(channel.accessClass,'connect_once',id);assert.equal(builtInAccessClass(channel),'connect_once',id);
+    const row=overview.find(item=>item.id===id);assert.ok(row,id);assert.equal(row.state==='no_setup',false,id);
+    assert.doesNotMatch(row.detail,/自动注册|自动开户|自动建号/,id);
+  }
+  const clawprint=CHANNELS.find(item=>item.id==='clawprint')!;
+  assert.match(clawprint.notes,/只使用已连接的 API key/);assert.match(clawprint.notes,/验收前保持关闭/);
+  assert.equal(platformOneLiner(clawprint).includes('自动建号'),false);
+});
+
+test('new publisher adapters do not enable unaccepted channels or claim domain authority',()=>{
+  for(const id of ['netlify','cloudflare-pages','mastodon']){
+    const channel=CHANNELS.find(value=>value.id===id);assert.ok(channel,id);
+    assert.equal(channel.automation,'api',id);assert.equal(channel.enabled,false,id);
+    assert.equal(channel.authority,undefined,id);
+  }
+  assert.match(CHANNELS.find(value=>value.id==='mastodon')!.notes,/AI|人工智能/);
 });
 
 test('batch 5 policy decisions stay explicit in catalog metadata',()=>{

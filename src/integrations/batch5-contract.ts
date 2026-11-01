@@ -43,7 +43,21 @@ export interface Batch5OpaqueResponse {
   bodyComplete: boolean;
 }
 
+/** ShipStatic's second, one-shot write is tied to the original encrypted intent. */
+export interface Batch5DomainStage {
+  version: 1;
+  intent: Batch5Intent;
+  domain: string;
+  remoteId: string;
+}
+
+/** Render's source commit, unique Git ref, and service creation each have a durable one-shot guard. */
+export interface RenderWriteStage {stage:'source_html'|'source_robots'|'source_ref'|'service';requestHash:string;requestBody:string;url:string;opaque?:Batch5OpaqueResponse}
 export interface Batch5Persistence {
+  reserveRenderWrite?(stage:RenderWriteStage):Promise<void>;
+  saveRenderWriteResponse?(stage:RenderWriteStage['stage'],response:Batch5OpaqueResponse):Promise<void>;
+  loadRenderWrites?():Promise<RenderWriteStage[]>;
+
   /** The implementation must durably save once and reject a different intent. */
   saveIntent(intent: Batch5Intent): Promise<void>;
   /** Durable proof that no POST has begun; safe to leave queued after authorization loss. */
@@ -60,6 +74,13 @@ export interface Batch5Persistence {
   loadOpaqueResponse(): Promise<Batch5OpaqueResponse | undefined>;
   /** Recheck current authorization immediately before the sole remote mutation. */
   assertReadyToSubmit?(intent: Batch5Intent): void | Promise<void>;
+  markDomainSending?(stage: Batch5DomainStage): Promise<void>;
+  assertReadyToBind?(stage: Batch5DomainStage): void | Promise<void>;
+  saveDomainOpaqueResponse?(response: Batch5OpaqueResponse): Promise<void>;
+  loadDomainOpaqueResponse?(): Promise<Batch5OpaqueResponse | undefined>;
+  saveDomainReceipt?(receipt: Batch5Receipt): Promise<void>;
+  loadDomainReceipt?(): Promise<Batch5Receipt | undefined>;
+  loadDomainStage?(): Promise<Batch5DomainStage | undefined>;
 }
 
 export interface Batch5AccountIntent {

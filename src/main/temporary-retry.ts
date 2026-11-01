@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {Task,TaskCost,TaskReasonCode} from '../shared/types';
-import {hasUnresolvedExternalAttempt} from '../shared/publication';
+import {hasRemotePublicationIntent,hasUnresolvedExternalAttempt} from '../shared/publication';
 import {schedulingDay} from '../shared/scheduling';
 import {MAINTENANCE_MESSAGES} from '../shared/maintenance-messages';
 import {BATCH9A3_RETRY_MESSAGES} from '../shared/batch9a3-messages';
@@ -15,6 +15,14 @@ export interface TemporaryRetryOptions {scope?:'platform'|'independent';stage?:T
 function canRetryLocally(task:Task):boolean{
   return !hasUnresolvedExternalAttempt(task)&&!task.submittedAt&&!task.publicUrl&&!task.batch5&&
     (!task.batch5Registration||task.batch5Registration.stage==='registered');
+}
+
+/** A due retry or reschedule time is spent once its unsent task starts; publishers read a leftover one as a prior submission. */
+export function hasConsumedLocalSchedule(task:Task,now=new Date()):boolean{
+  return task.status==='queued'&&(task.health??'pending')==='pending'&&canRetryLocally(task)&&!hasRemotePublicationIntent(task)
+    &&!!task.nextCheckAt&&Date.parse(task.nextCheckAt)<=now.getTime()
+    &&!task.verifiedAt&&!task.linkCheck&&!task.linkRel&&!task.publicationMethod&&!task.lastCheckedAt&&!task.lostAt
+    &&!task.reviewUntil&&!task.reviewKind&&task.consecutiveMissing===undefined&&task.reconcileAttempts===undefined&&!task.reconcileAfter;
 }
 
 function exclusionTimestamp(task:Task,channelId:string):number{

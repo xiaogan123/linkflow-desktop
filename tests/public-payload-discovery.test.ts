@@ -18,6 +18,14 @@ const ARTICLE={draft:DRAFT,targetUrl:TARGET,language:'en',slug:'example-research
 const LISTING={slug:'example-research',name:'Example Research',url:TARGET,description:'A repeatable source review using a documented public guide.',category:'app',pricing:'free',tags:['research','guide'],submitted_by:'Example Research'};
 const WIKI={title:TITLE,summary:DESCRIPTION,language:'en',type:'methodology',tags:['research'],body:BODY,sources:[{title:'Source guide',url:TARGET}],basis:'An original method based on the cited public guide.',attribution:['Prepared with AI assistance for the site operator.'],change_notice:'Original contribution',related:[],applies_to:['Source reviews'],content_as_of:AT};
 const CONNECTED_CONTEXT={site:SITE,task:TASK};
+const SOFTWARE_SITE={...SITE,category:'software'};
+const SOFTWARE_TASK={...TASK,accountId:ACCOUNT,draft:{...DRAFT,body:`${BODY}\n\nWritten by an AI assistant for the site operator.`}};
+const KEY_HASH='a'.repeat(64);
+/** Each connected publisher gets the account shape it requires; its original account guard still runs. */
+const connectedContext=(channelId:string,account:Record<string,unknown>={})=>({site:SOFTWARE_SITE,task:{...SOFTWARE_TASK,channelId},channel:{id:channelId,contentFormat:'article'},
+  settings:{articleReviewMode:'manual'},getAccount:()=>({id:ACCOUNT,channelId,email:'',status:'registered',hasPassword:true,credentialKind:'api_token',ownerSiteId:ACCOUNT,createdAt:AT,...account})});
+const callConnected=(channelId:string,account:Record<string,unknown>):Fixture=>builder=>Reflect.apply(builder,undefined,[connectedContext(channelId,account)]);
+const RENDER_SOURCE={version:1,repository:'https://github.com/example-owner/example-docs',repositoryId:101,githubUserId:202,githubLogin:'example-owner',baseBranch:'main'};
 
 type Fixture=(builder:Function, module:Record<string,unknown>)=>unknown;
 /** GitBook writes need a probed binding; the POST bodies sent are the public payload. */
@@ -142,6 +150,21 @@ const fixtures:Record<string,Fixture>={
   'hart.ts:renderHartArticle':call({draft:DRAFT,targetUrl:TARGET,language:'en'}),
   'hart-publisher.ts:renderHartTaskArticle':call(TASK,SITE),
   'html2link-article.ts:renderHtml2LinkArticle':call({draft:DRAFT,targetUrl:TARGET,language:'en'}),
+  'cloudflare-pages.ts:cloudflarePagesTesting.document':builder=>Reflect.apply(builder,undefined,[connectedContext('cloudflare-pages'),false]),
+  'dataecho.ts:dataEchoDocument':call(SOFTWARE_SITE,{...SOFTWARE_TASK,channelId:'dataecho'}),
+  'deployhtml.ts:deployHtmlDocument':callConnected('deployhtml',{username:`deployhtml-key:${KEY_HASH}`}),
+  'dropdeploy.ts:dropDeployDocument':callConnected('dropdeploy',{username:`dropdeploy-key:${KEY_HASH}`}),
+  'host0.ts:host0Document':call(SOFTWARE_SITE,{...SOFTWARE_TASK,channelId:'host0'}),
+  'leafmill.ts:leafmillTesting.article':callConnected('leafmill',{}),
+  'marked-share.ts:markedShareDocument':callConnected('marked-share',{}),
+  'mastodon.ts:mastodonTesting.approved':builder=>Reflect.apply(builder,undefined,[{...connectedContext('mastodon'),task:{...SOFTWARE_TASK,channelId:'mastodon',draft:{...DRAFT,body:`Record assumptions and compare the original evidence: ${TARGET}`}}}]),
+  'mdpage.ts:mdpageDocument':callConnected('mdpage',{username:'user-example-1',publicationUrl:'https://example-writer.md.page/'}),
+  'netlify-publisher.ts:netlifyPublisherTesting.document':callConnected('netlify',{}),
+  'onepush.ts:onePushTesting.document':callConnected('onepush',{username:`onepush-key:${KEY_HASH}`}),
+  'opendocs.ts:opendocsDocument':callConnected('opendocs',{username:'user-example-1',publicationUrl:'https://opendocs.cc/example-workspace',opendocs:{workspaceId:'workspace-example',workspaceSlug:'example-workspace',username:'example-writer'}}),
+  'publishmarkdown.ts:publishMarkdownDocument':callConnected('publishmarkdown',{username:`publishmarkdown-key:${KEY_HASH}`}),
+  'render-publisher.ts:renderDocument':callConnected('render',{username:'tea-exampleowner1',renderSource:RENDER_SOURCE}),
+  'shipstatic.ts:shipStaticDocument':call(HTML,TARGET),
 };
 
 test('every discovered public builder has an invoked, unbranded fixture',async t=>{

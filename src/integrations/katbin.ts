@@ -20,7 +20,7 @@ export interface KatbinPersistence {
 }
 export interface KatbinDependencies {fetch?:(url:string,init:RequestInit)=>Promise<Response>;signal?:AbortSignal;timeoutMs?:number;now?:()=>Date}
 export type KatbinDiagnostic='transport'|'body_limit'|'opaque_persistence'|'decode'|'json'|'duplicate_field'|'schema'|'redirect'|'media_type'|'http_status';
-export type KatbinCreateResult={status:'not_started';reason:'invalid_content'|'intent_not_persisted'|'authorization_changed'}|{status:'unknown';intent:KatbinIntent;diagnostic:KatbinDiagnostic;opaqueResponseSaved:boolean}|{status:'created';receipt:KatbinReceipt};
+export type KatbinCreateResult={status:'not_started';reason:'invalid_content'|'intent_not_persisted'|'authorization_changed';detail?:string}|{status:'unknown';intent:KatbinIntent;diagnostic:KatbinDiagnostic;opaqueResponseSaved:boolean}|{status:'created';receipt:KatbinReceipt};
 
 export const katbinHash=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
 export function katbinPublicUrl(id:string){if(!KATBIN_ID.test(id))throw Error('Katbin 文章 ID 无效');return `${KATBIN_ORIGIN}/${id}.md`}
@@ -59,7 +59,7 @@ export async function createKatbinPaste(input:{operationId:string;content:string
   if(input.reviewed!==true||!OP.test(input.operationId))throw Error('Katbin 缺少已审核的单次发布编号');
   const request=katbinRequest(input.content);if(!input.content||input.content!==input.content.trim()||Buffer.byteLength(input.content,'utf8')>MAX_CONTENT||Buffer.byteLength(request.body)>MAX_CONTENT+512)return {status:'not_started',reason:'invalid_content'};
   const intent:KatbinIntent={operationId:input.operationId,sourceHash:request.sourceHash,requestHash:request.requestHash,createdAt:(deps.now?.()??new Date()).toISOString()};if(!validKatbinIntent(intent))throw Error('Katbin 提交信息无效');
-  try{await persistence.persistIntent(intent)}catch{return {status:'not_started',reason:'intent_not_persisted'}}
+  try{await persistence.persistIntent(intent)}catch(error){return {status:'not_started',reason:'intent_not_persisted',...(error instanceof Error?{detail:error.message.slice(0,120)}:{})}}
   try{if(persistence.assertReadyToSubmit(intent)!==true)return {status:'not_started',reason:'authorization_changed'}}catch{return {status:'not_started',reason:'authorization_changed'}}
   const controller=new AbortController(),external=()=>controller.abort();deps.signal?.addEventListener('abort',external,{once:true});if(deps.signal?.aborted)controller.abort();const timeout=Math.min(60_000,Math.max(50,deps.timeoutMs??25_000)),timer=setTimeout(()=>controller.abort(),timeout);timer.unref?.();let response:Response|undefined;
   const preserve=async(value:Response)=>{try{const late=new AbortController(),lateTimer=setTimeout(()=>late.abort(),timeout);lateTimer.unref?.();try{await persistence.persistOpaqueResponse(opaqueFrom(value,await bounded(value,late.signal),intent))}finally{clearTimeout(lateTimer)}}catch{discard(value)}};

@@ -10,7 +10,7 @@ const WALLET=new Set(['sigle','nuance']);
 const HUMAN_VERIFY_ONCE=new Set(['paper-wf']);
 // Paragraph publishes with a publication API key and Hive with an existing posting key: both are connected once.
 const CONNECT_ONCE=new Set([
-  'hackmd','whitewind','raindrop','prose','github-gist','paragraph','hive',
+  'publishmarkdown','mdpage','opendocs','render','dropdeploy','marked-share','onepush','dataecho','shipstatic','clawprint','host0','netlify','cloudflare-pages','mastodon','leafmill','hackmd','whitewind','raindrop','prose','github-gist','paragraph','hive',
   'bluesky','blogger','leaflet','wordpress-com','product-index','gitbook',
 ]);
 // An authorized, tested inbox is required; the scheduler reuses its original address.

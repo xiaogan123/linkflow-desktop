@@ -1,7 +1,7 @@
 {
   "name": "linkflow",
   "productName": "外链助手",
-  "version": "1.2.42",
+  "version": "1.2.43",
   "description": "个人免费外链计划客户端",
   "private": true,
   "type": "module",
@@ -36,6 +36,7 @@
     "test:site-origin-migration-ui": "node scripts/site-origin-migration-ui-smoke.cjs"
   },
   "dependencies": {
+    "@noble/hashes": "2.4.0",
     "@phosphor-icons/react": "^2.1.10",
     "cheerio": "^1.1.2",
     "hive-tx": "7.2.1",

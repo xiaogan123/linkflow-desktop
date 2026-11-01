@@ -65,9 +65,11 @@ function canonicalValue(value: unknown): unknown {
   }
   return value;
 }
-function reviewedContentHash(task: Task): string {
+function reviewedContentHash(task: Task, legacy = false): string {
+  // Must stay byte-identical to articleContentHash for this channel, whose
+  // canonical form keeps synthfolk:null. Reviews saved before that key exist too.
   return sha256(JSON.stringify(canonicalValue({ draft: task.draft ?? null,
-    topicUrl: task.topicUrl, topicContentHash: task.topicContentHash })));
+    topicUrl: task.topicUrl, topicContentHash: task.topicContentHash, ...(legacy ? {} : { synthfolk: null }) })));
 }
 
 function publicUrl(id: string): string {
@@ -105,7 +107,7 @@ function currentlyApproved(task: Task): boolean {
   if (task.articleReview) {
     return task.articleReview.status === 'passed'
       && task.articleReview.draftRevision === (task.draftRevision ?? 0)
-      && task.articleReview.contentHash === reviewedContentHash(task);
+      && [reviewedContentHash(task), reviewedContentHash(task, true)].includes(task.articleReview.contentHash);
   }
   const approvedAt = Date.parse(task.articleApprovedAt ?? '');
   if (!Number.isFinite(approvedAt)) return false;

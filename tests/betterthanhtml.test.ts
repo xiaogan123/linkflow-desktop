@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultSettings } from '../src/main/store';
+import { articleContentHash } from '../src/main/article-review';
 import {
   betterThanHtmlTesting,
   reconcileBetterThanHtmlTask,
@@ -538,6 +539,15 @@ test('invalid response identities only allow the fixed read-only recovery list a
   const result = await runBetterThanHtmlTask(conflict.context, { fetch: async () => { calls++; return json({}); } });
   assert.equal(result.status, 'needs_input');
   assert.equal(calls, 0);
+});
+
+test('a review bound by the shared article hash authorizes the same draft and no other', () => {
+  const f = fixture();
+  f.task.articleReview = { status: 'passed', reason: 'reviewed', evidenceUrls: [], draftRevision: f.task.draftRevision ?? 0,
+    contentHash: articleContentHash(f.task), contextHash: '1'.repeat(64) };
+  assert.equal(betterThanHtmlTesting.article(f.task, f.site.url).title, TITLE);
+  f.task.draft!.body += '\n\nAdded after review.';
+  assert.throws(() => betterThanHtmlTesting.article(f.task, f.site.url), /AI 复核/);
 });
 
 test('unreviewed, stale, changed, wrong-site, and malicious drafts stop before submission', async () => {

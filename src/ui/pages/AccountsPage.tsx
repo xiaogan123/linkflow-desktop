@@ -1,3 +1,4 @@
+import {PublisherTokenConnection} from './PublisherTokenConnection';
 import {GitBookConnection} from './GitBookConnection';
 import {ValTownConnection} from './ValTownConnection';
 import {BitbucketConnection} from './BitbucketConnection';
@@ -46,6 +47,7 @@ export function AccountsPage({data,disabled,onImport,onEdit,onDelete,onAction,on
   const [gitbookDrawer,setGitbookDrawer]=useState<{account?:Account}|null>(null);
   const [valtownDrawer,setValtownDrawer]=useState<{account?:Account}|null>(null);
   const [bitbucketDrawer,setBitbucketDrawer]=useState<{account?:Account}|null>(null);
+  const [publisherTokenDrawer,setPublisherTokenDrawer]=useState<{channelId:'publishmarkdown'|'mdpage'|'opendocs'|'render'|'dropdeploy'|'marked-share'|'onepush'|'netlify'|'cloudflare-pages'|'mastodon'|'leafmill'|'clawprint'|'shipstatic'|'dataecho'|'host0'|'agentel';account?:Account}|null>(null);
   const [hackmdDrawer,setHackmdDrawer]=useState<{account?:Account}|null>(null);
   const [plopinoDrawer,setPlopinoDrawer]=useState<{account?:Account}|null>(null);
   const [leafletDrawer,setLeafletDrawer]=useState<{account?:Account}|null>(null);
@@ -85,7 +87,8 @@ export function AccountsPage({data,disabled,onImport,onEdit,onDelete,onAction,on
   });
   const openGist=(account?:Account)=>{setGistAccountId(account?.id??'');setGistToken('');setGistOpen(true)};
   const openConnection=(id:ConnectionChannelId,account?:Account)=>{
-    if(id==='valtown')setValtownDrawer({account});
+    if(id==='publishmarkdown'||id==='mdpage'||id==='opendocs'||id==='render'||id==='dropdeploy'||id==='marked-share'||id==='onepush'||id==='netlify'||id==='cloudflare-pages'||id==='mastodon'||id==='leafmill'||id==='clawprint'||id==='shipstatic'||id==='dataecho'||id==='host0'||id==='agentel')setPublisherTokenDrawer({channelId:id,account});
+    else if(id==='valtown')setValtownDrawer({account});
     else if(id==='bitbucket')setBitbucketDrawer({account});
     else if(id==='gitbook')setGitbookDrawer({account});
     else if(id==='hackmd')setHackmdDrawer({account});
@@ -167,6 +170,7 @@ export function AccountsPage({data,disabled,onImport,onEdit,onDelete,onAction,on
     {gitbookDrawer&&<GitBookConnection data={data} disabled={disabled} account={gitbookDrawer.account} onClose={()=>setGitbookDrawer(null)} onAction={onAction}/>}
     {valtownDrawer&&<ValTownConnection data={data} disabled={disabled} account={valtownDrawer.account} onClose={()=>setValtownDrawer(null)} onAction={onAction}/>}
     {bitbucketDrawer&&<BitbucketConnection data={data} disabled={disabled} account={bitbucketDrawer.account} onClose={()=>setBitbucketDrawer(null)} onAction={onAction}/>} 
+    {publisherTokenDrawer&&<PublisherTokenConnection {...publisherTokenDrawer} data={data} disabled={disabled} onClose={()=>setPublisherTokenDrawer(null)} onAction={onAction}/>}
     {hackmdDrawer&&<HackmdConnection data={data} disabled={disabled} account={hackmdDrawer.account} onClose={()=>setHackmdDrawer(null)} onAction={onAction}/>}
     {leafletDrawer&&<LeafletConnection data={data} disabled={disabled} account={leafletDrawer.account} onClose={()=>setLeafletDrawer(null)} onAction={onAction}/>}
     {raindropDrawer&&<RaindropConnection data={data} disabled={disabled} account={raindropDrawer.account} onClose={()=>setRaindropDrawer(null)} onAction={onAction}/>}
