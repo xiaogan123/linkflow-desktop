@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Controller} from '../src/main/controller';
+import {Controller,isUnsentAccountlessHandoff} from '../src/main/controller';
 import {Store} from '../src/main/store';
 import type {Vault} from '../src/main/vault';
 import type {Site,Task} from '../src/shared/types';
@@ -41,4 +41,20 @@ test('a stale review with AI budget left re-reviews by itself and never reaches 
 test('a stale review with no AI budget left stops as a budget failure, not as a person\'s review',()=>{
   const f=fixture(task({cost:{aiCalls:3,amount:0}}));
   try{assert.throws(()=>f.release('x'),(error:{reasonCode?:string})=>error.reasonCode==='ai_task_limit');assert.equal(f.read().humanAction,undefined)}finally{f.store.close()}
+});
+
+test('a queued task keeps moving on its own even if an old review reason is still attached',async()=>{
+  const {taskDisplayState,taskHumanActionGroup}=await import('../src/ui/presentation');
+  const leftover=task({status:'queued',reasonCode:'manual_review',cost:undefined});
+  assert.notEqual(taskDisplayState(leftover,Date.now()).state,'action_required');assert.equal(taskHumanActionGroup(leftover,Date.now()),undefined);
+  assert.equal(taskHumanActionGroup(task({status:'needs_input',reasonCode:'manual_review'}),Date.now()),'review');
+});
+
+test('only account-less platforms skip the person: an account platform\'s refusal stays a to-do',()=>{
+  const refusal={status:'needs_input',message:'WordPress.com 授权已失效'},waiting=task({status:'needs_input'});
+  assert.equal(isUnsentAccountlessHandoff(refusal,waiting,{accountRequired:false},'ai'),true);
+  assert.equal(isUnsentAccountlessHandoff(refusal,waiting,{accountRequired:true},'ai'),false);
+  assert.equal(isUnsentAccountlessHandoff(refusal,waiting,{accountRequired:false},'manual'),false);
+  assert.equal(isUnsentAccountlessHandoff({...refusal,reasonCode:'account_handoff'},waiting,{accountRequired:false},'ai'),false);
+  assert.equal(isUnsentAccountlessHandoff(refusal,task({status:'needs_input',submittedAt:at,katbin:{operationId:'x',sourceHash:'a',requestHash:'b',createdAt:at,stage:'submitting'}} as Partial<Task>),{accountRequired:false},'ai'),false);
 });

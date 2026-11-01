@@ -462,6 +462,15 @@ function publisherCadenceWait(state:ReturnType<Store['read']>,task:Task,now=new 
   return at.getTime()>now.getTime()?at:undefined;
 }
 
+/**
+ * An account-less platform declined to send a reviewed draft, so there is nothing for a person to do.
+ * Account platforms stay with the user: a revoked token or duplicate on the platform comes back in this same shape
+ * while the saved account still looks ready, and only a person can resolve those.
+ */
+export function isUnsentAccountlessHandoff(result:{status:string;reasonCode?:string;checkpoint?:string},task:Task,channel:Pick<Channel,'accountRequired'>,reviewMode:string):boolean{
+  return result.status==='needs_input'&&!result.reasonCode&&!result.checkpoint&&!channel.accountRequired&&task.checkpoint==='article_review'&&!!task.draft&&reviewMode==='ai'&&!hasRemotePublicationIntent(task)&&!hasUnresolvedExternalAttempt(task);
+}
+
 /** The task only reached account creation: no draft, no AI spent and no publication sent. */
 function accountStageOnly(task:Task):boolean{
   // The account-creation checkpoint itself is not a publication; any other remote intent still blocks.
@@ -4320,7 +4329,7 @@ export class Controller {
             return;
           }
           if(outcome.status==='not_started'&&outcome.reason==='cancelled')throw Error('任务已暂停');
-          this.patch(task.id,{status:'needs_input',attempts:task.attempts,checkpoint:'article_review',message:'ShareYourHTML 提交信息未能安全保存；未发送网络请求，请重新核对当前任务条件。'});
+          this.releaseUnsentPublication(task,'ShareYourHTML 提交信息未能安全保存；未发送网络请求。');
           return;
         }
         // Waiting for the publishing gap is the plan working, not a failed submission for someone to review.
@@ -4479,7 +4488,7 @@ export class Controller {
         // The existing Gist rejection checkpoint also covers invalid credentials;
         // its saved account status distinguishes that human handoff from refusal.
         if(!result.reasonCode&&result.checkpoint==='gist_rejected'&&boundAccount(this.store.read(),outcomeTask)?.status==='credentials_invalid')result={...result,reasonCode:'account_handoff'};
-        if(result.status==='needs_input'&&!result.reasonCode&&!result.checkpoint&&!channel.accountRequired&&outcomeTask.checkpoint==='article_review'&&!!outcomeTask.draft&&getArticleReviewMode(site,this.store.read().settings)==='ai'&&!hasRemotePublicationIntent(outcomeTask)&&!hasUnresolvedExternalAttempt(outcomeTask)){
+        if(isUnsentAccountlessHandoff(result,outcomeTask,channel,getArticleReviewMode(site,this.store.read().settings))){
           this.releaseUnsentPublication(task,result.message??'');return;
         }
         if(!hasUnresolvedExternalAttempt(outcomeTask)&&result.reasonCode&&['ai_task_limit','duplicate_content','evidence_insufficient','evidence_truncated','format_invalid','platform_rejected','platform_rate_limited','temporary_failure','channel_ineligible'].includes(result.reasonCode)){

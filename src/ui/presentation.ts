@@ -205,7 +205,8 @@ export function taskDisplayState(task:TaskDisplayInput,now:Date|string|number):T
     return {state:'failed',label:label.failed,detail:promisedRetry?taskDisplayCopy.retryStopped:promisedWork?taskDisplayCopy.workStopped:taskReasonForDisplay(task,now),...(action?{action}:{}),deadlineText:action==='恢复'?taskDisplayCopy.recoverable:taskDisplayCopy.replaced};
   }
   const actionReason=displayActionReason(task);
-  if(task.humanAction||displayHumanReasons.has(reason)){
+  // A queued or running task is already moving; a leftover reason from an earlier wait asks nothing of the user.
+  if(task.humanAction||displayHumanReasons.has(reason)&&!['queued','running'].includes(task.status)){
     const action=taskDisplayCopy.actions[actionReason as keyof typeof taskDisplayCopy.actions]??taskDisplayCopy.actions.human_required;
     return {state:'action_required',label:label.action_required,detail:taskReasonForDisplay({...task,reasonCode:actionReason},now),action,deadlineText:(actionReason==='manual_review'?taskDisplayCopy.remainingReview:taskDisplayCopy.remaining).replace('{时间}',displayDuration(taskHumanActionDeadline(task)-current))};
   }
