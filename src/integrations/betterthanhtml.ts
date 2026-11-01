@@ -705,7 +705,8 @@ export async function runBetterThanHtmlTask(
   }
   const identity = responseIdentity(response);
   if (!identity) {
-    return { status: 'review', message: 'Better Than HTML 返回结果无法安全确认，保留单次投稿计划且不会重发',
+    const platformNote = typeof response.error === 'string' ? `（平台说明：${response.error.slice(0, 120)}）` : '';
+    return { status: 'review', message: `Better Than HTML 返回结果无法安全确认，保留单次投稿计划且不会重发${platformNote}`,
       betterthanhtml: pending, checkpoint: 'betterthanhtml_publish_submitting', submittedAt };
   }
   const identified: BetterThanHtmlReceipt = { ...pending, id: identity.id };

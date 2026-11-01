@@ -47,6 +47,7 @@ import {REGISTRATION_MESSAGES as REGISTRATION} from '../shared/registration-mess
 import type {SignupEmailRequest,SignupExecutionHooks} from '../shared/signup';
 import {estimateDailyAiLimit,schedulingMonthInfo,siteMonthTarget} from '../shared/scheduling';
 import {draftCorpus,scanStoredDraft} from './draft-corpus';
+import {repairQueueOnce} from './queue-repair';
 import {scanDraftDiversity,reframeDraftWithoutAi,diversityRecovery,titleOnlyCollision,LOCAL_DIVERSITY_REWRITE_INSTRUCTION} from './draft-diversity';
 import {mergeDiscoveredSiteTopics,reservesTopic} from './site-service';
 import {containsForbiddenSiteTerm} from '../shared/site-content';
@@ -449,6 +450,8 @@ const AUTOMATIC_REPAIR_AI_CALLS=2;
 /** A malformed or unverifiable AI reply is the model's fault, not the draft's: re-review within the budget. */
 const aiOutputReviewFailure=(review:ArticleReview)=>review.failureStage!=='input'&&['format_invalid','evidence_invalid'].includes(review.reasonCode??'');
 
+
+const PUBLISH_GAP_MESSAGE='共享出版工作区的上一篇文章尚未达到现有发布间隔，原任务已顺延。';
 
 class PublisherCadenceWait extends Error {
   constructor(readonly scheduledAt:string){super('共享出版工作区尚未达到下一次发布间隔')}
@@ -1264,6 +1267,7 @@ export class Controller {
     const channels=this.channels(),now=new Date(),stamp=now.toISOString(),reminders:Task[]=[];
     this.store.update(s=>{
       if(!s.settings.autoRun)return;
+      repairQueueOnce(s,channels,now);
       maintainSignupCircuits(s,now);
       retireLegacyAccounts(s,now);
       expireReviews(s,now);
@@ -1490,6 +1494,17 @@ export class Controller {
     },usage=>this.store.update(state=>{const task=state.tasks.find(item=>item.id===taskId);if(!task)return;task.cost??={aiCalls:0};if(usage.inputTokens!==undefined)task.cost.inputTokens=(task.cost.inputTokens??0)+usage.inputTokens;if(usage.outputTokens!==undefined)task.cost.outputTokens=(task.cost.outputTokens??0)+usage.outputTokens;if(usage.amount!==undefined){task.cost.amount=(task.cost.amount??0)+usage.amount;task.cost.currency=usage.currency??task.cost.currency}}));
     return {json:async<T>(instruction:string,data:unknown,schema?:Record<string,unknown>,signal?:AbortSignal,options?:import('../shared/types').AiCompletionOptions)=>{const started=Date.now();try{return await base.json<T>(instruction,data,schema,signal,options)}catch(error){if(typeof error==='object'&&error!==null)this.aiFailures.add(error);throw error}finally{this.store.update(state=>{const task=state.tasks.find(item=>item.id===taskId);if(task){task.cost??={aiCalls:0};task.cost.durationMs=(task.cost.durationMs??0)+(Date.now()-started)}})}}};
   }
+  /** Nothing was sent and this platform has no account: no person can act, so the task waits, re-reviews or retries itself. */
+  private releaseUnsentPublication(task:Task,message:string){
+    const state=this.store.read(),current=state.tasks.find(item=>item.id===task.id),site=state.sites.find(item=>item.id===task.siteId),channel=this.channels().find(item=>item.id===task.channelId);
+    if(!current||!site||!channel)throw new TaskReasonError('temporary_failure',message);
+    const wait=publisherCadenceWait(state,current);
+    if(wait){this.patch(task.id,{status:'queued',attempts:task.attempts,scheduledAt:wait.toISOString(),nextCheckAt:wait.toISOString(),message:PUBLISH_GAP_MESSAGE});return}
+    if(articleReviewStillValid(current,site,channel,state.settings,boundAccount(state,current),currentArticlePublicationContext(state.tasks,current)))throw new TaskReasonError('temporary_failure',message);
+    if((current.cost?.aiCalls??0)>=TASK_AI_BUDGET)throw new TaskReasonError('ai_task_limit',TASK_FLOW_MESSAGES.recoveryExhausted);
+    this.patch(task.id,{status:'queued',attempts:task.attempts,articleReview:undefined,articleApprovedAt:undefined,scheduledAt:new Date().toISOString(),nextCheckAt:undefined,message:'平台条款或发布条件已变化，原稿重新核对后继续发布。'});
+  }
+
   async reviewArticleOnce(id:string):Promise<{status:'passed'|'failed';message:string}>{
     const summary=this.oneReviewRetrySummary(id),operationToken=`${randomUUID()}${randomUUID()}`;void summary;
     this.runtime.busy=true;this.runtime.activeTaskId=id;this.active=new AbortController();
@@ -4308,6 +4323,9 @@ export class Controller {
           this.patch(task.id,{status:'needs_input',attempts:task.attempts,checkpoint:'article_review',message:'ShareYourHTML 提交信息未能安全保存；未发送网络请求，请重新核对当前任务条件。'});
           return;
         }
+        // Waiting for the publishing gap is the plan working, not a failed submission for someone to review.
+        const gateState=this.store.read(),gateTask=gateState.tasks.find(item=>item.id===task.id),gateWait=gateTask&&!hasRemotePublicationIntent(gateTask)?publisherCadenceWait(gateState,gateTask):undefined;
+        if(gateWait){this.patch(task.id,{status:'queued',attempts:task.attempts,scheduledAt:gateWait.toISOString(),nextCheckAt:gateWait.toISOString(),message:PUBLISH_GAP_MESSAGE});return}
         const context=this.context(publishTask,this.active.signal);
         if(this.active.signal.aborted||!this.store.read().settings.autoRun)throw Error('任务已暂停');
         platformOperation=true;
@@ -4461,6 +4479,9 @@ export class Controller {
         // The existing Gist rejection checkpoint also covers invalid credentials;
         // its saved account status distinguishes that human handoff from refusal.
         if(!result.reasonCode&&result.checkpoint==='gist_rejected'&&boundAccount(this.store.read(),outcomeTask)?.status==='credentials_invalid')result={...result,reasonCode:'account_handoff'};
+        if(result.status==='needs_input'&&!result.reasonCode&&!result.checkpoint&&!channel.accountRequired&&outcomeTask.checkpoint==='article_review'&&!!outcomeTask.draft&&getArticleReviewMode(site,this.store.read().settings)==='ai'&&!hasRemotePublicationIntent(outcomeTask)&&!hasUnresolvedExternalAttempt(outcomeTask)){
+          this.releaseUnsentPublication(task,result.message??'');return;
+        }
         if(!hasUnresolvedExternalAttempt(outcomeTask)&&result.reasonCode&&['ai_task_limit','duplicate_content','evidence_insufficient','evidence_truncated','format_invalid','platform_rejected','platform_rate_limited','temporary_failure','channel_ineligible'].includes(result.reasonCode)){
           const failure=new TaskReasonError(result.reasonCode,result.message);
           if(failureOrigin==='ai')this.aiFailures.add(failure);
@@ -4526,7 +4547,7 @@ export class Controller {
           return;
         }
         if(e instanceof PublisherCadenceWait&&!latest.submittedAt&&!latest.leaflet&&!latest.wordpress&&!latest.raindrop&&!latest.paper&&!latest.hive&&!latest.mataroa&&!latest.verbose&&!latest.prose&&!latest.rentry&&!latest.lucid&&!latest.betterthanhtml&&!latest.supanote&&!latest.docsMd&&!latest.katbin&&!latest.mdshare&&!latest.pstrs&&!latest.nextgenSlides&&!latest.pstrs&&!latest.yourwebs&&!latest.pstrs&&!latest.totpage&&!latest.hart&&!latest.chatclaw&&!latest.feddit&&!latest.mdview&&!latest.txtsbs&&!latest.theThings&&!latest.pstrs&&!latest.agentdrop&&!latest.pastemyst&&!latest.markdownPaste&&!latest.slugPost&&!latest.htmlApp&&!latest.deedPage&&!latest.brewPage&&!latest.markdrop&&!latest.draftmark&&!latest.memoryWiki&&!latest.hereNow&&!latest.shiply&&!latest.plopino&&!latest.vibedrop&&!latest.wordcell&&!latest.notebin&&!latest.synthfolk){
-          this.patch(task.id,{status:'queued',attempts:task.attempts,scheduledAt:e.scheduledAt,nextCheckAt:e.scheduledAt,message:'共享出版工作区的上一篇文章尚未达到现有发布间隔，原任务已顺延。'});return;
+          this.patch(task.id,{status:'queued',attempts:task.attempts,scheduledAt:e.scheduledAt,nextCheckAt:e.scheduledAt,message:PUBLISH_GAP_MESSAGE});return;
         }
         if(e instanceof TopicDiscoveryError&&e.code==='invalid_topic'&&!latest.submittedAt&&!latest.publicUrl&&!latest.firstLiveAt){
           const recovery=recoverStoredTaskTopic(this.store,task.id,channel,new Date(),true);
