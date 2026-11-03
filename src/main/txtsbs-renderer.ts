@@ -1,3 +1,4 @@
+import {networkEventsSettled} from './render-settled';
 import {randomUUID} from 'node:crypto';
 import {BrowserWindow} from 'electron';
 import {TXTSBS_MAX_HTML_BYTES,TXTSBS_ORIGIN,TXTSBS_ID,type TxtSbsNativeRequest,type TxtSbsRenderedPage,type TxtSbsRenderHooks} from '../integrations/txtsbs';
@@ -52,6 +53,7 @@ export async function renderTxtSbsPage(url:string,signal:AbortSignal,hooks:TxtSb
     if(signal.aborted)throw Error('TxtSbs 原生检查已取消');await ses.clearStorageData();await win.loadURL('about:blank');if(signal.aborted||violation)throw Error(violation||'TxtSbs 原生检查已取消');
     win.webContents.debugger.attach('1.3');debuggerAttached=true;win.webContents.debugger.on('message',onDebuggerMessage);await win.webContents.debugger.sendCommand('Network.enable');initializing=false;
     const loading=win.loadURL(url,{httpReferrer:''});await new Promise<void>((resolve,reject)=>{let done=false;const finish=(complete:(value?:any)=>void,value?:any)=>{if(done)return;done=true;complete(value)};rejectLoad=error=>finish(reject,error);void loading.then(()=>finish(resolve),error=>finish(reject,error))}).finally(()=>{rejectLoad=undefined});
+    await networkEventsSettled(()=>!!violation||!!documentRequestId&&responseFinished,signal);
     if(violation||signal.aborted||!sent||nativeRequests.length!==1||!documentRequestId||!responseFinished)throw Error(violation||'TxtSbs 原生主文档未按一次请求加载');
     if(responseStatus!==200||responseMediaType!=='text/html'||mediaType(rawHeaders)!=='text/html'||webHeadersSeen&&webStatus!==responseStatus||!validDeclaredLength(rawHeaders))throw Error('TxtSbs 原生主文档状态、媒体类型或声明长度无效');
     const body=await win.webContents.debugger.sendCommand('Network.getResponseBody',{requestId:documentRequestId}) as {body:string;base64Encoded:boolean},decoded=body.base64Encoded?Buffer.from(body.body,'base64'):Buffer.from(body.body,'utf8');responseBodyBytes=Math.max(responseBodyBytes,decoded.byteLength);if(responseBodyBytes<1||responseBodyBytes>TXTSBS_MAX_HTML_BYTES||responseEncodedBodyBytes>TXTSBS_MAX_HTML_BYTES)throw Error('TxtSbs 原生正文为空或超过 2 MB 上限');

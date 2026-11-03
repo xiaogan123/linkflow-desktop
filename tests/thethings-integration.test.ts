@@ -117,3 +117,19 @@ for(const outcome of ['absent','invalid','unreachable'] as const)test(`TheThings
     assert.equal(calls.filter(value=>value.method==='POST').length,1);
   }finally{controller.stop();f.cleanup()}
 });
+
+test('a TheThings page already handed to the owner stays in their list after a failed read-only check and goes live once one succeeds',async(t)=>{
+  (t as TestContext).mock.timers.enable({apis:['Date'],now:Date.parse(at)+60000});
+  const f=fixture(),calls:Calls=[],failing=new Controller(f.store,vault(f.store),'fixture',{channelCatalog:enabledCatalog,theThingsDependencies:dependencies(f.store,calls,{badRender:true})});failing.runtime.aiReady=true;
+  try{
+    await failing.tick();assert.ok(f.store.read().tasks[0].submittedAt);assert.notEqual(f.store.read().tasks[0].status,'live');
+    f.store.update(state=>{Object.assign(state.tasks[0],{status:'needs_input',reasonCode:'submission_unknown',reconcileAttempts:3})});
+    await failing.verify(taskId);
+    const kept=f.store.read().tasks[0];assert.equal(kept.status,'needs_input');assert.equal(kept.reasonCode,'submission_unknown');assert.ok(Date.parse(kept.nextCheckAt!)>Date.now());
+  }finally{failing.stop()}
+  const reading=new Controller(f.store,vault(f.store),'fixture',{channelCatalog:enabledCatalog,theThingsDependencies:dependencies(f.store,calls)});reading.runtime.aiReady=true;
+  try{
+    await reading.verify(taskId);
+    assert.equal(f.store.read().tasks[0].status,'live');assert.equal(calls.filter(value=>value.method==='POST').length,1);
+  }finally{reading.stop();f.cleanup()}
+});

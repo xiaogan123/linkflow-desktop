@@ -51,6 +51,12 @@ function temporaryPageExpired(task:Task,now:Date,retention:ReadonlyMap<string,nu
   return days!==undefined&&Number.isFinite(first)&&first+days*DAY<=now.getTime();
 }
 
+/** A failed check says nothing about a page whose address is known, and reading it again can never post twice. */
+function readsPublishedPage(task:Task,now:Date):boolean{
+  const submitted=Date.parse(task.submittedAt??'');
+  return task.channelId==='thethings'&&['needs_input','review'].includes(task.status)&&task.theThings?.stage==='api_receipt'&&!!task.publicUrl&&Number.isFinite(submitted)&&now.getTime()-submitted<=30*DAY;
+}
+
 export function dueLinkChecks(state:State,now=new Date(),limit=3,channels:readonly Channel[]=CHANNELS):Task[]{
   const available=new Set(state.sites.map(site=>site.id)),recent=new Set(state.tasks.filter(task=>task.publicUrl&&Date.parse(task.lastCheckedAt??'')>now.getTime()-15*60000).map(task=>task.channelId));
   const retention=retentionByChannel(channels);
@@ -58,7 +64,7 @@ export function dueLinkChecks(state:State,now=new Date(),limit=3,channels:readon
   const due=state.tasks.filter(task=>task.publicUrl&&available.has(task.siteId)&&task.status!=='running'&&
     !temporaryPageExpired(task,now,retention)&&
     !(task.firstLiveAt===undefined&&(task.reconcileAttempts??0)>=3&&RECEIPT_RECONCILE_LIMIT_CHANNELS.has(task.channelId)&&
-      !(task.submittedAt&&trialChannels.has(task.channelId)))&&
+      !(task.submittedAt&&trialChannels.has(task.channelId))&&!readsPublishedPage(task,now))&&
     linkCheckDueAt(task)<=now.getTime())
     .sort((a,b)=>linkCheckDueAt(a)-linkCheckDueAt(b));
   const result:Task[]=[];

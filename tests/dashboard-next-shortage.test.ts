@@ -21,7 +21,8 @@ test('"下一条" is upcoming work: a skipped or failed task in the past never s
   // Due a few minutes ago and still waiting for the runner: that is the next one, not a later task.
   const due=at('due','2026-10-20T03:50:00Z');
   assert.equal(nextTask([due,upcoming],now,'site-a')?.id,'due');
-  assert.equal(nextTask([at('stale','2026-10-19T20:00:00Z'),upcoming],now,'site-a')?.id,'upcoming');
+  // Hours past its time and still queued: it is waiting its turn behind the publishing gap, so it is still the next one.
+  assert.equal(nextTask([at('waiting','2026-10-19T20:00:00Z'),upcoming],now,'site-a')?.id,'waiting');
 });
 
 test('"平台不够" counts what is already booked this month, so a site with its month planned is not short of platforms',()=>{

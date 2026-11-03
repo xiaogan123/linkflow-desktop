@@ -17,6 +17,20 @@ export function recordOnlineHour(settings:OnlineHourSettings,now:Date):boolean{
   return changed;
 }
 
+/** True when every local hour from `from` up to `to` was recorded as online; a gap means the app was closed or asleep.
+ * The hour containing `to` counts as online: the caller is running now, and the tick may not have recorded that hour yet. */
+export function onlineThroughout(settings:OnlineHourSettings,from:Date,to:Date):boolean{
+  const masks=new Map((settings.onlineHours??[]).map(record=>[record.day,record.mask]));
+  const slot=(moment:Date)=>({day:schedulingDay(moment,settings.timezone),hour:Math.floor(schedulingMinute(moment,settings.timezone)/60)});
+  const current=slot(to);
+  for(let at=from.getTime();at<=to.getTime();at+=3600000){
+    const {day,hour}=slot(new Date(at));
+    if(day===current.day&&hour===current.hour)return true;
+    if(!((masks.get(day)??0)&(1<<hour)))return false;
+  }
+  return true;
+}
+
 export function onlineHoursLast7Days(settings:OnlineHourSettings,now:Date):number{
   const today=schedulingDay(now,settings.timezone),earliest=addScheduleDays(today,-6);
   return (settings.onlineHours??[]).filter(record=>record.day>=earliest&&record.day<=today)

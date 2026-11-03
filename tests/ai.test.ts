@@ -110,8 +110,8 @@ test('API completion token ceiling follows the caller option', async () => {
   }finally{globalThis.fetch=original}
 });
 
-test('Codex timeout gives only ultra 600 seconds while preserving every lower budget', { skip: process.platform === 'win32' }, async t => {
-  for (const [effort, limit] of [[undefined, 90_000], ['medium', 90_000], ['xhigh', 180_000], ['max', 180_000], ['ultra', 600_000]] as const) {
+test('Codex timeout gives ultra 600 seconds and every other effort 180 seconds', { skip: process.platform === 'win32' }, async t => {
+  for (const [effort, limit] of [[undefined, 180_000], ['medium', 180_000], ['xhigh', 180_000], ['max', 180_000], ['ultra', 600_000]] as const) {
     await t.test(effort ?? 'unset', async childTest => {
       const { executable, marker } = await fakeCodex(childTest);
       const timer = childTest.mock.timers;

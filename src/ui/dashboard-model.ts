@@ -1,7 +1,7 @@
 import type { Site, Snapshot, Task } from '../shared/types';
 import {displayParts} from './display-time';
 import { canonicalPublicPageUrl, publicationCounts, reservesMonthlySlot } from '../shared/publication';
-import { SCHEDULING_DEFAULTS, siteMonthTarget } from '../shared/scheduling';
+import { siteMonthTarget } from '../shared/scheduling';
 import { taskDisplayState, compareHumanActionTasks } from './presentation';
 import { buildTrackingRows } from './search-tracking';
 export const uiCopy = {
@@ -51,9 +51,9 @@ export const uiCopy = {
 } as const;
 export function nextTask(tasks: Task[], now: Date, siteId?: string): Task | undefined {
   // The next publication is upcoming work: a skipped, failed or expired task (even one still waiting on an old submission's
-  // result) never counts as "下一条". A queued task just past its time is still next until the scheduler moves it on.
+  // result) never counts as "下一条". A queued task past its time is still next: it is waiting its turn, or the scheduler moves it on.
   return tasks.filter(t => (!siteId || t.siteId === siteId) && !t.firstLiveAt && !['failed', 'skipped', 'expired', 'live'].includes(t.status)
-    && (t.status === 'running' || Date.parse(t.scheduledAt) >= now.getTime() - (t.status === 'queued' ? SCHEDULING_DEFAULTS.overdueAfterMs : 0))
+    && (t.status === 'running' || t.status === 'queued' || Date.parse(t.scheduledAt) >= now.getTime())
     && ['scheduled', 'in_progress'].includes(taskDisplayState(t, now).state)).sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))[0];
 }
 export function dateTime(value?: string): string {

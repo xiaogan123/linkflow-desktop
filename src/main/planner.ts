@@ -8,6 +8,7 @@ export {estimateDailyAiLimit} from '../shared/scheduling';
 import {isArticleTopicUrl} from '../shared/topic-policy';
 import {canonicalPublicPageUrl,isRepeatableOfficialArticleChannel} from '../shared/publication';
 import {taskTransition} from './task-state';
+import {onlineThroughout} from '../shared/runtime-hours';
 import {unusedSources} from '../shared/source-capacity';
 import {getArticleReviewMode} from '../shared/article-review-mode';
 import {expiredBatch5Preparation,hasRecoverablePublisherDraftReceipt,hasUnresolvedExternalAttempt,isPendingPublisherRegistration,publicationCounts,publicationDates,publicationOpportunity,safelyUnsentBatch5Task,sourceKey,reservesSlot,reservesMonthlySlot,taskOccupiesSource} from '../shared/publication';
@@ -37,6 +38,10 @@ export function dateKey(value:Date|string,timeZone:string):string{
   const part=(t:string)=>p.find(x=>x.type===t)!.value;return `${part('year')}-${part('month')}-${part('day')}`;
 }
 export function monthKey(value:Date|string,timeZone:string){return dateKey(value,timeZone).slice(0,7)}
+/** A backlog that has waited this long behind the gate is handled as missed work, so the queue cannot grow without end. */
+const QUEUE_WAIT_MAX_MS=3*86400000;
+/** A written draft keeps moving instead of being dropped, but one approved a month ago and still not run releases its slot. */
+const DRAFT_HOLD_MAX_MS=30*86400000;
 export function liveThisMonth(siteId:string,tasks:Task[],now:Date,timeZone:string):number{
   return publicationCounts(siteId,tasks,now,timeZone).monthlyPages;
 }
@@ -278,7 +283,7 @@ export function availableNetworkPlatforms(state:State,channels:Channel[],now=new
   )),state,now,usable);
 }
 export interface QueuedScheduleChange {id:string;scheduledAt:string}
-/** Wake-up recovery changes a missed task at most twice; submitted work is never moved. */
+/** Wake-up recovery counts at most two misses per task; a task that is only waiting its turn is not a miss, and submitted work is never moved. */
 export function reflowQueuedSchedules(state:State,channels:Channel[]=[],now=new Date()):QueuedScheduleChange[]{
   if(!state.settings.autoRun)return [];
   const changes:QueuedScheduleChange[]=[];
@@ -286,12 +291,19 @@ export function reflowQueuedSchedules(state:State,channels:Channel[]=[],now=new 
     const site=state.sites.find(item=>item.id===task.siteId&&item.status==='ready');
     if(!site||task.status!=='queued'||task.checkpoint==='ai_setup_required'||hasUnresolvedExternalAttempt(task))continue;
     const missed=now.getTime()-Date.parse(task.scheduledAt);if(!(missed>SCHEDULING_DEFAULTS.overdueAfterMs))continue;
+    // The app stayed open and the task is ready, held back only by the publishing gap or a platform's daily limit: the plan is
+    // working, nothing was missed, and the task keeps its place in the queue. Work missed while the app was closed is spread out
+    // again as before; a task that cannot run, has waited for days, or would leave its month uncounted is an ordinary miss.
+    const zone=site.timezone??state.settings.timezone;
+    if(missed<=QUEUE_WAIT_MAX_MS&&monthKey(task.scheduledAt,zone)===monthKey(now,zone)&&onlineThroughout(state.settings,new Date(task.scheduledAt),now)&&runnableApartFromGate(state,task,now,channels))continue;
     task.scheduling??={version:1,month:monthKey(task.scheduledAt,site.timezone??state.settings.timezone),slot:0,target:site.monthlyTarget,effectiveTarget:site.monthlyTarget,reschedules:0};
-    if(task.scheduling.reschedules>=SCHEDULING_DEFAULTS.maxReschedules){
+    // A written draft has already cost its AI calls, so a late schedule moves it rather than discarding it.
+    const keepsDraft=!!task.draft&&now.getTime()-Date.parse(task.articleApprovedAt??task.articleReview?.reviewedAt??task.createdAt)<=DRAFT_HOLD_MAX_MS;
+    if(task.scheduling.reschedules>=SCHEDULING_DEFAULTS.maxReschedules&&!keepsDraft){
       Object.assign(task,taskTransition(task,{status:'skipped',reasonCode:'schedule_missed',checkpoint:'schedule_exhausted'},now));task.message=SCHEDULING_MESSAGES.reschedule_exhausted;task.updatedAt=now.toISOString();task.missedPublicationAt=now.toISOString();continue;
     }
-    const when=deferredReservation(site,availableNetworkPlatforms(state,channels,now),scheduleEvents(state.tasks.filter(other=>other.id!==task.id)),now,state.settings.timezone,`${task.id}|missed|${task.scheduling.reschedules}`,undefined,state.settings.onlineHours);
-    task.scheduling.reschedules++;task.scheduling.month=monthKey(when,site.timezone??state.settings.timezone);task.scheduledAt=when.toISOString();task.updatedAt=now.toISOString();task.missedPublicationAt=now.toISOString();task.reasonCode='schedule_missed';task.message=SCHEDULING_MESSAGES.missed_schedule;
+    const when=deferredReservation(site,availableNetworkPlatforms(state,channels,now),scheduleEvents(state.tasks.filter(other=>other.id!==task.id)),now,state.settings.timezone,`${task.id}|missed|${task.scheduling.reschedules}|${task.scheduledAt}`,undefined,state.settings.onlineHours);
+    task.scheduling.reschedules=Math.min(SCHEDULING_DEFAULTS.maxReschedules,task.scheduling.reschedules+1);task.scheduling.month=monthKey(when,site.timezone??state.settings.timezone);task.scheduledAt=when.toISOString();task.updatedAt=now.toISOString();task.missedPublicationAt=now.toISOString();task.reasonCode='schedule_missed';task.message=SCHEDULING_MESSAGES.missed_schedule;
     changes.push({id:task.id,scheduledAt:task.scheduledAt});
   }
   return changes;
@@ -315,7 +327,8 @@ export function deferAiLimitedTasks(state:State,channels:Channel[]=[],now=new Da
   const changes:QueuedScheduleChange[]=[];
   for(const task of state.tasks){
     const site=state.sites.find(item=>item.id===task.siteId&&item.status==='ready');
-    if(!site||!['queued','running'].includes(task.status)||hasUnresolvedExternalAttempt(task)||schedulingDay(task.scheduledAt,site.timezone??state.settings.timezone)!==schedulingDay(now,site.timezone??state.settings.timezone))continue;
+    // Includes work still waiting its turn from an earlier day, which would otherwise be picked and refused once a minute.
+    if(!site||!['queued','running'].includes(task.status)||hasUnresolvedExternalAttempt(task)||schedulingDay(task.scheduledAt,site.timezone??state.settings.timezone)>schedulingDay(now,site.timezone??state.settings.timezone))continue;
     const when=deferredReservation(site,availableNetworkPlatforms(state,channels,now),scheduleEvents(state.tasks.filter(other=>other.id!==task.id)),now,state.settings.timezone,`${task.id}|ai-limit|${schedulingDay(now,state.settings.timezone)}`,state.settings.dailyAiLimit,state.settings.onlineHours);
     Object.assign(task,taskTransition(task,{status:'queued',reasonCode:'ai_daily_limit'},now));task.scheduledAt=when.toISOString();task.nextCheckAt=task.scheduledAt;task.updatedAt=now.toISOString();task.message=SCHEDULING_MESSAGES.ai_daily_limit;if(task.scheduling)task.scheduling.month=monthKey(when,site.timezone??state.settings.timezone);
     changes.push({id:task.id,scheduledAt:task.scheduledAt});
@@ -506,10 +519,9 @@ export function makePlan(state:State,site:Site,matches:Match[],now=new Date(),ne
   }
   return created;
 }
-export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|undefined{
-  if(!state.settings.autoRun)return;
-  const priority=(task:Task)=>{if(!task.channelId)return 0;const channel=channels.find(item=>item.id===task.channelId);if(!channel)return 0;if(continuesPendingRegistration(state,task,channel,now))return 0;const kind=channelExecutionReadiness(state,task.siteId,channel,task.accountId).kind;return kind==='ready'?0:kind==='autocreate'?1:kind==='handoff_required'?2:3};
-  const due=state.tasks.filter(task=>{
+function taskPriority(state:State,task:Task,now:Date,channels:Channel[]):number{if(!task.channelId)return 0;const channel=channels.find(item=>item.id===task.channelId);if(!channel)return 0;if(continuesPendingRegistration(state,task,channel,now))return 0;const kind=channelExecutionReadiness(state,task.siteId,channel,task.accountId).kind;return kind==='ready'?0:kind==='autocreate'?1:kind==='handoff_required'?2:3}
+/** Everything nextTask asks of a task except the publishing gate, so a task waiting only on the gate can be told apart from one that cannot run. */
+function runnableApartFromGate(state:State,task:Task,now:Date,channels:Channel[]):boolean{
     const site=state.sites.find(item=>item.id===task.siteId&&item.status==='ready'),planned=Date.parse(task.scheduledAt),draftContinuation=hasRecoverablePublisherDraftReceipt(task);
     if(!task.draft&&hasPendingManualReview(state.tasks,task.siteId,task.id))return false;
     const safeRetry=safelyUnsentBatch5Task(task),preparationRetry=unfinishedBatch5Preparation(task,state.settings.maxAttempts);
@@ -517,11 +529,16 @@ export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|
       ['temporary_failure','ai_rate_limited'].includes(task.reasonCode??'')&&!hasUnresolvedExternalAttempt(task);
     const deterministicRecovery=task.recoveryAttempts===1&&!task.draft&&
       ['format_invalid','evidence_insufficient','evidence_truncated'].includes(task.reasonCode??'')&&!hasUnresolvedExternalAttempt(task);
-    if(!site||task.channelId&&channels.some(channel=>channel.id===task.channelId&&!trialTaskAvailable(state,channel,task.id))||task.status!=='queued'||task.reasonCode==='human_timeout'||task.reasonCode==='submission_unknown'&&!draftContinuation&&!safeRetry||hasUnresolvedExternalAttempt(task)&&!draftContinuation&&!safeRetry||task.publicUrl||task.firstLiveAt||!Number.isFinite(planned)||planned>now.getTime()||task.attempts>=state.settings.maxAttempts&&!hasActiveSiteOriginRecoveryGrant(state,task)&&!safeRetry&&!preparationRetry&&!independentRetry&&!deterministicRecovery||channels.length>0&&priority(task)>1)return false;
+    if(!site||task.channelId&&channels.some(channel=>channel.id===task.channelId&&!trialTaskAvailable(state,channel,task.id))||task.status!=='queued'||task.reasonCode==='human_timeout'||task.reasonCode==='submission_unknown'&&!draftContinuation&&!safeRetry||hasUnresolvedExternalAttempt(task)&&!draftContinuation&&!safeRetry||task.publicUrl||task.firstLiveAt||!Number.isFinite(planned)||planned>now.getTime()||task.attempts>=state.settings.maxAttempts&&!hasActiveSiteOriginRecoveryGrant(state,task)&&!safeRetry&&!preparationRetry&&!independentRetry&&!deterministicRecovery||channels.length>0&&taskPriority(state,task,now,channels)>1)return false;
     const target=site.planStatus?.month===monthKey(now,site.timezone??state.settings.timezone)?Math.min(site.planStatus.effectiveTarget,siteMonthTarget(site,now,state.settings.timezone)):siteMonthTarget(site,now,state.settings.timezone);
     const waiting=state.tasks.filter(item=>item.siteId===site.id&&item.status!=='queued'&&reservesMonthlySlot(item,now,site.timezone??state.settings.timezone)).length;
-    return (task.temporaryPage||liveThisMonth(site.id,state.tasks,now,site.timezone??state.settings.timezone)+waiting<target)&&(!task.channelId||publicationExecutionAt(state,task,now).getTime()<=now.getTime());
-  }).sort((a,b)=>priority(a)-priority(b)||a.scheduledAt.localeCompare(b.scheduledAt)||a.id.localeCompare(b.id));
+    return !!task.temporaryPage||liveThisMonth(site.id,state.tasks,now,site.timezone??state.settings.timezone)+waiting<target;
+}
+export function nextTask(state:State,now=new Date(),channels:Channel[]=[]):Task|undefined{
+  if(!state.settings.autoRun)return;
+  const priority=(task:Task)=>taskPriority(state,task,now,channels);
+  const due=state.tasks.filter(task=>runnableApartFromGate(state,task,now,channels)&&(!task.channelId||publicationExecutionAt(state,task,now).getTime()<=now.getTime()))
+    .sort((a,b)=>priority(a)-priority(b)||a.scheduledAt.localeCompare(b.scheduledAt)||a.id.localeCompare(b.id));
   return due[0];
 }
 

@@ -89,7 +89,8 @@ test('scheduled boundary and unknown platform use one state function without cha
   assert.equal(before.state,'scheduled');
   assert.match(before.detail,/10月18日 \d{2}:\d{2} 发 · 发布前确定平台$/);
   assert.equal(taskDisplayState(task,task.scheduledAt).state,'in_progress');
-  assert.equal(taskDisplayState(task,Date.parse(task.scheduledAt)+1).detail,'写稿中');
+  assert.equal(taskDisplayState(task,Date.parse(task.scheduledAt)+1).detail,'排队等发布');
+  assert.equal(taskDisplayState({...task,status:'running'},Date.parse(task.scheduledAt)+1).detail,'写稿中');
   assert.equal(JSON.stringify(task),saved);
   assert.deepEqual(taskDisplayState(task,now),taskDisplayState(task,now.getTime()));
   assert.equal(taskDisplayState(base({scheduledAt:'invalid'}),now).state,'in_progress');

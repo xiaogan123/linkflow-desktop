@@ -29,7 +29,7 @@ export type TaskHumanActionGroup='verification'|'account'|'review'|'manual_write
 /** Approved user-facing copy. Saved messages remain available only as technical details. */
 export const taskDisplayCopy={
   labels:{scheduled:'已排期',in_progress:'进行中',action_required:'要你处理',published:'已发布',published_recheck:'已发布·待复查',failed:'没做成'},
-  stages:{writing:'写稿中',reviewing:'AI 复核中',publishing:'发布中',waiting:'等平台结果',email:'等验证邮件'},
+  stages:{queued:'排队等发布',writing:'写稿中',reviewing:'AI 复核中',publishing:'发布中',waiting:'等平台结果',email:'等验证邮件'},
   actions:{human_required:'去处理',captcha_required:'去验证',agreement_required:'去确认',account_handoff:'去连接',manual_review:'看稿',human_timeout:'恢复',user_skipped:'恢复',unknown:'看原因'},
   humanInstructions:{verification:'在打开的窗口里勾选「我不是机器人」，大约 30 秒',account:'连接发布账号',review:'看一下写好的稿件',manual_publish:'把写好的稿件发到平台',agreement:'确认平台条款',other:'按提示完成这一步'},
   reasonTemplates:{
@@ -216,7 +216,8 @@ export function taskDisplayState(task:TaskDisplayInput,now:Date|string|number):T
     const selected=!!task.channelId&&!!task.sourceDomain&&!['auto','pending','unassigned'].includes(task.channelId)&&(selectionAt===undefined||selectionAt<=current);
     return {state:'scheduled',label:label.scheduled,detail:taskDisplayCopy.scheduled.replace('{时间}',displayDate(scheduled,true))+(selected?'':` · ${taskDisplayCopy.platformPending}`)};
   }
-  let detail:string=taskDisplayCopy.stages.writing;
+  // Past its time but not started: unless a later stage says more, it is waiting its turn behind the publishing gap, not being written.
+  let detail:string=task.status==='queued'?taskDisplayCopy.stages.queued:taskDisplayCopy.stages.writing;
   if(task.status==='review')detail=taskDisplayCopy.stages.waiting;
   else if(task.checkpoint?.includes('mail')||task.checkpoint?.includes('email'))detail=taskDisplayCopy.stages.email;
   else if(task.articleReview?.status==='running'||task.checkpoint==='article_review')detail=taskDisplayCopy.stages.reviewing;
